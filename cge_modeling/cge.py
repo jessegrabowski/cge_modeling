@@ -1,8 +1,217 @@
+from typing import Optional, Literal, Union, Sequence
+
 from cge_modeling.numba_tools import numba_lambdify
+from cge_modeling.output_tools import display_info_as_table
 from cge_modeling.sympy_tools import enumerate_indexbase, indexed_var_to_symbol, make_indexbase_sub_dict, sub_all_eqs
 import sympy as sp
 import numba as nb
 import numpy as np
+from dataclasses import dataclass, field
+from abc import ABC
+
+
+def _validate_input(obj, cls):
+    if not isinstance(obj, cls):
+        raise ValueError(f'Expected instance of type {cls.__name__}, found {type(obj).__name__}')
+
+
+def ensure_input_is_sequence(x):
+    if not isinstance(x, (list, tuple)):
+        x = [x]
+    return x
+
+
+@dataclass(slots=True, order=True, frozen=True)
+class ModelObject(ABC):
+    name: str
+    index: tuple[str] | str = ()
+    latex_name: Optional[str] = None
+    description: Optional[str] = None
+    real: bool = True
+    positive: bool = True
+    assumptions: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.assumptions['real'] = self.real
+        self.assumptions['positive'] = self.positive
+
+        object.__setattr__(self, 'sort_index', self.name)
+        object.__setattr__(self, 'index', self._initialize_index())
+        object.__setattr__(self, 'latex_name', self._initialize_latex_name())
+        object.__setattr__(self, 'description', self._initialize_description())
+
+    def _make_index_string(self):
+        idx_str = ''
+        if len(self.index) > 0:
+            idx_str = ",".join([x for x in self.index])
+
+        return idx_str
+
+    def _initialize_index(self):
+        index = self.index
+        if index is None:
+            return ()
+
+        # Case 1: Index is empty (valid), or a tuple of strings (valid)
+        if isinstance(index, tuple):
+            if len(index) == 0:
+                return index
+            elif all([isinstance(x, str) for x in index]):
+                return index
+            else:
+                raise ValueError(f'index must be a string or a tuple of strings, found {index}')
+
+        # Case 2: Index is a string. Convert to a tuple
+        elif isinstance(index, str):
+            idxs = index.split(',')
+            return tuple([idx.strip() for idx in idxs])
+
+        else:
+            raise ValueError(f'index must be a string or a tuple of strings, found {index}')
+
+    def _initialize_latex_name(self):
+        if self.latex_name is not None:
+            return self.latex_name
+        idx_str = self._make_index_string()
+        *base, subscript = self.name.split('_')
+        if len(base) == 0:
+            base, subscript = subscript, base
+        if len(subscript) > 0:
+            idx_str = f'{subscript},{idx_str}'
+
+        latex_name = '_'.join(base)
+        if len(idx_str) > 0:
+            latex_name = latex_name + '_{' + idx_str + '}'
+        return latex_name
+
+    def _initialize_description(self):
+        if self.description is not None:
+            return self.description
+        return f'{self.latex_name}, Positive = {self.positive}, Real = {self.real}'
+
+    def __getitem__(self, item: str):
+        return getattr(self, item)
+
+
+@dataclass(order=True, frozen=True)
+class Variable(ModelObject):
+    pass
+
+
+@dataclass(order=True, frozen=True)
+class Parameter(ModelObject):
+    pass
+
+
+class CGEModel:
+    def __init__(self,
+                 coords: Optional[dict[str, Sequence[str]]] = None,
+                 variables: Optional[dict[str, Variable]] = None,
+                 parameters: Optional[dict[str, Parameter]] = None):
+
+        self.coords = {} if coords is None else coords
+
+        self._variables = {} if variables is None else variables
+        self._parameters = {} if parameters is None else parameters
+
+    @property
+    def variable_names(self):
+        return list(self._variables.keys())
+
+    @property
+    def variables(self):
+        return list(self._variables.values())
+
+    @property
+    def parameter_names(self):
+        return list(self._parameters.keys())
+
+    @property
+    def parameters(self):
+        return list(self._parameters.values())
+
+    def _add_object(self, obj: Variable | Parameter,
+                    group: Literal['variables', 'parameters'],
+                    overwrite: bool = False):
+        obj_dict = getattr(self, f'_{group}')
+        obj_names = getattr(self, f'{group[:-1]}_names')
+        if obj.name in obj_names and not overwrite:
+            raise ValueError(f'Cannot add {obj.name}; a {group} of this name already exists. Pass overwrite=True to '
+                             f'allow existing {group}s to be overwritten.')
+        obj_dict.update({obj['name']: obj})
+
+    def _add_objects(self, obj_list: list[Variable | Parameter],
+                     group: Literal['variables', 'parameters'],
+                     overwrite: bool = False):
+        for obj in obj_list:
+            self._add_object(obj, group, overwrite)
+
+    def add_parameter(self, parameter: Parameter, overwrite=False):
+        _validate_input(parameter, Parameter)
+        self._add_object(parameter, 'parameters', overwrite)
+
+    def add_parameters(self, parameters: list[Parameter], overwrite=False):
+        parameters = ensure_input_is_sequence(parameters)
+        [_validate_input(parameter, Parameter) for parameter in parameters]
+        self._add_objects(parameters, 'parameters', overwrite)
+
+    def add_variable(self, variable: Variable, overwrite=False):
+        _validate_input(variable, Variable)
+        self._add_object(variable, 'variables', overwrite)
+
+    def add_variables(self, variables: list[Variable], overwrite=False):
+        variables = ensure_input_is_sequence(variables)
+        [_validate_input(variable, Variable) for variable in variables]
+        self._add_objects(variables, 'variables', overwrite)
+
+    def _get_object(self, obj_name: str, group: Literal['variables', 'parameters']):
+        print(getattr(self, f'_{group}'))
+        return getattr(self, f'_{group}')[obj_name]
+
+    def get_parameter(self, param_name: str):
+        return self._get_object(param_name, 'parameters')
+
+    def get_parameters(self, param_names: Optional[list[str]] = None):
+        if param_names is None:
+            param_names = self.parameter_names
+        param_names = ensure_input_is_sequence(param_names)
+        return [self.get_parameter(name) for name in param_names]
+
+    def get_variable(self, var_name: str):
+        return self._get_object(var_name, 'variables')
+
+    def get_variables(self, var_names: Optional[list[str]] = None):
+        if var_names is None:
+            var_names = self.variable_names
+        var_names = ensure_input_is_sequence(var_names)
+        return [self.get_variable(name) for name in var_names]
+
+    def get_any(self, names: Optional[list[str]] = None):
+        if names is None:
+            names = self.parameter_names + self.variable_names
+
+        out = []
+        for name in names:
+            if name in self.variable_names:
+                out.append(self._variables[name])
+            elif name in self.parameter_names:
+                out.append(self._parameters[name])
+            else:
+                raise ValueError(f'Requested name "{name}" is not a known parameter or variable.')
+
+
+    def print_table(self,
+                    variables: Union[Literal['variables', 'parameters'], list[str]],
+                    values: Optional[np.ndarray] = None,
+                    value_headers: Optional[list[str]] = None,
+                    expand_indices: bool = False,
+                    index_labels: Optional[dict[str, list[str]]] = None):
+
+        if variables in ['variables', 'parameters']:
+            variables = getattr(self, f'get_{variables}')
+
+        var_info_list = []
+        display_info_as_table()
 
 
 def recursive_solve_symbolic(equations, known_values=None, max_iter=100):

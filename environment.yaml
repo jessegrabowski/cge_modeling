@@ -1,0 +1,38 @@
+name: cge-dev
+channels:
+  - conda-forge
+dependencies:
+  # Core dependencies
+  - python=3.11
+  - jupyter<7
+  - pip
+  - numpy
+  - scipy
+  - sympy
+  - pandas
+  - numba
+  - pip:
+      - texttable
+      - latextable
+
+  # For building docs
+  - sphinx>=5.1.0,<6
+  - sphinx_rtd_theme
+  - pygments
+  - pydot
+  - ipython
+
+  # code style
+  - black
+  - isort
+
+  # For linting
+  - flake8
+  - pep8
+  - pyflakes
+
+  # developer tools
+  - pre-commit
+  - pytest
+  - pytest-env
+  - pytest-cov
