@@ -40,11 +40,11 @@ def sub_all_eqs(equations, sub_dict):
     return [eq.subs(sub_dict) for eq in equations]
 
 
-def enumerate_indexbase(exprs, indices, index_dicts, expand_using='index'):
+def enumerate_indexbase(exprs, indices, index_dicts, expand_using="index"):
     idx_values = [list(d.keys()) for d in index_dicts]
     idx_labels = [list(d.values()) for d in index_dicts]
 
-    if expand_using == 'index':
+    if expand_using == "index":
         exprs_expanded = expand_indices(exprs, indices, idx_values)
     else:
         exprs_expanded = expand_indices(exprs, indices, idx_labels)
@@ -64,7 +64,7 @@ def make_indexbase_sub_dict(exprs_expanded):
 
 
 def info_to_symbols(var_info, assumptions):
-    names, index_symbols = [list(t) for t in zip(*var_info)]
+    names, index_symbols = (list(t) for t in zip(*var_info))
     has_index = [len(idx) > 0 for idx in index_symbols]
 
     base_vars = [make_symbol(name, has_idx, assumptions) for name, has_idx in zip(names, has_index)]
@@ -74,7 +74,10 @@ def info_to_symbols(var_info, assumptions):
             return x
         return x[idx]
 
-    variables = [inject_index(x, has_idx, idx) for x, has_idx, idx in zip(base_vars, has_index, index_symbols)]
+    variables = [
+        inject_index(x, has_idx, idx)
+        for x, has_idx, idx in zip(base_vars, has_index, index_symbols)
+    ]
 
     return variables
 
@@ -86,8 +89,8 @@ def symbol(name, *sectors, assumptions=None):
     if sectors == ():
         return sp.Symbol(name, **assumptions)
 
-    suffix = '_' + "_".join(sectors)
-    return sp.Symbol(f'{name}{suffix}', **assumptions)
+    suffix = "_" + "_".join(sectors)
+    return sp.Symbol(f"{name}{suffix}", **assumptions)
 
 
 def symbols(name, value, sectors, assumptions=None):
@@ -95,8 +98,8 @@ def symbols(name, value, sectors, assumptions=None):
 
 
 def dict_info_to_symbols(dict_info, assumptions):
-    tuple_info = [(d['name'], d.get('index', ())) for d in dict_info]
-    names, _ = [list(t) for t in zip(*tuple_info)]
+    tuple_info = [(d["name"], d.get("index", ())) for d in dict_info]
+    names, _ = (list(t) for t in zip(*tuple_info))
     symbols = info_to_symbols(tuple_info, assumptions)
     global_updates = dict(zip(names, symbols))
     return symbols, global_updates
