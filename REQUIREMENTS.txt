@@ -3,3 +3,4 @@ scipy
 sympy
 pandas
 numba
+IPython

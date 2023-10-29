@@ -8,6 +8,7 @@ dependencies:
   - scipy
   - sympy
   - pandas
+  - IPython
 
   # Testing dependencies
   - pre-commit
