@@ -1,36 +1,59 @@
 import re
-from typing import Literal, Optional, Sequence, Union, Callable
+from typing import Callable, Literal, Optional, Sequence, Union
 
 import numba as nb
 import numpy as np
 import sympy as sp
-
-from cge_modeling.base.utilities import ensure_input_is_sequence, _validate_input, _replace_dim_marker_with_dim_name
-from cge_modeling.numba_tools import numba_lambdify, euler_approx
-from cge_modeling.output_tools import display_info_as_table, display_eqs_as_table, display_latex_table
-from cge_modeling.base.primitives import Variable, Parameter, Equation, _SympyEquation, Result
-from cge_modeling.sympy_tools import (
-    enumerate_indexbase,
-    indexed_var_to_symbol,
-    make_indexbase_sub_dict,
-    sub_all_eqs, find_equation_dims, substitute_reduce_ops, expand_obj_by_indices, indexed_variables_to_sub_dict,
-    make_indexed_name,
-)
-
 from scipy import optimize
 
-ValidGroups = Literal["variables", "parameters", "equations",
-'_unpacked_variables', '_unpacked_parameters', '_unpacked_equations']
+from cge_modeling.base.primitives import (
+    Equation,
+    Parameter,
+    Result,
+    Variable,
+    _SympyEquation,
+)
+from cge_modeling.base.utilities import (
+    _replace_dim_marker_with_dim_name,
+    _validate_input,
+    ensure_input_is_sequence,
+)
+from cge_modeling.numba_tools import euler_approx, numba_lambdify
+from cge_modeling.output_tools import (
+    display_eqs_as_table,
+    display_info_as_table,
+    display_latex_table,
+)
+from cge_modeling.sympy_tools import (
+    enumerate_indexbase,
+    expand_obj_by_indices,
+    find_equation_dims,
+    indexed_var_to_symbol,
+    indexed_variables_to_sub_dict,
+    make_indexbase_sub_dict,
+    make_indexed_name,
+    sub_all_eqs,
+    substitute_reduce_ops,
+)
+
+ValidGroups = Literal[
+    "variables",
+    "parameters",
+    "equations",
+    "_unpacked_variables",
+    "_unpacked_parameters",
+    "_unpacked_equations",
+]
 
 
 class CGEModel:
     def __init__(
-            self,
-            coords: Optional[dict[str, Sequence[str]]] = None,
-            variables: Optional[Union[list[Variable], dict[str, Variable]]] = None,
-            parameters: Optional[Union[list[Parameter], dict[str, Parameter]]] = None,
-            equations: Optional[Union[list[Equation], dict[str, Equation]]] = None,
-            numeraire: Optional[Variable] = None
+        self,
+        coords: Optional[dict[str, Sequence[str]]] = None,
+        variables: Optional[Union[list[Variable], dict[str, Variable]]] = None,
+        parameters: Optional[Union[list[Parameter], dict[str, Parameter]]] = None,
+        equations: Optional[Union[list[Equation], dict[str, Equation]]] = None,
+        numeraire: Optional[Variable] = None,
     ):
         self.numeraire = None
         self.coords = {} if coords is None else coords
@@ -44,14 +67,14 @@ class CGEModel:
         self._unpacked_parameters = {}
         self._unpacked_equations = {}
 
-        self._initialize_group(variables, 'variables')
+        self._initialize_group(variables, "variables")
         if numeraire is not None:
             if numeraire not in self.variable_names:
-                raise ValueError('Requested numeraire not found among supplied variables')
+                raise ValueError("Requested numeraire not found among supplied variables")
             self.numeraire = self._variables[numeraire]
 
-        self._initialize_group(parameters, 'parameters')
-        self._initialize_group(equations, 'equations')
+        self._initialize_group(parameters, "parameters")
+        self._initialize_group(equations, "equations")
 
         self._simplify_unpacked_sympy_representation()
 
@@ -72,8 +95,8 @@ class CGEModel:
         if objects is None:
             return
 
-        add_func = getattr(self, f'add_{group_name}')
-        unpack_func = getattr(self, f'_unpack_{group_name}')
+        add_func = getattr(self, f"add_{group_name}")
+        unpack_func = getattr(self, f"_unpack_{group_name}")
 
         add_func(objects)
         unpack_func(objects)
@@ -84,15 +107,20 @@ class CGEModel:
         parameters = [x.to_sympy() for x in self.unpacked_parameters]
 
         # Remove indices from equations, variables, and parameters
-        remove_indices_subdict = indexed_variables_to_sub_dict(self.unpacked_variables + self.unpacked_parameters)
+        remove_indices_subdict = indexed_variables_to_sub_dict(
+            self.unpacked_variables + self.unpacked_parameters
+        )
         equations = sub_all_eqs(equations, remove_indices_subdict)
         variables = sub_all_eqs(variables, remove_indices_subdict)
         parameters = sub_all_eqs(parameters, remove_indices_subdict)
 
-        for group, simplified_symbols in zip(['parameters', 'variables', 'equations'],
-                                             [parameters, variables, equations]):
-            for name, symbol in zip(getattr(self, f'unpacked_{group[:-1]}_names'), simplified_symbols):
-                getattr(self, f'_unpacked_{group}')[name]['symbol'] = symbol
+        for group, simplified_symbols in zip(
+            ["parameters", "variables", "equations"], [parameters, variables, equations]
+        ):
+            for name, symbol in zip(
+                getattr(self, f"unpacked_{group[:-1]}_names"), simplified_symbols
+            ):
+                getattr(self, f"_unpacked_{group}")[name]["symbol"] = symbol
 
     @property
     def variable_names(self):
@@ -108,11 +136,17 @@ class CGEModel:
 
     @property
     def unpacked_variables(self):
-        return [self._unpacked_variables[var_name]['modelobj'] for var_name in self.unpacked_variable_names]
+        return [
+            self._unpacked_variables[var_name]["modelobj"]
+            for var_name in self.unpacked_variable_names
+        ]
 
     @property
     def unpacked_variable_symbols(self):
-        return [self._unpacked_variables[var_name]['symbol'] for var_name in self.unpacked_variable_names]
+        return [
+            self._unpacked_variables[var_name]["symbol"]
+            for var_name in self.unpacked_variable_names
+        ]
 
     @property
     def parameter_names(self):
@@ -128,11 +162,17 @@ class CGEModel:
 
     @property
     def unpacked_parameters(self):
-        return [self._unpacked_parameters[param_name]['modelobj'] for param_name in self.unpacked_parameter_names]
+        return [
+            self._unpacked_parameters[param_name]["modelobj"]
+            for param_name in self.unpacked_parameter_names
+        ]
 
     @property
     def unpacked_parameter_symbols(self):
-        return [self._unpacked_parameters[param_name]['symbol'] for param_name in self.unpacked_parameter_names]
+        return [
+            self._unpacked_parameters[param_name]["symbol"]
+            for param_name in self.unpacked_parameter_names
+        ]
 
     @property
     def equation_names(self):
@@ -148,17 +188,22 @@ class CGEModel:
 
     @property
     def unpacked_equation_symbols(self):
-        return [self._unpacked_equations[eq_name]['symbol'] for eq_name in self.unpacked_equation_names]
+        return [
+            self._unpacked_equations[eq_name]["symbol"] for eq_name in self.unpacked_equation_names
+        ]
 
     @property
     def unpacked_equations(self):
-        return [self._unpacked_equations[eq_name]['modelobj'] for eq_name in self.unpacked_equation_names]
+        return [
+            self._unpacked_equations[eq_name]["modelobj"]
+            for eq_name in self.unpacked_equation_names
+        ]
 
     def _add_object(
-            self,
-            obj: Variable | Parameter | Equation,
-            group: ValidGroups,
-            overwrite: bool = False,
+        self,
+        obj: Variable | Parameter | Equation,
+        group: ValidGroups,
+        overwrite: bool = False,
     ):
         obj_dict = getattr(self, f"_{group}")
         obj_names = getattr(self, f"{group[:-1]}_names")
@@ -169,8 +214,7 @@ class CGEModel:
             )
         obj_dict.update({obj["name"]: obj})
 
-    def _unpack_objects(self,
-                        objs: list[Variable | Parameter | Equation]):
+    def _unpack_objects(self, objs: list[Variable | Parameter | Equation]):
         """
         Convert a single object with dimension index to a list of objects with coordinate indices.
 
@@ -186,16 +230,18 @@ class CGEModel:
         """
         expanded_objects = []
         for obj in objs:
-            expanded_objs = expand_obj_by_indices(obj, self.coords, dims=None, on_unused_dim='ignore')
+            expanded_objs = expand_obj_by_indices(
+                obj, self.coords, dims=None, on_unused_dim="ignore"
+            )
             expanded_objects.extend(expanded_objs)
 
         return expanded_objects
 
     def _add_objects(
-            self,
-            obj_list: list[Variable | Parameter | Equation],
-            group: ValidGroups,
-            overwrite: bool = False,
+        self,
+        obj_list: list[Variable | Parameter | Equation],
+        group: ValidGroups,
+        overwrite: bool = False,
     ):
         for obj in obj_list:
             self._add_object(obj, group, overwrite)
@@ -212,7 +258,7 @@ class CGEModel:
     def _unpack_parameters(self, parameters: list[Parameter]):
         unpacked_params = self._unpack_objects(parameters)
         unpacked_names = [make_indexed_name(param) for param in unpacked_params]
-        param_dicts = [{'modelobj': param} for param in unpacked_params]
+        param_dicts = [{"modelobj": param} for param in unpacked_params]
         self._unpacked_parameters = dict(zip(unpacked_names, param_dicts))
 
     def add_variable(self, variable: Variable, overwrite=False):
@@ -227,7 +273,7 @@ class CGEModel:
     def _unpack_variables(self, variables: list[Variable]):
         unpacked_vars = self._unpack_objects(variables)
         unpacked_names = [make_indexed_name(param) for param in unpacked_vars]
-        param_dicts = [{'modelobj': param} for param in unpacked_vars]
+        param_dicts = [{"modelobj": param} for param in unpacked_vars]
         self._unpacked_variables = dict(zip(unpacked_names, param_dicts))
 
     def add_equation(self, equation: Equation, overwrite: bool = False):
@@ -245,8 +291,8 @@ class CGEModel:
 
         # TODO: Should i call substitute_reduce_ops here to remove the sum/product over dummy indices in the equation
         #  lists? Downside: it will make very long expressions if the dim labels are long.
-        sympy_eq = sp.parse_expr(equation.equation, local_dict=local_dict, transformations='all')
-        fancy_eq = sp.parse_expr(equation.equation, local_dict=fancy_dict, transformations='all')
+        sympy_eq = sp.parse_expr(equation.equation, local_dict=local_dict, transformations="all")
+        fancy_eq = sp.parse_expr(equation.equation, local_dict=fancy_dict, transformations="all")
 
         if self.numeraire:
             x = self.numeraire.to_sympy()
@@ -259,15 +305,17 @@ class CGEModel:
         if eq_id is None:
             eq_id = len(self.equations) + 1
 
-        new_eq = _SympyEquation(name=equation.name,
-                                equation=equation.equation,
-                                symbolic_eq=sympy_eq,
-                                _eq=standard_eq,
-                                _fancy_eq=fancy_eq,
-                                dims=find_equation_dims(standard_eq, list(str_dim_to_symbol.values())),
-                                eq_id=eq_id)
+        new_eq = _SympyEquation(
+            name=equation.name,
+            equation=equation.equation,
+            symbolic_eq=sympy_eq,
+            _eq=standard_eq,
+            _fancy_eq=fancy_eq,
+            dims=find_equation_dims(standard_eq, list(str_dim_to_symbol.values())),
+            eq_id=eq_id,
+        )
 
-        self._add_object(new_eq, 'equations', overwrite)
+        self._add_object(new_eq, "equations", overwrite)
 
     def add_equations(self, equations: list[Equation], overwrite: bool = False):
         equations = ensure_input_is_sequence(equations)
@@ -280,7 +328,7 @@ class CGEModel:
             raise ValueError("Cannot unpack equations before they are added to the model.")
         unpacked_eqs = self._unpack_objects(self.equations)
         unpacked_names = [eq.name for eq in unpacked_eqs]
-        param_dicts = [{'modelobj': param} for param in unpacked_eqs]
+        param_dicts = [{"modelobj": param} for param in unpacked_eqs]
         self._unpacked_equations = dict(zip(unpacked_names, param_dicts))
 
     def _get_object(self, obj_name: str, group: Literal["variables", "parameters"]):
@@ -332,12 +380,14 @@ class CGEModel:
         out = []
         for name in names:
             if name in self.unpacked_parameter_names:
-                out.append(self._unpacked_parameters[name]['symbol'])
+                out.append(self._unpacked_parameters[name]["symbol"])
             elif name in self.unpacked_variable_names:
-                out.append(self._unpacked_variables[name]['symbol'])
+                out.append(self._unpacked_variables[name]["symbol"])
             else:
-                raise ValueError(f'Requested name "{name}" is not a known parameter or variable. Did you append the '
-                                 f'indices?')
+                raise ValueError(
+                    f'Requested name "{name}" is not a known parameter or variable. Did you append the '
+                    f"indices?"
+                )
 
         if len(out) == 1:
             return out[0]
@@ -351,7 +401,7 @@ class CGEModel:
         parameters = self.unpacked_parameter_symbols
 
         # Symbolically compute loss function and derivatives
-        resid = sum(eq ** 2 for eq in equations)
+        resid = sum(eq**2 for eq in equations)
         grad = sp.Matrix([resid.diff(x) for x in variables])
         hess = grad.jacobian(variables)
 
@@ -359,7 +409,9 @@ class CGEModel:
         jac = sp.Matrix(equations).jacobian(variables)
 
         # Functions used by optimize.root to directly solve the system of equations
-        self.f_system = numba_lambdify(variables, sp.Matrix(equations), parameters, ravel_outputs=True)
+        self.f_system = numba_lambdify(
+            variables, sp.Matrix(equations), parameters, ravel_outputs=True
+        )
         self.f_jac = numba_lambdify(variables, jac, parameters)
 
         # Functions used by optimize.minimize to solve the system of equations by minimizing the loss function
@@ -372,24 +424,27 @@ class CGEModel:
         self._compiled = True
 
     def summary(
-            self,
-            variables: Union[Literal["all", "variables", "parameters"], list[str]] = 'all',
-            results: Optional[Union[Result, list[Result]]] = None,
-            expand_indices: bool = False,
-            index_labels: Optional[dict[str, list[str]]] = None,
+        self,
+        variables: Union[Literal["all", "variables", "parameters"], list[str]] = "all",
+        results: Optional[Union[Result, list[Result]]] = None,
+        expand_indices: bool = False,
+        index_labels: Optional[dict[str, list[str]]] = None,
     ):
         results = [] if results is None else results
         if isinstance(results, Result):
             results = [results]
 
-        if variables == 'all':
-            variables = [x.name for value in ['variables', 'parameters'] for x in getattr(self, f"get_{value}")()]
+        if variables == "all":
+            variables = [
+                x.name
+                for value in ["variables", "parameters"]
+                for x in getattr(self, f"get_{value}")()
+            ]
 
         if variables in ["variables", "parameters"]:
             variables = [x.name for x in getattr(self, f"get_{variables}")()]
 
-        info_dict = {'Symbol': [],
-                     'Description': []}
+        info_dict = {"Symbol": [], "Description": []}
 
         for var_name in variables:
             if var_name in self.parameter_names:
@@ -397,69 +452,83 @@ class CGEModel:
             elif var_name in self.variable_names:
                 item = self._variables[var_name]
             else:
-                raise ValueError(f'{var_name} is not a variable or parameter of the model.')
-            info_dict['Symbol'].append(item)
-            info_dict['Description'].append(item.description)
+                raise ValueError(f"{var_name} is not a variable or parameter of the model.")
+            info_dict["Symbol"].append(item)
+            info_dict["Description"].append(item.description)
 
-        info_dict['Description'] = [_replace_dim_marker_with_dim_name(desc) for desc in info_dict['Description']]
+        info_dict["Description"] = [
+            _replace_dim_marker_with_dim_name(desc) for desc in info_dict["Description"]
+        ]
 
         for result in results:
             result_df = result.to_frame()
             initial, final = result_df.loc[variables, :].values.T
-            info_dict[result.name] = {'Initial': initial,
-                                      'Final': final}
+            info_dict[result.name] = {"Initial": initial, "Final": final}
         display_latex_table(info_dict)
 
     def equation_table(self, display=True):
         eq_dict = [eq.to_dict() for eq in self.equations]
-        info_dict = {'': [], 'Name': [], 'Equation': []}
+        info_dict = {"": [], "Name": [], "Equation": []}
         for i, d in enumerate(eq_dict):
-            info_dict[''].append(i + 1)
-            info_dict['Name'].append(_replace_dim_marker_with_dim_name(d['name']))
-            info_dict['Equation'].append(d['fancy_eq'])
+            info_dict[""].append(i + 1)
+            info_dict["Name"].append(_replace_dim_marker_with_dim_name(d["name"]))
+            info_dict["Equation"].append(d["fancy_eq"])
 
         display_latex_table(info_dict)
 
-    def calibrate(self, data=None, max_iter=100, name='initial_calibration'):
+    def calibrate(self, data=None, max_iter=100, name="initial_calibration"):
         if not self._compiled:
             self._compile()
 
         equations = self.unpacked_equation_symbols
-        symbolic_data = {
-            self.get_symbol(k): v for k, v in data.items()
-        }
+        symbolic_data = {self.get_symbol(k): v for k, v in data.items()}
 
         all_model_objects = self.unpacked_variable_symbols + self.unpacked_parameter_symbols
 
         calibrated_system = recursive_solve_symbolic(equations, symbolic_data, max_iter)
-        initial_values = np.array([data.get(x.name, np.nan) for x in all_model_objects], dtype='float64')
-        fitted_values = np.array([calibrated_system.get(x, np.nan) for x in all_model_objects], dtype='float64')
+        initial_values = np.array(
+            [data.get(x.name, np.nan) for x in all_model_objects], dtype="float64"
+        )
+        fitted_values = np.array(
+            [calibrated_system.get(x, np.nan) for x in all_model_objects], dtype="float64"
+        )
 
-        x0, theta0 = fitted_values[:len(self.unpacked_variable_names)], fitted_values[len(self.unpacked_variable_names):]
+        x0, theta0 = (
+            fitted_values[: len(self.unpacked_variable_names)],
+            fitted_values[len(self.unpacked_variable_names) :],
+        )
 
         success = self.f_resid(x0, theta0) < 1e-6
 
-        result = Result(name=name,
-                        success=success,
-                        variables=self.unpacked_variable_names,
-                        parameters=self.unpacked_parameter_names,
-                        initial_values=initial_values,
-                        fitted_values=fitted_values)
+        result = Result(
+            name=name,
+            success=success,
+            variables=self.unpacked_variable_names,
+            parameters=self.unpacked_parameter_names,
+            initial_values=initial_values,
+            fitted_values=fitted_values,
+        )
 
         return result
 
-    def simulate(self, initial_state, final_values=None, final_delta=None, final_delta_pct=None,
-                 n_iter_euler=10_000,
-                 name=None,
-                 **optimizer_kwargs):
+    def simulate(
+        self,
+        initial_state,
+        final_values=None,
+        final_delta=None,
+        final_delta_pct=None,
+        n_iter_euler=10_000,
+        name=None,
+        **optimizer_kwargs,
+    ):
 
         if not self._compiled:
             self._compile()
 
-        x0_var_param = initial_state.to_dict()['fitted'].copy()
-        x0, theta0 = state_dict_to_input_arrays(x0_var_param,
-                                                self.unpacked_variable_names,
-                                                self.unpacked_parameter_names)
+        x0_var_param = initial_state.to_dict()["fitted"].copy()
+        x0, theta0 = state_dict_to_input_arrays(
+            x0_var_param, self.unpacked_variable_names, self.unpacked_parameter_names
+        )
 
         if final_values is not None:
             x0_var_param.update(final_values)
@@ -472,21 +541,29 @@ class CGEModel:
         else:
             raise ValueError()
 
-        x0, theta_simulation = state_dict_to_input_arrays(x0_var_param,
-                                                          self.unpacked_variable_names,
-                                                          self.unpacked_parameter_names)
+        x0, theta_simulation = state_dict_to_input_arrays(
+            x0_var_param, self.unpacked_variable_names, self.unpacked_parameter_names
+        )
         euler_result = euler_approx(self.f_dX, x0, theta0, theta_simulation, n_iter_euler)
-        x0_improved = euler_result[:len(self.unpacked_variable_names)]
+        x0_improved = euler_result[: len(self.unpacked_variable_names)]
 
-        res = optimize.minimize(self.f_resid, x0_improved, jac=self.f_grad, hess=self.f_hess, args=theta_simulation,
-                                **optimizer_kwargs)
+        res = optimize.minimize(
+            self.f_resid,
+            x0_improved,
+            jac=self.f_grad,
+            hess=self.f_hess,
+            args=theta_simulation,
+            **optimizer_kwargs,
+        )
 
-        result = Result(name=name,
-                        success=res.success,
-                        variables=self.unpacked_variable_names,
-                        parameters=self.unpacked_parameter_names,
-                        initial_values=initial_state.fitted_values,
-                        fitted_values=np.r_[res.x, theta_simulation])
+        result = Result(
+            name=name,
+            success=res.success,
+            variables=self.unpacked_variable_names,
+            parameters=self.unpacked_parameter_names,
+            initial_values=initial_state.fitted_values,
+            fitted_values=np.r_[res.x, theta_simulation],
+        )
 
         return result
 
@@ -548,12 +625,12 @@ def recursive_solve_symbolic(equations, known_values=None, max_iter=100):
 
 
 def expand_compact_system(
-        compact_equations,
-        compact_variables,
-        compact_params,
-        index_dict,
-        numeraire_dict=None,
-        check_square=True,
+    compact_equations,
+    compact_variables,
+    compact_params,
+    index_dict,
+    numeraire_dict=None,
+    check_square=True,
 ):
     if numeraire_dict is None:
         numeraire_dict = {}
@@ -621,17 +698,17 @@ def expand_compact_system(
 
 
 def compile_cge_to_numba(
-        compact_equations,
-        compact_variables,
-        compact_params,
-        index_dict,
-        numeraire_dict=None,
+    compact_equations,
+    compact_variables,
+    compact_params,
+    index_dict,
+    numeraire_dict=None,
 ):
     equations, variables, parameters = expand_compact_system(
         compact_equations, compact_variables, compact_params, index_dict, numeraire_dict
     )
 
-    resid = sum(eq ** 2 for eq in equations)
+    resid = sum(eq**2 for eq in equations)
     grad = sp.Matrix([resid.diff(x) for x in variables])
     jac = sp.Matrix(equations).jacobian(variables)
     hess = grad.jacobian(variables)

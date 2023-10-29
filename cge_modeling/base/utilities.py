@@ -1,6 +1,7 @@
-from typing import Union
-from cge_modeling.base.primitives import Parameter, Variable
 import re
+from typing import Union
+
+from cge_modeling.base.primitives import Parameter, Variable
 
 
 def _validate_input(obj, cls):
@@ -16,13 +17,15 @@ def ensure_input_is_sequence(x):
 
 def _expand_var_by_index(obj: Union[Variable, Parameter], coords: dict[str, list[str]]):
     if not isinstance(obj, (Variable, Parameter)):
-        raise ValueError('Expected a model object for argument obj, got {type(obj)}')
+        raise ValueError("Expected a model object for argument obj, got {type(obj)}")
 
     dims = list(coords.keys())
     missing_dims = set(dims) - set(obj.dims)
     if len(missing_dims) > 0:
-        raise ValueError(f'Found indices {", ".join(missing_dims)} on the coords that are not among the variable '
-                         f'indices: {", ".join(obj.dims)}')
+        raise ValueError(
+            f'Found indices {", ".join(missing_dims)} on the coords that are not among the variable '
+            f'indices: {", ".join(obj.dims)}'
+        )
 
     cls = Variable if isinstance(obj, Variable) else Parameter
     out = [obj]
@@ -36,15 +39,19 @@ def _expand_var_by_index(obj: Union[Variable, Parameter], coords: dict[str, list
                 new_dim_vals.update({dim: label})
 
                 # noinspection PyArgumentList
-                new_out.append(cls(name=obj.name,
-                                   dims=obj.dims,
-                                   dim_vals=new_dim_vals,
-                                   description=obj.description))
+                new_out.append(
+                    cls(
+                        name=obj.name,
+                        dims=obj.dims,
+                        dim_vals=new_dim_vals,
+                        description=obj.description,
+                    )
+                )
         out = new_out.copy()
 
     return out
 
 
 def _replace_dim_marker_with_dim_name(s):
-    s = re.sub('(<dim:(.+?)>)', '\g<2>', s)
+    s = re.sub("(<dim:(.+?)>)", r"\g<2>", s)
     return s

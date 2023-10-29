@@ -9,15 +9,15 @@ from cge_modeling.base.primitives import Parameter, Variable
 @pytest.mark.parametrize(
     "name, latex_name, dims, expected",
     [
-        ("x", 'x', None, ("x", "x, Positive = True, Real = True", ())),
-        ("x", 'x', ("i",), ("x_{i}", "x_{i}, Positive = True, Real = True", ("i",))),
-        ("x", r'\Omega', "i", (r"\Omega_{i}", r"\Omega_{i}, Positive = True, Real = True", ("i",))),
-        ("x", 'x', "i,j", ("x_{i, j}", "x_{i, j}, Positive = True, Real = True", ("i", "j"))),
+        ("x", "x", None, ("x", "x, Positive = True, Real = True", ())),
+        ("x", "x", ("i",), ("x_{i}", "x_{i}, Positive = True, Real = True", ("i",))),
+        ("x", r"\Omega", "i", (r"\Omega_{i}", r"\Omega_{i}, Positive = True, Real = True", ("i",))),
+        ("x", "x", "i,j", ("x_{i, j}", "x_{i, j}, Positive = True, Real = True", ("i", "j"))),
         (
-                "x_d",
-                "x_d",
-                "i,j",
-                ("x_{d, i, j}", "x_{d, i, j}, Positive = True, Real = True", ("i", "j")),
+            "x_d",
+            "x_d",
+            "i,j",
+            ("x_{d, i, j}", "x_{d, i, j}, Positive = True, Real = True", ("i", "j")),
         ),
     ],
     ids=[
@@ -59,30 +59,45 @@ def test_create_variable(cls):
 @pytest.mark.parametrize("cls", [Variable, Parameter], ids=["variable", "parameter"])
 def test_to_dict(cls):
     # noinspection PyArgumentList
-    x = cls(name="x", dims="i",  description="A lovely thing")
+    x = cls(name="x", dims="i", description="A lovely thing")
     d = x.to_dict()
 
     assert isinstance(d, dict)
     assert len(d) == 6
-    assert all([key in d.keys() for key in ['name', 'dims', 'dim_vals', 'description']])
+    assert all([key in d.keys() for key in ["name", "dims", "dim_vals", "description"]])
 
 
-@pytest.mark.parametrize('base_name, dims, extend, expected', [('x', ['i'], False, 'x_{i=\\text{A}}'),
-                                                       ('x^j', ['i'], False, 'x^j_{i=\\text{A}}'),
-                                                       ('x^{j}', ['i'], False, 'x^{j}_{i=\\text{A}}'),
-                                                       ('x_F', ['i', 'j'], True, 'x_{F, i=\\text{A}, j}'),
-                                                       ('x_{Fish}', ['i', 'i'], True,  'x_{Fish, i=\\text{A}, i=\\text{A}}'),
-                                                       ('var_with_underscore', ['i'], False, 'var_with_underscore_{i=\\text{A}}')])
+@pytest.mark.parametrize(
+    "base_name, dims, extend, expected",
+    [
+        ("x", ["i"], False, "x_{i=\\text{A}}"),
+        ("x^j", ["i"], False, "x^j_{i=\\text{A}}"),
+        ("x^{j}", ["i"], False, "x^{j}_{i=\\text{A}}"),
+        ("x_F", ["i", "j"], True, "x_{F, i=\\text{A}, j}"),
+        ("x_{Fish}", ["i", "i"], True, "x_{Fish, i=\\text{A}, i=\\text{A}}"),
+        ("var_with_underscore", ["i"], False, "var_with_underscore_{i=\\text{A}}"),
+    ],
+)
 def test_sub_label(base_name, dims, extend, expected):
-    x = Variable(name=base_name, dims=dims, description='A lovely item from group <dim:i>', extend_subscript=extend)
-    x.update_dim_value('i', 'A')
+    x = Variable(
+        name=base_name,
+        dims=dims,
+        description="A lovely item from group <dim:i>",
+        extend_subscript=extend,
+    )
+    x.update_dim_value("i", "A")
     assert x._full_latex_name == expected
 
 
-@pytest.mark.parametrize('description, expected', [('A lovely item from group <dim:i>', 'A lovely item from group A'),
-                                                   ('Sector <dim:i> demand for good <dim:j>', 'Sector A demand for good <dim:j>'),
-                                                   ('<dim:i> demand for <dim:j>', 'A demand for <dim:j>')])
+@pytest.mark.parametrize(
+    "description, expected",
+    [
+        ("A lovely item from group <dim:i>", "A lovely item from group A"),
+        ("Sector <dim:i> demand for good <dim:j>", "Sector A demand for good <dim:j>"),
+        ("<dim:i> demand for <dim:j>", "A demand for <dim:j>"),
+    ],
+)
 def test_sub_description(description, expected):
-    x = Variable(name='x', dims=['i', 'j'], description=description)
-    x.update_dim_value('i', 'A')
+    x = Variable(name="x", dims=["i", "j"], description=description)
+    x.update_dim_value("i", "A")
     assert x.description == expected
