@@ -1,6 +1,10 @@
-numpy
-scipy
-sympy
-pandas
-numba
-IPython
+numpy~=1.24.4
+scipy~=1.11.2
+sympy~=1.12
+pandas~=2.1.1
+numba~=0.57.1
+IPython~=8.15.0
+latextable~=1.0.0
+pytest~=7.4.2
+setuptools~=68.2.2
+texttable~=1.6.7

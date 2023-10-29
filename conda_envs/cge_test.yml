@@ -3,12 +3,16 @@ channels:
 - conda-forge
 dependencies:
   # Base dependencies
+  - pip
   - numpy
-  - numba
   - scipy
   - sympy
   - pandas
+  - numba
   - IPython
+  - pip:
+    - latextable
+    - texttable
 
   # Testing dependencies
   - pre-commit
