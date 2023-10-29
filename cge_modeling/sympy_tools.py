@@ -1,7 +1,6 @@
 from functools import reduce
 from itertools import product
-
-from typing import Sequence, cast, Any, Optional, Literal
+from typing import Any, Literal, Optional, Sequence, cast
 
 import sympy as sp
 
@@ -28,8 +27,7 @@ def _prod(args: Sequence) -> Any:
 
 
 # Mapping between sympy map-reduce operations and python map-reduce operations
-OP_TO_PY = {sp.Sum: sum,
-            sp.Product: _prod}
+OP_TO_PY = {sp.Sum: sum, sp.Product: _prod}
 
 # List of sympy map-reduce operations
 OPS_TO_FIND = list(OP_TO_PY.keys())
@@ -72,7 +70,7 @@ def sub_all_eqs(equations, sub_dict):
     return [eq.subs(sub_dict) for eq in equations]
 
 
-def make_indexed_name(obj: ModelObject, delimiter='_') -> str:
+def make_indexed_name(obj: ModelObject, delimiter="_") -> str:
     """
     Construct an object name with indexing information from a ModelObject.
 
@@ -90,7 +88,7 @@ def make_indexed_name(obj: ModelObject, delimiter='_') -> str:
         The name of the object with the index values appended, separated by the delimiter.
     """
 
-    return '_'.join([obj.name] + list(obj.dim_vals.values()))
+    return "_".join([obj.name] + list(obj.dim_vals.values()))
 
 
 def indexed_variable_to_sympy_symbol(obj: ModelObject) -> sp.Symbol:
@@ -255,7 +253,7 @@ def remove_string_keys(d):
 def find_equation_dims(eq: sp.Expr, index_symbols: list[sp.Idx]) -> tuple[str]:
     found_ids = [idx for idx in index_symbols if eq.has(idx)]
     sorted_ids = sorted(found_ids, key=lambda x: index_symbols.index(x))
-    return cast(tuple[str], tuple([x.name for x in sorted_ids]))
+    return cast(tuple[str], tuple(x.name for x in sorted_ids))
 
 
 def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, list[str]]) -> sp.Expr:
@@ -284,13 +282,15 @@ def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, list[str]]) -> sp.Expr:
             assert idx.name in coords.keys()
             assert len(coords[idx.name]) == stop - start + 1
 
-            expanded_expr = OP_TO_PY[op_to_find]([expr.subs({idx: val}) for val in coords[idx.name]])
+            expanded_expr = OP_TO_PY[op_to_find](
+                [expr.subs({idx: val}) for val in coords[idx.name]]
+            )
             sub_dict = {op: expanded_expr}
             eq = eq.subs(sub_dict)
     return eq
 
 
-def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim='raise') -> list[str]:
+def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim="raise") -> list[str]:
     """
     Validate that the provided dims are associated with the provided object. If not, either raise an error or ignore
     the unused dims, based on the value of on_unused_dim.
@@ -313,20 +313,24 @@ def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim='raise') -> 
 
     unknown_dims = set(dims) - set(obj.dims)
     if len(unknown_dims) > 0:
-        unk_str = ', '.join(list(unknown_dims))
-        if on_unused_dim == 'raise':
-            raise ValueError(f'Dimension expansion was requested for {obj.name} on the following dims '
-                             f'which are not associted with {obj.name}: {unk_str}')
-        elif on_unused_dim == 'ignore':
+        unk_str = ", ".join(list(unknown_dims))
+        if on_unused_dim == "raise":
+            raise ValueError(
+                f"Dimension expansion was requested for {obj.name} on the following dims "
+                f"which are not associted with {obj.name}: {unk_str}"
+            )
+        elif on_unused_dim == "ignore":
             return list(set(dims) - unknown_dims)
 
     return dims
 
 
-def expand_obj_by_indices(obj: ModelObject,
-                          coords: dict[str:list[str]],
-                          dims: Optional[list[str]] = None,
-                          on_unused_dim: Literal['raise', 'ignore'] = 'raise') -> list[ModelObject]:
+def expand_obj_by_indices(
+    obj: ModelObject,
+    coords: dict[str : list[str]],
+    dims: Optional[list[str]] = None,
+    on_unused_dim: Literal["raise", "ignore"] = "raise",
+) -> list[ModelObject]:
     """
     Expand a model object by creating a new object for each label associated to the requested dimensions.
 

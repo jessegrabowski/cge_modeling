@@ -1,19 +1,21 @@
 import re
 import time
 from abc import ABC
+from copy import deepcopy
 from dataclasses import dataclass, field
-
 from datetime import datetime
 from typing import Optional, Union
+
+import pandas as pd
 import sympy as sp
 from sympy.abc import greeks
 from sympy.printing.latex import latex
-import pandas as pd
-from copy import deepcopy
 
-greeks = list(greeks) + ['varepsilon']
+greeks = list(greeks) + ["varepsilon"]
 Greeks = [x.title() for x in greeks]
-GREEK_PATTERN = '|'.join([f'(((^{greek})|((?=[_^]){greek})|((?<=[_^]){greek})))' for greek in greeks + Greeks])
+GREEK_PATTERN = "|".join(
+    [f"(((^{greek})|((?=[_^]){greek})|((?<=[_^]){greek})))" for greek in greeks + Greeks]
+)
 
 
 def _pretty_print_dim_flags(s, dims, dim_vals):
@@ -21,7 +23,7 @@ def _pretty_print_dim_flags(s, dims, dim_vals):
         dim_val = dim_vals.get(dim, None)
         if dim_val is None:
             continue
-        pattern = f'<dim:{dim}>'
+        pattern = f"<dim:{dim}>"
         s = re.sub(pattern, dim_val, s)
     return s
 
@@ -48,7 +50,7 @@ class ModelObject(ABC):
         object.__setattr__(self, "dims", self._initialize_index())
         object.__setattr__(self, "dim_vals", self._initialize_dim_vals())
         object.__setattr__(self, "base_name", self.name)
-        object.__setattr__(self, 'latex_name', self._initialize_latex_name())
+        object.__setattr__(self, "latex_name", self._initialize_latex_name())
         object.__setattr__(self, "_full_latex_name", self._initialize_full_latex_name())
         object.__setattr__(self, "description", self._initialize_description())
 
@@ -56,13 +58,13 @@ class ModelObject(ABC):
         idx_strs = []
         for dim in self.dims:
             dim_val = self.dim_vals.get(dim, None)
-            dim_val_text = '' if dim_val is None else '=\\text{' + dim_val + '}'
-            idx_strs.append(f'{dim}{dim_val_text}')
+            dim_val_text = "" if dim_val is None else "=\\text{" + dim_val + "}"
+            idx_strs.append(f"{dim}{dim_val_text}")
 
         if len(idx_strs) == 0:
-            return ''
+            return ""
 
-        return '_{' + ', '.join(idx_strs) + '}'
+        return "_{" + ", ".join(idx_strs) + "}"
 
     def _initialize_index(self):
         dims = self.dims
@@ -97,21 +99,25 @@ class ModelObject(ABC):
             return {}
 
         elif not isinstance(dim_vals, dict):
-            raise ValueError(f'dim_vals of {self.base_name} should be a dictionary mapping dimensions to specific coord'
-                             f' values; found {type(dim_vals)}')
+            raise ValueError(
+                f"dim_vals of {self.base_name} should be a dictionary mapping dimensions to specific coord"
+                f" values; found {type(dim_vals)}"
+            )
 
         keys, values = list(dim_vals.keys()), list(dim_vals.values())
 
         # Check all the keys are in the dims
         extra_dims = set(keys) - set(dims)
         if len(extra_dims) > 0:
-            raise ValueError(f'All dim_vals of {self.base_name} must be associated with known dimensions: {self.dims}. '
-                             f'Found unknown dimensions: {extra_dims}.')
+            raise ValueError(
+                f"All dim_vals of {self.base_name} must be associated with known dimensions: {self.dims}. "
+                f"Found unknown dimensions: {extra_dims}."
+            )
         return dim_vals
 
     def _initialize_latex_name(self):
         latex_name = self.latex_name if self.latex_name is not None else self.name
-        latex_name = re.sub(GREEK_PATTERN, r'\\' + '\g<0>', latex_name)
+        latex_name = re.sub(GREEK_PATTERN, r"\\" + r"\g<0>", latex_name)
         return latex_name
 
     def _initialize_full_latex_name(self):
@@ -119,15 +125,15 @@ class ModelObject(ABC):
         base_latex_name = self.latex_name
 
         if self.extend_subscript:
-            *base_chunks, subscript = base_latex_name.split('_')
+            *base_chunks, subscript = base_latex_name.split("_")
             if len(base_chunks) == 0:
                 base_latex_name, subscript = subscript, base_chunks
             else:
-                base_latex_name = '_'.join(base_chunks)
+                base_latex_name = "_".join(base_chunks)
 
             if len(subscript) > 0:
-                subscript = subscript.replace('{', '').replace('}', '')
-                idx_subscript = '_{' + subscript + ', ' + idx_subscript[2:]
+                subscript = subscript.replace("{", "").replace("}", "")
+                idx_subscript = "_{" + subscript + ", " + idx_subscript[2:]
 
         latex_name = base_latex_name + idx_subscript
 
@@ -146,12 +152,14 @@ class ModelObject(ABC):
         return self._full_latex_name
 
     def to_dict(self):
-        return {'name': self.name,
-                'dims': self.dims,
-                'sympy': self.to_sympy(long_name=False),
-                'latex_name': self._full_latex_name,
-                'dim_vals': self.dim_vals,
-                'description': self.description}
+        return {
+            "name": self.name,
+            "dims": self.dims,
+            "sympy": self.to_sympy(long_name=False),
+            "latex_name": self._full_latex_name,
+            "dim_vals": self.dim_vals,
+            "description": self.description,
+        }
 
     def to_sympy(self, long_name=False, use_latex_name=False):
         indices = [sp.Idx(dim) for dim in self.dims]
@@ -168,7 +176,7 @@ class ModelObject(ABC):
 
     def update_dim_value(self, dim, value):
         if dim not in self.dims:
-            raise ValueError(f'{dim} is not a valid dimension of {self.name}.')
+            raise ValueError(f"{dim} is not a valid dimension of {self.name}.")
 
         self.dim_vals[dim] = value
         self._full_latex_name = self._initialize_full_latex_name()
@@ -195,7 +203,7 @@ class Equation:
     eq_id: Optional[int] = None
 
     def _set_eq_id(self, new_id):
-        object.__setattr__(self, 'eq_id', new_id)
+        object.__setattr__(self, "eq_id", new_id)
 
     def __getitem__(self, item: str):
         return getattr(self, item)
@@ -217,7 +225,7 @@ class _SympyEquation(Equation):
         return self.name
 
     def _repr_latex_(self):
-        s = latex(self.symbolic_eq, mode='plain')
+        s = latex(self.symbolic_eq, mode="plain")
         return "$\\displaystyle %s$" % s
 
     def copy(self):
@@ -225,27 +233,31 @@ class _SympyEquation(Equation):
 
     def update_dim_value(self, dim, value):
         if dim not in self.dims:
-            raise ValueError(f'{dim} is not a valid dimension of {self.name}.')
+            raise ValueError(f"{dim} is not a valid dimension of {self.name}.")
         sp_dim = sp.Idx(dim)
 
         object.__setattr__(self, "symbolic_eq", self.symbolic_eq.subs(sp_dim, value))
         object.__setattr__(self, "_eq", self._eq.subs(sp_dim, value))
-        object.__setattr__(self, 'name', _pretty_print_dim_flags(self.name, self.dims, {dim: value}))
-        object.__setattr__(self, 'dim_vals', {dim: value})
+        object.__setattr__(
+            self, "name", _pretty_print_dim_flags(self.name, self.dims, {dim: value})
+        )
+        object.__setattr__(self, "dim_vals", {dim: value})
 
     def to_dict(self):
         return {
-            'name': self.name,
-            'string_eq': self.equation,
-            'symbolic_eq': self.symbolic_eq,
-            'fancy_eq': self._fancy_eq,
-            'standard_eq': self._eq,
-            'eq_id': self.eq_id
+            "name": self.name,
+            "string_eq": self.equation,
+            "symbolic_eq": self.symbolic_eq,
+            "fancy_eq": self._fancy_eq,
+            "standard_eq": self._eq,
+            "eq_id": self.eq_id,
         }
 
 
 class Result:
-    def __init__(self, name, variables, parameters, initial_values, fitted_values, success, meta=None):
+    def __init__(
+        self, name, variables, parameters, initial_values, fitted_values, success, meta=None
+    ):
         self.name = name
         self.variables = variables
         self.parameters = parameters
@@ -257,8 +269,10 @@ class Result:
 
     def to_dict(self):
         all_names = self.variables + self.parameters
-        return {'initial': dict(zip(all_names, self.initial_values)),
-                'fitted': dict(zip(all_names, self.fitted_values))}
+        return {
+            "initial": dict(zip(all_names, self.initial_values)),
+            "fitted": dict(zip(all_names, self.fitted_values)),
+        }
 
     def to_frame(self):
         return pd.DataFrame(self.to_dict())
@@ -266,4 +280,4 @@ class Result:
     def format_datetime(self):
         local_timezone = time.tzname[0]
         formatted_date = self.fit_time.strftime("%A, %B %d, %Y %I:%M %p")
-        return ' '.join([formatted_date, local_timezone])
+        return " ".join([formatted_date, local_timezone])

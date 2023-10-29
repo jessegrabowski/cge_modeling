@@ -1,15 +1,14 @@
 import re
+from collections import defaultdict
 
 import sympy as sp
 from IPython.display import Latex, display
 from latextable import draw_latex
+from sympy.printing.latex import LatexPrinter
 from texttable import Texttable
 
 from cge_modeling.base.primitives import ModelObject
 from cge_modeling.sympy_tools import symbol
-from sympy.printing.latex import LatexPrinter
-
-from collections import defaultdict
 
 
 def get_node_level(node, level=0):
@@ -23,18 +22,18 @@ def get_n_descendents(node, total=0):
     if node.n_children == 0:
         return total
 
-    return node.n_children + sum([get_n_descendents(child, 0) for child in node.children])
+    return node.n_children + sum(get_n_descendents(child, 0) for child in node.children)
 
 
 def get_n_generations(node, total=0):
     if node.n_children == 0:
         return total
-    return int(node.n_children > 0) + sum([get_n_generations(child, 0) for child in node.children])
+    return int(node.n_children > 0) + sum(get_n_generations(child, 0) for child in node.children)
 
 
 def compute_padding(node):
     pad = max(0, node.n_descendents - 1)
-    pad -= sum([max(0, descendent.n_descendents - 1) for descendent in node.get_all_descendents()])
+    pad -= sum(max(0, descendent.n_descendents - 1) for descendent in node.get_all_descendents())
 
     return pad
 
@@ -122,7 +121,7 @@ class Tree:
 
     @property
     def max_level(self):
-        return max([node.level for node in self.nodes]) + 1
+        return max(node.level for node in self.nodes) + 1
 
     def get_nodes(self, level):
         return [node for node in self.nodes if node.level == level]
@@ -147,8 +146,10 @@ class Tree:
         for level in range(cut_level, self.max_level):
             level_nodes = self.get_nodes(level)
             for old_node in level_nodes:
-                new_node = Node(old_node.name,
-                                parent=None if level == cut_level else update_map[old_node.parent])
+                new_node = Node(
+                    old_node.name,
+                    parent=None if level == cut_level else update_map[old_node.parent],
+                )
                 update_map[old_node] = new_node
                 pruned_nodes.append(new_node)
 
@@ -219,7 +220,7 @@ def build_tree(d, tree=None, parent=None):
 
 
 def heading_to_latex(s):
-    return r'\textbf{' + s + '}'
+    return r"\textbf{" + s + "}"
 
 
 def parse_data(x):
@@ -231,17 +232,19 @@ def parse_data(x):
         if x.isnumeric():
             return x
         else:
-            return r'\text{' + x + '}'
+            return r"\text{" + x + "}"
     elif isinstance(x, (sp.Eq, sp.Symbol, sp.Add, sp.Mul, sp.Expr)):
         return LatexPrinter().doprint(x)
     else:
-        raise ValueError(f'Unexpected type {type(x)} in table data')
+        raise ValueError(f"Unexpected type {type(x)} in table data")
 
 
 def make_table(info_dict):
     tree = build_tree(info_dict)
     headings = tree.make_headings()
-    headings = [[heading_to_latex(s) if s is not None else '' for s in heading] for heading in headings]
+    headings = [
+        [heading_to_latex(s) if s is not None else "" for s in heading] for heading in headings
+    ]
 
     leaves = tree.get_leaves()
     n_cols = len(leaves)
@@ -296,8 +299,9 @@ def make_equation_table(equation_dict):
     equation_table.set_cols_valign(["m"] * 3)
 
     data_rows = [
-        [d["eq_id"], "\\text{" + d["name"] + "}", LatexPrinter().doprint(d['fancy_eq'])]
-        for d in equation_dict]
+        [d["eq_id"], "\\text{" + d["name"] + "}", LatexPrinter().doprint(d["fancy_eq"])]
+        for d in equation_dict
+    ]
 
     equation_table.add_rows(heading_row + data_rows)
     latex_table = draw_latex(equation_table)
@@ -379,7 +383,9 @@ def get_info(name, value_dict, sectors):
 
 
 def latex_print_equations(equation_info, return_latex=False):
-    names, equations, equation_ids = [[d.get(attr) for d in equation_info] for attr in ['name', 'fancy_eq', 'eq_id']]
+    names, equations, equation_ids = (
+        [d.get(attr) for d in equation_info] for attr in ["name", "fancy_eq", "eq_id"]
+    )
 
     tex_output = r"\begin{align}"
     for name, eq, eq_id in zip(names, equations, equation_ids):
