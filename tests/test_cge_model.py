@@ -1,6 +1,7 @@
 import pytest
 
-from cge_modeling.cge import CGEModel, Parameter, Variable
+from cge_modeling.base.cge import CGEModel
+from cge_modeling.base.primitives import Parameter, Variable
 
 
 @pytest.fixture()
@@ -38,6 +39,8 @@ def test_add_objects(cls, cls_type, model):
 
     names = getattr(model, f"{cls_type}_names")
     objects = getattr(model, f"{cls_type}s")
+    assert isinstance(getattr(model, f'_{cls_type}s'), dict)
+
     for item in [x, y]:
         assert item.name in names
         assert item in objects
@@ -86,14 +89,19 @@ def test_get_objects(cls, cls_type, get_args, model):
     assert y_out is y
 
 
-# @pytest.mark.parametrize('args', [['x'], ['y'], ['x', 'y'], None], ids=['x', 'y', 'x,y', 'default'])
-# def test_get_any(args, model):
-#     x = Variable(name='x')
-#     y = Parameter(name='y')
-#     model.add_variable(x)
-#     model.add_parameter(y)
-#
-#     out = model.get_any(args)
-#     out_names = [d['name'] for d in out]
-#
-#     assert all([x in out_names for x in args])
+@pytest.mark.parametrize('args', [['x'], ['y'], ['x', 'y'], None], ids=['x', 'y', 'x,y', 'default'])
+def test_get(args, model):
+    x = Variable(name='x')
+    y = Parameter(name='y')
+    model.add_variable(x)
+    model.add_parameter(y)
+
+    out = model.get(args)
+    out_names = [d['name'] for d in out] if isinstance(out, list) else out['name']
+
+    # None case gets back everything
+    if args is None:
+        args = model.variable_names + model.parameter_names
+
+    assert all([x in out_names for x in args])
+
