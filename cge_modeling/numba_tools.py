@@ -215,12 +215,12 @@ def numba_lambdify(
     return locals()["f"]
 
 
-@nb.njit
+@nb.njit(cache=True)
 def float_to_array(arr):
     return np.asarray(arr, np.float64)
 
 
-@nb.njit
+@nb.njit(cache=True)
 def euler_approx(f, x0, theta0, theta, n_steps):
     """
     Compute the solution to a non-linear function g(x, theta + dtheta) by iteratively computing a linear approximation
@@ -231,13 +231,13 @@ def euler_approx(f, x0, theta0, theta, n_steps):
     f: njit function
         Linearized function to be approximated. Must have signature f(endog, exog) -> array[:]
 
-    x0: array
+    x0: np.ndarray
         Array of values of model variables representing the point at which g is linearized.
 
-    theta0: array
+    theta0: np.ndarray
         Array of model parameter values representing the point at which g is linearized.
 
-    theta: array
+    theta: np.ndarray
         Values at which g is to be solved. These should correspond to something like "shocks" from the initial parameter
         values theta0.
 
@@ -247,7 +247,7 @@ def euler_approx(f, x0, theta0, theta, n_steps):
 
     Returns
     -------
-    x: array
+    x: np.ndarray
         Approximate solution to g(x + dx)
 
     Notes
