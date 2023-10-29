@@ -1,0 +1,16 @@
+name: cge-test
+channels:
+- conda-forge
+dependencies:
+  # Base dependencies
+  - numpy
+  - numba
+  - scipy
+  - sympy
+  - pandas
+
+  # Testing dependencies
+  - pre-commit
+  - pytest-cov>=2.5
+  - pytest>=3.0
+  - pytest-env
