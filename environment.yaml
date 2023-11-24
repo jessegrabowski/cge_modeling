@@ -5,12 +5,22 @@ dependencies:
   # Core dependencies
   - python=3.11
   - jupyter<7
+  - jupyter_contrib_nbextensions
   - pip
   - numpy
   - scipy
   - sympy
   - pandas
   - numba
+  - matplotlib
+  - pymc
+  - pytensor
+
+  # JAX Backend
+  - jax
+  - numpyro
+  - blackjax
+
   - pip:
       - texttable
       - latextable
