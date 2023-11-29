@@ -1,5 +1,6 @@
 from typing import Any, Sequence, Union, cast
 
+import numpy as np
 import pytensor
 import pytensor.tensor as pt
 import sympy as sp
@@ -99,10 +100,13 @@ def flatten_equations(eqs: list[pt.TensorLike]) -> pt.TensorLike:
     these multidimensional expressions into a single vector to compute the Jacobian of the system. This function
     performs that flattening operation.
     """
-    return pt.concatenate([pt.atleast_1d(eq).ravel() for eq in eqs], axis=-1)
+    expr_len = int(np.sum([np.prod(eq.type.shape) for eq in eqs]))
+    flat_expr = pt.concatenate([pt.atleast_1d(eq).ravel() for eq in eqs], axis=-1)
+    flat_expr = pt.specify_shape(flat_expr, shape=(expr_len,))
+    return flat_expr
 
 
-def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike], n_eq: int) -> pt.TensorLike:
+def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike]) -> pt.TensorLike:
     """
     Make a Jacobian matrix from a system of equations and a list of variables.
 
@@ -112,8 +116,6 @@ def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike], n_eq: int) -> p
         A vector of equations
     x: list[pytensor.tensor.TensorVariable]
         A list of variables
-    n_eq: int
-        The number of equations in the system, that is, the length of the vector of equations
 
     Returns
     -------
@@ -126,8 +128,12 @@ def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike], n_eq: int) -> p
     variable. The rows of the matrix correspond to the equations in the system, while the columns correspond to the
     variables. This function computes the Jacobian matrix from a vector of equations and a list of variables.
     """
+    n_eq = system.type.shape[0]
+    n_vars = int(np.sum([np.prod(var.type.shape) for var in x]))
+
     column_list = pytensor.gradient.jacobian(system, x)
     jac = pt.concatenate([pt.atleast_2d(x).reshape((n_eq, -1)) for x in column_list], axis=-1)
+    jac = pt.specify_shape(jac, shape=(n_eq, n_vars))
 
     return jac
 

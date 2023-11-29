@@ -1,7 +1,9 @@
+import functools as ft
 from typing import Callable, Literal, Optional, Sequence, Union
 
 import numba as nb
 import numpy as np
+import pytensor
 import sympy as sp
 from scipy import optimize
 
@@ -16,6 +18,11 @@ from cge_modeling.base.utilities import (
     _replace_dim_marker_with_dim_name,
     _validate_input,
     ensure_input_is_sequence,
+)
+from cge_modeling.pytensorf.compile import (
+    compile_cge_model_to_pytensor,
+    euler_approximation_from_CGEModel,
+    pytensor_objects_from_CGEModel,
 )
 from cge_modeling.tools.numba_tools import euler_approx, numba_lambdify
 from cge_modeling.tools.output_tools import display_latex_table
@@ -441,12 +448,36 @@ class CGEModel:
 
         # Compile the one-step linear approximation function used by the iterative Euler approximation
         self.f_dX = numba_linearize_cge_func(equations, variables, parameters)
+        self.f_euler = ft.partial(euler_approx, f=self.f_dX)
+
         self._compiled = True
 
-    def _compile_pytensor(self):
-        pass
+    def __pytensor_euler_helper(self, *args, n_steps=100, **kwargs):
+        if n_steps == self.__last_n_steps:
+            return self.__compiled_f_euler(*args, **kwargs)
+        else:
+            self.__last_n_steps = n_steps
+            self.__compiled_f_euler = euler_approximation_from_CGEModel(self, n_steps=n_steps)
+            return self.__compiled_f_euler(*args, **kwargs)
 
-    def _compile(self, backend: Optional[Literal["pytensor", "numba"]] = "pytensor"):
+    def _compile_pytensor(self, mode, inverse_method="solve"):
+        (variables, parameters), (system, jac, jac_inv, B) = compile_cge_model_to_pytensor(
+            self, inverse_method=inverse_method
+        )
+        inputs = variables + parameters
+        self.f_system = pytensor.function(inputs=inputs, outputs=system, mode=mode)
+        self.f_jac = pytensor.function(inputs=inputs, outputs=jac, mode=mode)
+
+        self.__last_n_steps = 0
+        self.f_euler = self.__pytensor_euler_helper
+        self._compiled = True
+
+    def _compile(
+        self,
+        backend: Optional[Literal["pytensor", "numba"]] = "pytensor",
+        mode=None,
+        inverse_method="solve",
+    ):
         """
         Compile the model to a backend.
 
@@ -454,15 +485,20 @@ class CGEModel:
         ----------
         backend: str
             The backend to compile to. One of 'pytensor' or 'numba'.
+        mode: str
+            Pytensor compile mode. Ignored if mode is not 'pytensor'.
+        inverse_method: str
+            The method to use to compute the inverse of the Jacobian. One of "solve", "pinv", or "svd".
+            Defaults to "solve". Ignored if mode is not 'pytensor'
 
         Returns
         -------
-
+        None
         """
         if backend == "numba":
             self._compile_numba()
         else:
-            self._compile_pytensor()
+            self._compile_pytensor(mode=mode, inverse_method=inverse_method)
 
     def summary(
         self,
@@ -776,7 +812,6 @@ def compile_cge_to_numba(
     return (f_resid, f_grad, f_hess), (f_system, f_jac), (variables, parameters)
 
 
-# def numba_linearize_cge_func(compact_equations, compact_variables, compact_params, index_dict):
 def numba_linearize_cge_func(equations, variables, parameters):
     # equations, variables, parameters = expand_compact_system(
     #     compact_equations, compact_variables, compact_params, index_dict
