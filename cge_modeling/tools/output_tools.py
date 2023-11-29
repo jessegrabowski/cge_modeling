@@ -8,7 +8,7 @@ from sympy.printing.latex import LatexPrinter
 from texttable import Texttable
 
 from cge_modeling.base.primitives import ModelObject
-from cge_modeling.sympy_tools import symbol
+from cge_modeling.tools.sympy_tools import symbol
 
 
 def get_node_level(node, level=0):

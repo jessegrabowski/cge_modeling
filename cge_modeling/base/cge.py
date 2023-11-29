@@ -1,4 +1,3 @@
-import re
 from typing import Callable, Literal, Optional, Sequence, Union
 
 import numba as nb
@@ -18,13 +17,9 @@ from cge_modeling.base.utilities import (
     _validate_input,
     ensure_input_is_sequence,
 )
-from cge_modeling.numba_tools import euler_approx, numba_lambdify
-from cge_modeling.output_tools import (
-    display_eqs_as_table,
-    display_info_as_table,
-    display_latex_table,
-)
-from cge_modeling.sympy_tools import (
+from cge_modeling.tools.numba_tools import euler_approx, numba_lambdify
+from cge_modeling.tools.output_tools import display_latex_table
+from cge_modeling.tools.sympy_tools import (
     enumerate_indexbase,
     expand_obj_by_indices,
     find_equation_dims,
@@ -420,8 +415,7 @@ class CGEModel:
 
         return out
 
-    def _compile(self):
-
+    def _compile_numba(self):
         equations = self.unpacked_equation_symbols
         variables = self.unpacked_variable_symbols
         parameters = self.unpacked_parameter_symbols
@@ -448,6 +442,27 @@ class CGEModel:
         # Compile the one-step linear approximation function used by the iterative Euler approximation
         self.f_dX = numba_linearize_cge_func(equations, variables, parameters)
         self._compiled = True
+
+    def _compile_pytensor(self):
+        pass
+
+    def _compile(self, backend: Optional[Literal["pytensor", "numba"]] = "pytensor"):
+        """
+        Compile the model to a backend.
+
+        Parameters
+        ----------
+        backend: str
+            The backend to compile to. One of 'pytensor' or 'numba'.
+
+        Returns
+        -------
+
+        """
+        if backend == "numba":
+            self._compile_numba()
+        else:
+            self._compile_pytensor()
 
     def summary(
         self,
