@@ -1,187 +1,28 @@
-import re
-from typing import Literal, Sequence, Union, cast
+from typing import Literal, cast
 
 import pytensor
 import pytensor.tensor as pt
-import sympy as sp
 from sympytensor import as_tensor
 
-from cge_modeling.base.primitives import Parameter, Variable
-from cge_modeling.sympy_tools import sub_all_eqs
+from cge_modeling.parsing import normalize_eq
+from cge_modeling.tools.pytensor_tools import (
+    at_least_list,
+    clone_and_rename,
+    flatten_equations,
+    make_jacobian,
+    make_printer_cache,
+    object_to_pytensor,
+)
+from cge_modeling.tools.sympy_tools import (
+    make_dummy_sub_dict,
+    replace_indexed_variables,
+)
 
 
-def object_to_pytensor(obj: Union[Parameter, Variable], coords: dict[str, Sequence]):
-    """
-    Convert a CGE model object to a PyTensor object.
-
-    Parameters
-    ----------
-    obj: Union[Parameter, Variable]
-        The CGE model object to convert
-    coords: dict[str, Sequence]
-        A dictionary of coordinate names and values known by the CGE model. Used to determine the shapes and dimensions
-        of the returned PyTensor object
-
-    Returns
-    -------
-    pytensor_obj: pytensor.tensor.TensorVariable
-        The PyTensor object representing the CGE model object
-
-    Notes
-    -----
-    Distinction between Parameters and Variables is lost in the conversion to symbolic tensors. It is up to the user to
-    maintain this distinction.
-
-    Examples
-    --------
-    .. code-block:: python
-
-        from cge_modeling.base.primitives import Parameter
-        from cge_modeling.pytensorf.compile import object_to_pytensor
-
-        K_d = Parameter(name='K_d', dims='i', description='Capital demand')
-        coords = {'i': [0, 1, 2]}
-        pt_K_d = object_to_pytensor(K_d, coords)
-        pt_K_d.eval({pt_K_d: [1, 2, 3]})
-        # Out: array([1., 2., 3.])
-    """
-
-    name = obj.name
-    dims = obj.dims
-
-    shape = tuple(list(map(lambda dim: len(coords[dim]), dims)))
-
-    return pt.tensor(name, shape=shape)
-
-
-def make_dummy_sub_dict(cge_model):
-    """
-    Create a dictionary of dummy symbols to replace indexed variables and parameters in a CGE model.
-
-    Parameters
-    ----------
-    cge_model: CGEModel
-        The CGE model object to create the dictionary for
-
-    Returns
-    -------
-    dummy_dict: dict
-        A dictionary with keys as model variables and values as dummy symbols.
-
-    Notes
-    -----
-    This function is needed because Sympy cannot print indexed variables and parameters. We need to replace them
-    with non-indexed dummies before printing. Dimension information will be contained in the pytensor tensors.
-
-    """
-    var_dict = {
-        x.to_sympy(): sp.Symbol(x.base_name)
-        for x in cge_model.variables
-        if isinstance(x.to_sympy(), sp.Indexed)
-    }
-    param_dict = {
-        x.to_sympy(): sp.Symbol(x.base_name)
-        for x in cge_model.parameters
-        if isinstance(x.to_sympy(), sp.Indexed)
-    }
-
-    return {**var_dict, **param_dict}
-
-
-def replace_indexed_variables(equations, sub_dict):
-    """
-    Descriptive alias for sub_all_eqs
-    """
-    sp_equations = [eq._eq for eq in equations]
-    return sub_all_eqs(sp_equations, sub_dict)
-
-
-def make_printer_cache(variables: list[pt.TensorLike], parameters: list[pt.TensorLike]) -> dict:
-    """
-    Create a cache of PyTensor functions for printing sympy equations to pytensor.
-
-    Parameters
-    ----------
-    cge_model: CGEModel
-        CGEModel object
-    variables: list[pytensor.tensor.TensorVariable]
-        List of cge_model variables, converted to symbolic pytensor tensors
-    parameters: list[pytensor.tensor.TensorVariable]
-        List of cge_model parameters, converted to symbolic pytensor tensors
-
-    Returns
-    -------
-    cache: dict[tuple[str, sp.Symbol, tuple, str, tuple], pt.TensorLike]
-        A cache of variables used to print equations to pytensor
-    """
-
-    def make_key(name) -> tuple:
-        return name, sp.Symbol, (), "floatX", ()
-
-    cache = {make_key(var.name): var for var in variables + parameters}
-    return cast(dict, cache)
-
-
-def normalize_eq(eq: str) -> str:
-    """
-    Normalize an equation y = f(x) to the form y - f(x) = 0
-
-    Parameters
-    ----------
-    eq: str
-        A string representing an equation
-
-    Returns
-    -------
-    normalized_eq: str
-        A string representing the same equation in normalized form
-    """
-
-    lhs, rhs = re.split("(?<!axis)=", eq, 1)
-    return f"{lhs} - ({rhs})"
-
-
-def wrap_in_ravel(eq: str) -> str:
-    return f"({eq}).ravel()"
-
-
-def compile_cge_model_to_pytensor(
-    cge_model, inverse_method: Literal["solve", "pinv", "svd"] = "solve", return_B_matrix=False
-) -> tuple[pt.Op, pt.Op, pt.Op, pt.Op]:
-    """
-    Compile a CGE model to a PyTensor function.
-
-    Parameters
-    ----------
-    cge_model: CGEModel
-        The CGE model object to compile
-
-    Returns
-    -------
-    f_model: pt.Op
-        A PyTensor Op representing computation of the residuals of model equations given model variables and
-        parameters as inputs
-
-    f_jac: pt.Op
-        A PyTensor Op representing computation of the Jacobian of model equations given model variables and
-        parameters as inputs
-
-    f_jac_inv: pt.Op
-        A PyTensor Op representing computation of the inverse of the Jacobian of model equations given model
-        variables and parameters as inputs
-
-    f_B: pt.Op
-        A PyTensor Op representing computation of the B matrix (derivative of equations with respect to parameters).
-        Used in the Euler step method to find a new equilibrium after a change of parameters.
-
-    Notes
-    -----
-
-    """
+def pytensor_objects_from_CGEModel(cge_model):
     n_eq = len(cge_model.unpacked_variable_names)
     variables = [object_to_pytensor(var, cge_model.coords) for var in cge_model.variables]
     parameters = [object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters]
-    inputs = variables + parameters
 
     cache = make_printer_cache(variables, parameters)
 
@@ -196,6 +37,43 @@ def compile_cge_model_to_pytensor(
     flat_equations = pt.concatenate([eq.ravel() for eq in pytensor_equations], axis=-1)
     flat_equations = pt.specify_shape(flat_equations, (n_eq,))
     flat_equations.name = "equations"
+
+    return flat_equations, variables, parameters
+
+
+def compile_cge_model_to_pytensor(
+    cge_model, inverse_method: Literal["solve", "pinv", "svd"] = "solve"
+) -> tuple[pt.Op, pt.Op, pt.Op, pt.Op]:
+    """
+    Compile a CGE model to a PyTensor function.
+
+    Parameters
+    ----------
+    cge_model: CGEModel
+        The CGE model object to compile
+    inverse_method: str, optional
+        The method to use to compute the inverse of the Jacobian. One of "solve", "pinv", or "svd". Defaults to "solve".
+        Note that if svd is chosen, gradients for autodiff will not be available.
+
+    Returns
+    -------
+    f_model: pt.Op
+        A PyTensor Op representing computation of the residuals of model equations given model variables and
+        parameters as inputs
+
+    f_jac: pt.Op
+        A PyTensor Op representing computation of the Jacobian of model equations given model variables and
+        parameters as inputs
+
+    f_jac_inv: pt.Op
+        A PyTensor Op representing computation of the inverse of the Jacobian of model equations given model
+        variables and parameters as inputs
+    Notes
+    -----
+
+    """
+    flat_equations, variables, parameters = pytensor_objects_from_CGEModel(cge_model)
+    n_eq = flat_equations.type.shape[0]
 
     jac = pytensor.gradient.jacobian(flat_equations, variables)
     B_matirx_columns = pytensor.gradient.jacobian(flat_equations, parameters)
@@ -227,43 +105,109 @@ def compile_cge_model_to_pytensor(
     jac_inv = pt.specify_shape(jac_inv, (n_eq, n_eq))
     jac_inv.name = "inverse_jacobian"
 
+    inputs = variables + parameters
     f_model = pytensor.compile.builders.OpFromGraph(inputs, outputs=[flat_equations], inline=True)
     f_jac = pytensor.compile.builders.OpFromGraph(inputs, outputs=[jac], inline=True)
     f_jac_inv = pytensor.compile.builders.OpFromGraph(inputs, outputs=[jac_inv], inline=True)
-    f_B = pytensor.compile.builders.OpFromGraph(inputs, outputs=[B_matrix], inline=True)
 
     ret_vals = (f_model, f_jac, f_jac_inv)
-    if return_B_matrix:
-        ret_vals += (f_B,)
-
     return ret_vals
 
 
-def compile_euler_step_function(x0, theta_0, f_jac_inv, f_B):
-    x0_shared = pytensor.shared(x0, name="current_state")
-    A_inv = f_jac_inv(*x0_shared, *theta_0)
-    B = f_B(*x0_shared, *theta_0)
+def euler_approximation(
+    system: list[pt.TensorLike],
+    variables: list[pt.TensorLike],
+    parameters: list[pt.TensorLike],
+    n_steps: int = 100,
+):
+    """
+    Find the solution to a system of equations using the Euler approximation method.
 
-    euler_step = A_inv @ B @ theta_0
+    The Euler approximation method is a simple method for finding the solution to a system of equations. It is
+    an extension of a first order Taylor approximation, improving on the linearized approximation by decomposing
+    the move from the initial (known) solution, around which the system is linearized, to the final (unknown) point
+    into a series of small steps. At each step, linear approximation is re-computed around the previous step. By this
+    method, the solution to the system can be traced out to arbitrary precision by iteratively taking small steps.
 
-    return x0_shared, euler_step
+    Parameters
+    ----------
+    system: list of pytensor.tensor.TensorLike
+        A vector of equations of the form y(x, theta) = 0, where x are the variables and theta are the parameters
+    variables: list of pytensor.tensor.TensorVariable
+        A list of pytensor variables representing the variables in the system of equations
+    parameters: list of pytensor.tensor.TensorVariable
+        A list of pytensor variables representing the parameters in the system of equations
+    n_steps: int
+        The number of steps to take in the Euler approximation
+
+    Returns
+    -------
+    theta_final: pytensor.tensor.TensorVariable
+        A symbolic tensor representing the full trajectory of parameter updates used to compute the solution to the
+        system of equations at the final point, theta_final[-1].
+
+    result: pytensor.tensor.TensorVariable
+        The values of the variables at each step of the Euler approximation, corresponding to linear approximation
+        around the point (x[i-1], theta_final[i-1]) at each step i.
+
+    """
+    n_eq = len(system)
+    flat_system = flatten_equations(system)
+
+    x_list = cast(list, at_least_list(variables))
+    theta_list = cast(list, at_least_list(parameters))
+    theta_final = pt.stack([clone_and_rename(x) for x in theta_list])
+
+    theta0 = flatten_equations(theta_list)
+
+    dtheta = theta_final - theta0
+    step_size = dtheta / n_steps
+
+    A = make_jacobian(flat_system, x_list, n_eq)
+    A_inv = pt.linalg.solve(A, pt.identity_like(A), check_finite=False)
+    A_inv.name = "A_inv"
+
+    B = make_jacobian(flat_system, theta_list, n_eq)
+    Bv = B @ pt.atleast_1d(step_size)
+    Bv.name = "Bv"
+
+    step = -A_inv @ Bv
+    f_step = pytensor.compile.builders.OpFromGraph(
+        x_list + theta_list + [step_size], [step], inline=True
+    )
+
+    def step_func(x_prev, theta_prev, step_size):
+        step = f_step(*x_prev, *theta_prev, step_size)
+
+        x = x_prev + step
+        theta = theta_prev + step_size
+
+        return x, theta
+
+    result, updates = pytensor.scan(
+        step_func,
+        outputs_info=[pt.stack(x_list), pt.stack(theta_list)],
+        non_sequences=[step_size],
+        n_steps=n_steps,
+    )
+
+    x_trajectory = pt.concatenate([pt.stack(x_list)[None], result[0]], axis=0)
+    theta_trajectory = pt.concatenate([pt.stack(theta_list)[None], result[1]], axis=0)
+
+    return theta_final, [x_trajectory, theta_trajectory]
 
 
-#     sub_dict = {x: sp.Symbol(f"{x.name}_0", **x.assumptions0) for x in variables + parameters}
-#
-#     A_sub = A_mat.subs(sub_dict)
-#     Bv = B_mat.subs(sub_dict) @ sp.Matrix([[x] for x in parameters])
-#
-#     nb_A_sub = numba_lambdify(exog_vars=parameters, expr=A_sub, endog_vars=list(sub_dict.values()))
-#     nb_B_sub = numba_lambdify(exog_vars=parameters, expr=Bv, endog_vars=list(sub_dict.values()))
-#
-#     @nb.njit
-#     def f_dX(endog, exog):
-#         A = nb_A_sub(endog, exog)
-#         B = nb_B_sub(endog, exog)
-#
-#         return -np.linalg.solve(A, np.identity(A.shape[0])) @ B
-#
-#     return f_dX
-#
-# def compile_euler_step():
+def compile_euler_approximation_function(equations, variables, parameters, n_steps=100, mode=None):
+    theta_final, result = euler_approximation(equations, variables, parameters, n_steps=n_steps)
+
+    inputs = variables + parameters + [theta_final]
+
+    f_euler = pytensor.function(inputs, result, mode=mode)
+    return f_euler
+
+
+def euler_approximation_from_CGEModel(cge_model, n_steps=100, mode=None):
+    n_eq, flat_equations, variables, parameters = pytensor_objects_from_CGEModel(cge_model)
+    return compile_euler_approximation_function(
+        flat_equations, variables, parameters, n_steps=n_steps, mode=mode
+    )

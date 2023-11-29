@@ -6,6 +6,7 @@ import pytest
 from cge_modeling.base.primitives import Parameter, Variable
 from cge_modeling.pytensorf.compile import (
     compile_cge_model_to_pytensor,
+    compile_euler_approximation_function,
     make_printer_cache,
     object_to_pytensor,
 )
@@ -56,9 +57,46 @@ def test_compile_to_pytensor(model_func):
     assert f_jac_inv.fn.outputs[0].variable.type.shape == (n_eq, n_eq)
 
 
-def test_compile_euler_step():
-    cge_model = load_model_1(parse_equations_to_sympy=False)
-    n_eq = len(cge_model.unpacked_variable_names)
-    (f_model, f_jac, f_jac_inv) = compile_cge_model_to_pytensor(cge_model)
+def test_compile_euler_approximation_function():
+    # Example problem from Notes and Problems from Applied General Equilibrium Economics, Chapter 3
 
-    A_mat, B_mat = compile_euler_step_func()
+    variables = v1, v2 = [pt.dscalar(name) for name in ["v1", "v2"]]
+    parameters = v3 = pt.dscalar("v3")
+    inputs = variables + parameters
+
+    equations = [v1**2 * v3 - 1, v1 + v2 - 2]
+
+    def f_analytic(v3):
+        v1 = 1 / np.sqrt(v3)
+        v2 = 2 - v1
+        return np.array([v1, v2])
+
+    mode = "FAST_COMPILE"
+    f_1 = compile_euler_approximation_function(
+        equations, variables, [parameters], n_steps=1, mode=mode
+    )
+    f_10 = compile_euler_approximation_function(
+        equations, variables, [parameters], n_steps=10, mode=mode
+    )
+    f_100 = compile_euler_approximation_function(
+        equations, variables, [parameters], n_steps=100, mode=mode
+    )
+    f_10k = compile_euler_approximation_function(
+        equations, variables, [parameters], n_steps=10_000, mode=mode
+    )
+
+    initial_point = [1, 1]
+    v3_initial = 1
+    v3_final = 2
+
+    analytic_solution = f_analytic(v3_final)
+    approximate_solutions = [
+        f(*initial_point, v3_initial, np.array([v3_final]))[0] for f in [f_1, f_10, f_100, f_10k]
+    ]
+    errors = np.c_[[solution[-1] - analytic_solution for solution in approximate_solutions]]
+
+    # Test the errors are monotonically decreasing in the number of steps
+    assert np.all(np.diff(np.abs(errors), axis=0) < 0)
+
+    # Test that the solution is close to the analytic solution at 10,000 steps
+    assert np.allclose(approximate_solutions[-1][-1], analytic_solution, atol=1e-5)

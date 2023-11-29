@@ -5,7 +5,7 @@ from typing import Any, Literal, Optional, Sequence, cast
 import sympy as sp
 
 from cge_modeling.base.primitives import ModelObject
-from cge_modeling.utils import brackets_to_snake_case
+from cge_modeling.tools.utils import brackets_to_snake_case
 
 
 def _prod(args: Sequence) -> Any:
@@ -367,3 +367,45 @@ def expand_obj_by_indices(
             new_obj.update_dim_value(dim, label)
         out.append(new_obj)
     return out
+
+
+def make_dummy_sub_dict(cge_model):
+    """
+    Create a dictionary of dummy symbols to replace indexed variables and parameters in a CGE model.
+
+    Parameters
+    ----------
+    cge_model: CGEModel
+        The CGE model object to create the dictionary for
+
+    Returns
+    -------
+    dummy_dict: dict
+        A dictionary with keys as model variables and values as dummy symbols.
+
+    Notes
+    -----
+    This function is needed because Sympy cannot print indexed variables and parameters. We need to replace them
+    with non-indexed dummies before printing. Dimension information will be contained in the pytensor tensors.
+
+    """
+    var_dict = {
+        x.to_sympy(): sp.Symbol(x.base_name)
+        for x in cge_model.variables
+        if isinstance(x.to_sympy(), sp.Indexed)
+    }
+    param_dict = {
+        x.to_sympy(): sp.Symbol(x.base_name)
+        for x in cge_model.parameters
+        if isinstance(x.to_sympy(), sp.Indexed)
+    }
+
+    return {**var_dict, **param_dict}
+
+
+def replace_indexed_variables(equations, sub_dict):
+    """
+    Descriptive alias for sub_all_eqs
+    """
+    sp_equations = [eq._eq for eq in equations]
+    return sub_all_eqs(sp_equations, sub_dict)

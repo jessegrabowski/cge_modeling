@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Union
 
+import numpy as np
 import pandas as pd
 import sympy as sp
 from sympy.abc import greeks
