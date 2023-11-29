@@ -9,3 +9,4 @@ ipython~=8.17.2
 pytensor~=2.17.4
 latextable~=1.0.1
 texttable~=1.7.0
+sympytensor~=1.0.0
