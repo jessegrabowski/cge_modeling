@@ -1,10 +1,11 @@
 from typing import Literal, cast
 
+import numpy as np
 import pytensor
 import pytensor.tensor as pt
 from sympytensor import as_tensor
 
-from cge_modeling.parsing import normalize_eq
+from cge_modeling.tools.parsing import normalize_eq
 from cge_modeling.tools.pytensor_tools import (
     at_least_list,
     clone_and_rename,
@@ -34,7 +35,7 @@ def pytensor_objects_from_CGEModel(cge_model):
         cache = {k[0]: v for k, v in cache.items()}
         pytensor_equations = [eval(normalize_eq(eq.equation), cache) for eq in cge_model.equations]
 
-    flat_equations = pt.concatenate([eq.ravel() for eq in pytensor_equations], axis=-1)
+    flat_equations = flatten_equations(pytensor_equations)
     flat_equations = pt.specify_shape(flat_equations, (n_eq,))
     flat_equations.name = "equations"
 
@@ -43,7 +44,7 @@ def pytensor_objects_from_CGEModel(cge_model):
 
 def compile_cge_model_to_pytensor(
     cge_model, inverse_method: Literal["solve", "pinv", "svd"] = "solve"
-) -> tuple[pt.Op, pt.Op, pt.Op, pt.Op]:
+) -> tuple[tuple[list, list], tuple[pt.TensorLike, pt.TensorLike, pt.TensorLike, pt.TensorLike]]:
     """
     Compile a CGE model to a PyTensor function.
 
@@ -75,19 +76,8 @@ def compile_cge_model_to_pytensor(
     flat_equations, variables, parameters = pytensor_objects_from_CGEModel(cge_model)
     n_eq = flat_equations.type.shape[0]
 
-    jac = pytensor.gradient.jacobian(flat_equations, variables)
-    B_matirx_columns = pytensor.gradient.jacobian(flat_equations, parameters)
-
-    # Reshape to (n_eq, -1) so that the variables end up on the columns and the equations on the rows of the Jacobian
-    jac = pt.concatenate([pt.atleast_2d(x).reshape((n_eq, -1)) for x in jac], axis=-1)
-    jac = pt.specify_shape(jac, (n_eq, n_eq))
+    jac = make_jacobian(flat_equations, variables)
     jac.name = "jacobian"
-
-    B_matrix = pt.concatenate(
-        [pt.atleast_2d(x).reshape((n_eq, -1)) for x in B_matirx_columns], axis=-1
-    )
-    B_matrix = pt.specify_shape(B_matrix, (n_eq, len(parameters)))
-    B_matrix.name = "B_matrix"
 
     if inverse_method == "pinv":
         jac_inv = pt.linalg.pinv(jac)
@@ -105,13 +95,16 @@ def compile_cge_model_to_pytensor(
     jac_inv = pt.specify_shape(jac_inv, (n_eq, n_eq))
     jac_inv.name = "inverse_jacobian"
 
-    inputs = variables + parameters
-    f_model = pytensor.compile.builders.OpFromGraph(inputs, outputs=[flat_equations], inline=True)
-    f_jac = pytensor.compile.builders.OpFromGraph(inputs, outputs=[jac], inline=True)
-    f_jac_inv = pytensor.compile.builders.OpFromGraph(inputs, outputs=[jac_inv], inline=True)
+    B = make_jacobian(flat_equations, parameters)
+    B.name = "B"
 
-    ret_vals = (f_model, f_jac, f_jac_inv)
-    return ret_vals
+    inputs = (variables, parameters)
+    outputs = (flat_equations, jac, jac_inv, B)
+    # f_model = pytensor.compile.builders.OpFromGraph(inputs, outputs=[flat_equations], inline=True)
+    # f_jac = pytensor.compile.builders.OpFromGraph(inputs, outputs=[jac], inline=True)
+    # f_jac_inv = pytensor.compile.builders.OpFromGraph(inputs, outputs=[jac_inv], inline=True)
+
+    return inputs, outputs
 
 
 def euler_approximation(
@@ -151,23 +144,23 @@ def euler_approximation(
         around the point (x[i-1], theta_final[i-1]) at each step i.
 
     """
-    n_eq = len(system)
-    flat_system = flatten_equations(system)
-
     x_list = cast(list, at_least_list(variables))
     theta_list = cast(list, at_least_list(parameters))
-    theta_final = pt.stack([clone_and_rename(x) for x in theta_list])
+    theta_final = pt.concatenate(
+        [pt.atleast_1d(clone_and_rename(x)).flatten() for x in theta_list], axis=-1
+    )
 
     theta0 = flatten_equations(theta_list)
 
     dtheta = theta_final - theta0
     step_size = dtheta / n_steps
 
-    A = make_jacobian(flat_system, x_list, n_eq)
+    A = make_jacobian(system, x_list)
+    A = pytensor.printing.Print("A")(A)
     A_inv = pt.linalg.solve(A, pt.identity_like(A), check_finite=False)
     A_inv.name = "A_inv"
 
-    B = make_jacobian(flat_system, theta_list, n_eq)
+    B = make_jacobian(system, theta_list)
     Bv = B @ pt.atleast_1d(step_size)
     Bv.name = "Bv"
 
@@ -176,30 +169,50 @@ def euler_approximation(
         x_list + theta_list + [step_size], [step], inline=True
     )
 
-    def step_func(x_prev, theta_prev, step_size):
+    x_args = len(x_list)
+    x_shapes = [x.type.shape for x in x_list]
+    theta_args = len(theta_list)
+    theta_shapes = [theta.type.shape for theta in theta_list]
+
+    def step_func(*args):
+        x_prev = args[:x_args]
+        theta_prev = args[x_args : x_args + theta_args]
+        step_size = args[-1]
+
         step = f_step(*x_prev, *theta_prev, step_size)
+        x_next = []
+        cursor = 0
 
-        x = x_prev + step
-        theta = theta_prev + step_size
+        for shape in x_shapes:
+            s = int(np.prod(shape))
+            x_next.append(step[cursor : cursor + s].reshape(shape))
+            cursor += s
 
-        return x, theta
+        theta_next = []
+        cursor = 0
+        for shape in theta_shapes:
+            s = int(np.prod(shape))
+            theta_next.append(step[cursor : cursor + s].reshape(shape))
+            cursor += s
+
+        return x_next + theta_next
 
     result, updates = pytensor.scan(
         step_func,
-        outputs_info=[pt.stack(x_list), pt.stack(theta_list)],
+        outputs_info=x_list + theta_list,
         non_sequences=[step_size],
         n_steps=n_steps,
     )
 
-    x_trajectory = pt.concatenate([pt.stack(x_list)[None], result[0]], axis=0)
-    theta_trajectory = pt.concatenate([pt.stack(theta_list)[None], result[1]], axis=0)
+    # x_trajectory = pt.concatenate([pt.stack(x_list)[None], result[0]], axis=0)
+    # theta_trajectory = pt.concatenate([pt.stack(theta_list)[None], result[1]], axis=0)
 
-    return theta_final, [x_trajectory, theta_trajectory]
+    return theta_final, result
 
 
 def compile_euler_approximation_function(equations, variables, parameters, n_steps=100, mode=None):
     theta_final, result = euler_approximation(equations, variables, parameters, n_steps=n_steps)
-
+    theta_final.name = "theta_final"
     inputs = variables + parameters + [theta_final]
 
     f_euler = pytensor.function(inputs, result, mode=mode)
@@ -207,7 +220,7 @@ def compile_euler_approximation_function(equations, variables, parameters, n_ste
 
 
 def euler_approximation_from_CGEModel(cge_model, n_steps=100, mode=None):
-    n_eq, flat_equations, variables, parameters = pytensor_objects_from_CGEModel(cge_model)
+    flat_equations, variables, parameters = pytensor_objects_from_CGEModel(cge_model)
     return compile_euler_approximation_function(
         flat_equations, variables, parameters, n_steps=n_steps, mode=mode
     )
