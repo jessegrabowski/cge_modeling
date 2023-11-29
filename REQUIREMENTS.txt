@@ -6,6 +6,6 @@ sympy~=1.12
 scipy~=1.11.3
 pandas~=2.1.3
 ipython~=8.17.2
-pytensor~=2.18
+pytensor~=2.17.4
 latextable~=1.0.1
 texttable~=1.7.0
