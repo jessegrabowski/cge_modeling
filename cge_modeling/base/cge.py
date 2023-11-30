@@ -86,6 +86,10 @@ class CGEModel:
         if numeraire:
             del self._variables[numeraire]
 
+        # self.n_equations = len(self.unpacked_equation_names)
+        self.n_variables = len(self.unpacked_variable_names)
+        self.n_parameters = len(self.unpacked_parameter_names)
+
         self.scenarios: dict[str, Result] = {}
 
         self._compiled = False

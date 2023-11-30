@@ -49,12 +49,15 @@ def test_make_cache():
 @pytest.mark.parametrize("model_func", [load_model_1, load_model_2], ids=["1_Sector", "3_Sector"])
 def test_compile_to_pytensor(model_func):
     cge_model = model_func(parse_equations_to_sympy=False)
-    n_eq = len(cge_model.unpacked_variable_names)
-    (f_model, f_jac, f_jac_inv) = compile_cge_model_to_pytensor(cge_model)
+    n_variables = n_eq = len(cge_model.unpacked_variable_names)
+    n_params = len(cge_model.unpacked_parameter_names)
 
-    assert f_model.fn.outputs[0].variable.type.shape == (n_eq,)
-    assert f_jac.fn.outputs[0].variable.type.shape == (n_eq, n_eq)
-    assert f_jac_inv.fn.outputs[0].variable.type.shape == (n_eq, n_eq)
+    (variables, parameters), (model, jac, jac_inv, B) = compile_cge_model_to_pytensor(cge_model)
+
+    assert model.type.shape == (n_eq,)
+    assert jac.type.shape == (n_eq, n_variables)
+    assert jac_inv.type.shape == (n_eq, n_variables)
+    assert B.type.shape == (n_eq, n_params)
 
 
 def test_compile_euler_approximation_function():
@@ -64,7 +67,7 @@ def test_compile_euler_approximation_function():
     parameters = v3 = pt.dscalar("v3")
     inputs = variables + parameters
 
-    equations = [v1**2 * v3 - 1, v1 + v2 - 2]
+    equations = pt.stack([v1**2 * v3 - 1, v1 + v2 - 2])
 
     def f_analytic(v3):
         v1 = 1 / np.sqrt(v3)
@@ -91,7 +94,8 @@ def test_compile_euler_approximation_function():
 
     analytic_solution = f_analytic(v3_final)
     approximate_solutions = [
-        f(*initial_point, v3_initial, np.array([v3_final]))[0] for f in [f_1, f_10, f_100, f_10k]
+        np.c_[f(*initial_point, v3_initial, np.array([v3_final]))[:2]].T
+        for f in [f_1, f_10, f_100, f_10k]
     ]
     errors = np.c_[[solution[-1] - analytic_solution for solution in approximate_solutions]]
 
@@ -99,4 +103,4 @@ def test_compile_euler_approximation_function():
     assert np.all(np.diff(np.abs(errors), axis=0) < 0)
 
     # Test that the solution is close to the analytic solution at 10,000 steps
-    assert np.allclose(approximate_solutions[-1][-1], analytic_solution, atol=1e-5)
+    assert np.allclose(approximate_solutions[-1][-1, :], analytic_solution, atol=1e-5)

@@ -3,7 +3,10 @@ import pytensor
 import pytensor.tensor as pt
 from numpy.testing import assert_allclose
 
-from cge_modeling.pytensorf.compile import compile_cge_model_to_pytensor
+from cge_modeling.pytensorf.compile import (
+    compile_cge_model_to_pytensor,
+    compile_cge_model_to_pytensor_Op,
+)
 from cge_modeling.pytensorf.optimize import root
 from tests.utilities.models import load_model_1
 
@@ -87,7 +90,7 @@ def test_small_model():
 
 def test_small_model_from_compile():
     mod = load_model_1(parse_equations_to_sympy=False)
-    (f_model, f_jac, f_jac_inv) = compile_cge_model_to_pytensor(mod, inverse_method="solve")
+    (f_model, f_jac, f_jac_inv) = compile_cge_model_to_pytensor_Op(mod, inverse_method="solve")
     data = {
         "Y": 11000,
         "C": 11000,
