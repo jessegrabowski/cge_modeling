@@ -3,6 +3,11 @@ from typing import Literal, cast
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
+from pytensor.graph import FunctionGraph
+from pytensor.graph.rewriting.basic import (
+    SubstitutionNodeRewriter,
+    WalkingGraphRewriter,
+)
 from sympytensor import as_tensor
 
 from cge_modeling.tools.parsing import normalize_eq
@@ -24,6 +29,7 @@ def pytensor_objects_from_CGEModel(cge_model):
     n_eq = len(cge_model.unpacked_variable_names)
     variables = [object_to_pytensor(var, cge_model.coords) for var in cge_model.variables]
     parameters = [object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters]
+    n_variables = len(variables)
 
     cache = make_printer_cache(variables, parameters)
 
@@ -38,6 +44,22 @@ def pytensor_objects_from_CGEModel(cge_model):
     flat_equations = flatten_equations(pytensor_equations)
     flat_equations = pt.specify_shape(flat_equations, (n_eq,))
     flat_equations.name = "equations"
+
+    # JAX currently throws an error when trying to compute the gradient of a Prod op with zeros in the input.
+    # We shouldn't ever have this case anyway, so we can manually replace all Prod Ops with ones that have the
+    # no_zeros_in_input flag set to True.
+    # TODO: Fix this upstream in pytensor then remove all this
+    default_prod_op = pt.math.Prod(dtype=pytensor.config.floatX, acc_dtype=pytensor.config.floatX)
+    new_prod_op = pt.math.Prod(
+        dtype=pytensor.config.floatX, acc_dtype=pytensor.config.floatX, no_zeros_in_input=True
+    )
+
+    local_add_no_zeros = SubstitutionNodeRewriter(default_prod_op, new_prod_op)
+    add_no_zeros = WalkingGraphRewriter(local_add_no_zeros)
+    fg = FunctionGraph(variables + parameters, outputs=[flat_equations])
+    add_no_zeros.rewrite(fg)
+    flat_equations = fg.outputs[0]
+    variables, parameters = fg.inputs[:n_variables], fg.inputs[n_variables:]
 
     return flat_equations, variables, parameters
 
@@ -264,7 +286,6 @@ def euler_approximation(
 
     final_result = []
     for i, x in enumerate(x_list + theta_list):
-        print(x.type.shape, result[i].type.shape)
         x_with_initial = pt.concatenate([pt.atleast_Nd(x, n=result[i].ndim), result[i]], axis=0)
         final_result.append(x_with_initial)
 

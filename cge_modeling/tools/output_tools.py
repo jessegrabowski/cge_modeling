@@ -1,7 +1,10 @@
 import re
+import warnings
 from collections import defaultdict
 
+import arviz as az
 import sympy as sp
+import xarray as xr
 from IPython.display import Latex, display
 from latextable import draw_latex
 from sympy.printing.latex import LatexPrinter
@@ -400,26 +403,48 @@ def latex_print_equations(equation_info, return_latex=False):
         display(Latex(tex_output))
 
 
-def euler_approx_output_to_xarray(euler_output, cge_model):
+def list_of_array_to_idata(list_of_arrays: list, cge_model):
     """
-    Convert the output of a euler approximation to an xarray dataset
+    Convert a list of arrays to an xarray dataset
 
     Parameters
     ----------
-    euler_output: list
-        Output of euler_approximation, a list of lists of numpy arrays, each one corresponding to a variable or parameter
-        of the model, with left-most dimension corresponding to the approximation step index.
+    list_of_arrays: list
+        A list of numpy arrays, each one corresponding to a variable or parameter of the model, with left-most dimension
+        corresponding to the approximation step index. It is assumed that variables are ordered before the parameters,
+        and that the variables and parameters are in the same order as in the model.
 
     cge_model: CGEModel
         CGEModel object
 
     Returns
     -------
-    ds: xarray.Dataset
-        xarray dataset containing the output of the Euler approximation function, with labeled dimensions and coordinates.
+    idata: az.InferenceData
+        arviz InferenceData object with two groups -- variables and parameters -- each containing an xarray dataset
+        with the same dimensions as the input arrays. Dimensions are labeled using coordinates from the CGEModel object.
+
     """
 
     variables = cge_model.variables
     parameters = cge_model.parameters
+    n_variables = len(variables)
 
-    coords = cge_model.coords
+    coords = cge_model.coords.copy()
+    coords.update({"approx_step": range(len(list_of_arrays[0]))})
+
+    xr_var_dict = {
+        obj.name: (("step",) + obj.dims, list_of_arrays[i]) for i, obj in enumerate(variables)
+    }
+    xr_param_dict = {
+        obj.name: (("step",) + obj.dims, list_of_arrays[i + n_variables])
+        for i, obj in enumerate(parameters)
+    }
+
+    ds_vars = xr.Dataset(xr_var_dict, coords=coords)
+    ds_params = xr.Dataset(xr_param_dict, coords=coords)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        idata = az.InferenceData(variables=ds_vars, parameters=ds_params)
+
+    return idata

@@ -270,10 +270,13 @@ def euler_approx(f, x0, theta0, theta, n_steps):
 
     Using this algorithm, and given an infinite compute budget, g(x0, theta) can be computed to arbitrary precision.
     """
-
     x0 = np.atleast_1d(float_to_array(x0))
     theta0 = np.atleast_1d(float_to_array(theta0))
     theta = np.atleast_1d(float_to_array(theta))
+
+    output = np.zeros((n_steps + 1, x0.size + theta0.size))
+    output[0, : x0.size] = x0
+    output[0, x0.size :] = theta0
 
     dtheta = theta - theta0
     x = np.concatenate((x0, theta0))
@@ -282,5 +285,6 @@ def euler_approx(f, x0, theta0, theta, n_steps):
     for t in range(1, n_steps + 1):
         dx = f(step_size, x).ravel()
         x = x + np.concatenate((dx, step_size))
+        output[t, :] = x
 
-    return x
+    return output
