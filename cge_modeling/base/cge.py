@@ -4,6 +4,7 @@ from typing import Callable, Literal, Optional, Sequence, Union
 import numba as nb
 import numpy as np
 import pytensor
+import pytensor.tensor as pt
 import sympy as sp
 from scipy import optimize
 
@@ -18,6 +19,9 @@ from cge_modeling.base.utilities import (
     _replace_dim_marker_with_dim_name,
     _validate_input,
     ensure_input_is_sequence,
+    infer_object_shape_from_coords,
+    variable_dict_to_flat_array,
+    wrap_pytensor_func_for_scipy,
 )
 from cge_modeling.pytensorf.compile import (
     compile_cge_model_to_pytensor,
@@ -25,7 +29,8 @@ from cge_modeling.pytensorf.compile import (
     pytensor_objects_from_CGEModel,
 )
 from cge_modeling.tools.numba_tools import euler_approx, numba_lambdify
-from cge_modeling.tools.output_tools import display_latex_table
+from cge_modeling.tools.output_tools import display_latex_table, list_of_array_to_idata
+from cge_modeling.tools.pytensor_tools import make_jacobian
 from cge_modeling.tools.sympy_tools import (
     enumerate_indexbase,
     expand_obj_by_indices,
@@ -92,7 +97,9 @@ class CGEModel:
 
         self.scenarios: dict[str, Result] = {}
 
-        self._compiled = False
+        self._compiled: bool = False
+        self._compile_backend: Optional[Literal["pytensor", "numba"]] = None
+
         self.f_system: Optional[Callable] = None
         self.f_resid: Optional[Callable] = None
         self.f_grad: Optional[Callable] = None
@@ -446,14 +453,35 @@ class CGEModel:
         self.f_jac = numba_lambdify(variables, jac, parameters)
 
         # Functions used by optimize.minimize to solve the system of equations by minimizing the loss function
+        # Save these as member functions so they can be reused by optimizers
         self.f_resid = numba_lambdify(variables, resid, parameters)
         self.f_grad = numba_lambdify(variables, grad, parameters, ravel_outputs=True)
         self.f_hess = numba_lambdify(variables, hess, parameters)
 
         # Compile the one-step linear approximation function used by the iterative Euler approximation
-        self.f_dX = numba_linearize_cge_func(equations, variables, parameters)
-        self.f_euler = ft.partial(euler_approx, f=self.f_dX)
+        # We don't need to save this because it's only used internally by the euler_approx function
+        f_dX = numba_linearize_cge_func(equations, variables, parameters)
 
+        def euler_wrapper(*, theta_final, n_steps, **data):
+            x0 = np.array([data[x] for x in self.variable_names])
+            theta0 = np.array([data[x] for x in self.parameter_names])
+
+            result = euler_approx(f_dX, x0, theta0, theta_final, n_steps)
+            # Decompose the result back to a list of numpy arrays
+            shapes = [
+                infer_object_shape_from_coords(x, self.coords)
+                for x in self.variables + self.parameters
+            ]
+            out = []
+            cursor = 0
+            for shape in shapes:
+                s = int(np.prod(shape))
+                out.append(result[:, cursor : cursor + s].reshape(-1, *shape))
+                cursor += s
+
+            return out
+
+        self.f_euler = euler_wrapper
         self._compiled = True
 
     def __pytensor_euler_helper(self, *args, n_steps=100, **kwargs):
@@ -471,6 +499,28 @@ class CGEModel:
         inputs = variables + parameters
         self.f_system = pytensor.function(inputs=inputs, outputs=system, mode=mode)
         self.f_jac = pytensor.function(inputs=inputs, outputs=jac, mode=mode)
+
+        resid = (system**2).sum()
+        grad = pytensor.grad(resid, variables)
+        grad = pt.specify_shape(
+            pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]), self.n_variables
+        )
+        hess = make_jacobian(grad, variables)
+
+        f_root = pytensor.function(inputs=inputs, outputs=[resid, grad, hess], mode=mode)
+
+        def f_resid(**kwargs):
+            return f_root(**kwargs)[0]
+
+        def f_grad(**kwargs):
+            return f_root(**kwargs)[1]
+
+        def f_hess(**kwargs):
+            return f_root(**kwargs)[2]
+
+        self.f_resid = f_resid
+        self.f_grad = f_grad
+        self.f_hess = f_hess
 
         self.__last_n_steps = 0
         self.f_euler = self.__pytensor_euler_helper
@@ -501,8 +551,14 @@ class CGEModel:
         """
         if backend == "numba":
             self._compile_numba()
-        else:
+        elif backend == "pytensor":
             self._compile_pytensor(mode=mode, inverse_method=inverse_method)
+        else:
+            raise NotImplementedError(
+                f'Only "numba" and "pytensor" backends are supported, got {backend}'
+            )
+
+        self._compile_backend = backend
 
     def summary(
         self,
@@ -592,21 +648,114 @@ class CGEModel:
 
         return result
 
+    def _solve_with_euler_approximation(self, data, theta_final, n_steps):
+        result = self.f_euler(**data, theta_final=theta_final, n_steps=n_steps)
+        return list_of_array_to_idata(result, self)
+
+    def _solve_with_root(self, data, theta_final, use_jac=True, **optimizer_kwargs):
+        if self._compile_backend == "numba":
+            f_system = self.f_system
+            f_jac = self.f_jac
+        elif self._compile_backend == "pytensor":
+            f_system = wrap_pytensor_func_for_scipy(self.f_system, self)
+            f_jac = wrap_pytensor_func_for_scipy(self.f_jac, self)
+        else:
+            raise ValueError(
+                "Model must be compiled to a computational backend before it can be solved."
+            )
+
+        x0, theta0 = variable_dict_to_flat_array(data, self)
+
+        res = optimize.root(
+            f_system,
+            x0,
+            jac=f_jac if use_jac else None,
+            args=theta_final,
+            **optimizer_kwargs,
+        )
+
+        return res
+
+    def _solve_with_minimize(
+        self, data, theta_final, use_jac=True, use_hess=True, **optimizer_kwargs
+    ):
+        if self._compile_backend == "numba":
+            f_resid = self.f_resid
+            f_grad = self.f_grad
+            f_hess = self.f_hess
+        elif self._compile_backend == "pytensor":
+            f_resid = wrap_pytensor_func_for_scipy(self.f_resid, self)
+            f_grad = wrap_pytensor_func_for_scipy(self.f_grad, self)
+            f_hess = wrap_pytensor_func_for_scipy(self.f_hess, self)
+
+        else:
+            raise ValueError(
+                "Model must be compiled to a computational backend before it can be solved."
+            )
+
+        x0, theta0 = variable_dict_to_flat_array(data, self)
+
+        res = optimize.minimize(
+            f_resid,
+            x0,
+            jac=f_grad if use_jac else None,
+            hess=f_hess if use_hess else None,
+            args=theta_final,
+            **optimizer_kwargs,
+        )
+
+        return res
+
     def simulate(
         self,
         initial_state,
         final_values=None,
         final_delta=None,
         final_delta_pct=None,
+        use_euler_approximation=True,
+        use_root_solver=True,
         n_iter_euler=10_000,
         name=None,
+        compile_kwargs=None,
         **optimizer_kwargs,
     ):
+        """
+        Simulate a shock to the model economy by computing the equilibrium state of the economy at the provided
+        post-shock values.
 
+        Parameters
+        ----------
+        initial_state: dict[str, np.arary]
+            A dictionary of initial values for the model variables and parameters. The keys should be the names of the
+            variables and parameters, and the values should be numpy arrays of the same shape as the variable or
+            parameter.
+
+        final_values:
+        final_delta
+        final_delta_pct
+        n_iter_euler
+        name
+        compile_kwargs
+        optimizer_kwargs
+
+        Returns
+        -------
+
+        """
         if not self._compiled:
-            self._compile()
+            if compile_kwargs is None:
+                compile_kwargs = {}
+            self._compile(**compile_kwargs)
 
-        x0_var_param = initial_state.to_dict()["fitted"].copy()
+        if isinstance(initial_state, Result):
+            x0_var_param = initial_state.to_dict()["fitted"].copy()
+        elif isinstance(initial_state, dict):
+            x0_var_param = initial_state.copy()
+        else:
+            raise ValueError(
+                f"initial_state must be a Result or a dict of initial values, found {type(initial_state)}"
+            )
+
         x0, theta0 = state_dict_to_input_arrays(
             x0_var_param, self.unpacked_variable_names, self.unpacked_parameter_names
         )
@@ -654,6 +803,15 @@ class CGEModel:
         errors = self.f_system(endog, exog)
         for eq, val in zip(self.unpacked_equation_names, errors):
             print(f"{eq:<75}: {val:<10.3f}")
+
+    def check_for_equilibrium(self, data, tol=1e-6):
+        errors = self.f_system(**data)
+        sse = (errors**2).sum()
+
+        if sse < tol:
+            print(f"Equilibrium found! Total squared error: {sse:0.6f}")
+        else:
+            print(f"Equilibrium not found. Total squared error: {sse:0.6f}")
 
 
 def recursive_solve_symbolic(equations, known_values=None, max_iter=100):

@@ -1,6 +1,8 @@
 import re
 from typing import Union
 
+import numpy as np
+
 from cge_modeling.base.primitives import Parameter, Variable
 
 
@@ -55,3 +57,41 @@ def _expand_var_by_index(obj: Union[Variable, Parameter], coords: dict[str, list
 def _replace_dim_marker_with_dim_name(s):
     s = re.sub("(<dim:(.+?)>)", r"\g<2>", s)
     return s
+
+
+def infer_object_shape_from_coords(obj, coords):
+    dims = obj.dims
+    shape = tuple(len(coords[dim]) for dim in dims)
+    return shape
+
+
+def flat_array_to_variable_dict(x, cge_model):
+    all_objects = cge_model.variables + cge_model.parameters
+
+    d = {}
+    cursor = 0
+    for obj in all_objects:
+        shape = infer_object_shape_from_coords(obj, cge_model.coords)
+        s = int(np.prod(shape))
+        d[obj.name] = x[cursor : cursor + s].reshape(shape)
+        cursor += s
+
+    return d
+
+
+def variable_dict_to_flat_array(d, cge_model, concat_returns=True):
+    variables = np.r_[*[np.atleast_1d(d[var.name]).ravel() for var in cge_model.variables]]
+    parameters = np.r_[*[np.atleast_1d(d[var.name]).ravel() for var in cge_model.parameters]]
+
+    return variables, parameters
+
+
+def wrap_pytensor_func_for_scipy(f, cge_model):
+    def inner_f(x0, theta):
+        n_x = x0.shape[0]
+        # Scipy will pass x0 as a single long vector, and theta as an arg.
+        inputs = np.r_[x0, theta]
+        data = flat_array_to_variable_dict(inputs, cge_model)
+        return f(**data)
+
+    return inner_f
