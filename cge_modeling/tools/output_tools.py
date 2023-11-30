@@ -398,3 +398,28 @@ def latex_print_equations(equation_info, return_latex=False):
 
     else:
         display(Latex(tex_output))
+
+
+def euler_approx_output_to_xarray(euler_output, cge_model):
+    """
+    Convert the output of a euler approximation to an xarray dataset
+
+    Parameters
+    ----------
+    euler_output: list
+        Output of euler_approximation, a list of lists of numpy arrays, each one corresponding to a variable or parameter
+        of the model, with left-most dimension corresponding to the approximation step index.
+
+    cge_model: CGEModel
+        CGEModel object
+
+    Returns
+    -------
+    ds: xarray.Dataset
+        xarray dataset containing the output of the Euler approximation function, with labeled dimensions and coordinates.
+    """
+
+    variables = cge_model.variables
+    parameters = cge_model.parameters
+
+    coords = cge_model.coords
