@@ -1,10 +1,7 @@
 [tool.pytest.ini_options]
 minversion = "6.0"
 xfail_strict = true
-addopts = [
-  "-v",
-  "--doctest-modules",
-]
+env = ["NUMBA_DISABLE_JIT = 1"]
 
 
 [tool.black]
