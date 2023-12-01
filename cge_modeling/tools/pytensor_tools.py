@@ -8,7 +8,7 @@ import sympy as sp
 from cge_modeling.base.primitives import Parameter, Variable
 
 
-def object_to_pytensor(obj: Union[Parameter, Variable], coords: dict[str, Sequence]):
+def object_to_pytensor(obj: Union[Parameter, Variable], coords: dict[str, list[str, ...]]):
     """
     Convert a CGE model object to a PyTensor object.
 

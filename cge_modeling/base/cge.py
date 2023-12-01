@@ -54,14 +54,91 @@ ValidGroups = Literal[
 
 
 class CGEModel:
+    """
+    This class represents a CGE model. It is the main interface for interacting with the model.
+
+    Parameters
+    ----------
+    coords: dict[str, Sequence[str]]
+        A dictionary of dimension names and labels associated with each dimension. For example, if certain objects in
+        the model are indexed by "sector", then coords should contain a key "sector" with a list of sector labels as
+        values: {"sector": ["Agriculture", "Industry", "Service"]}.
+
+    variables: list of Variables
+        A list of endogenous variables associated with the model. These will be solved for during simulation.
+
+    parameters: list of Parameters
+        A list of parameters associated with the model. These are fixed during simulation. Note that exogenous variables
+        should be included as parameters.
+
+    equations: list of Equations
+        A list of equations associated with the model. These define relationships between the variables and parameters.
+
+    numeraire: Variable, optional
+        The numéraire variable. If supplied, the numéraire will be removed from the model, and all instances of the
+        numéraire in model equations will be set to 1.
+        NOTE: It is not currently recommended to use this feature. Instead, add an equation to the model
+              fixing the numéraire variable to 1.
+
+    parse_equations_to_sympy: bool, optional
+        If True, the equations will be parsed to sympy expressions. This is required for the model to be compiled to
+        the "numba" backend. If False, the equations will be converted to symbolic pytensor expressions.
+        This is required for the model to be compiled to the "pytensor" backend. Defaults to True.
+
+    backend: str, optional
+        Computational backend to compile the model to. One of "pytensor" or "numba". Defaults to "numba".
+
+    mode: str, optional
+        Compilation mode for the pytensor backend. One of None, "JAX", or "NUMBA". Defaults to None. Note that this
+        argument is ignored if the backend is not "pytensor".
+
+    inverse_method: str, optional
+        Method to use to compute the inverse of the Jacobian matrix. One of "solve", "pinv", or "SGD".
+        Defaults to "solve". Ignored if the backend is not "pytensor".
+
+    compile: bool, optional
+        Whether to compile the model during initialization. Defaults to True.
+
+
+    Notes
+    -----
+    Computable General Equilibrium models are used to study the change in economic equilibria following shifts in model
+    parameters. The purpose of this class is to provide an organized framework for declaring and studying this class
+    of models.
+
+    At it's most basic, a CGE model is comprised of three types of objects: variables, parameters, and equations. Each
+    of these should declared separately using the appropriate object type. For example, to declare a variable, use the
+    Variable class. Distinction between variables and parameters is enforced to check that the model is square (there
+    are as many equations as there are variables), and to determine which objects to solve for during simulation.
+
+    Another important job of a model is to hold information about the dimensions of the model. Variables and parameters
+    are declared with abstract indices, called dims. This is meant to match the notation used in the literature. For
+    example, a variable representing the demand for capital in sector i would be written as ..math :: K_{d,i}. To
+    represent this in a CGE model, we would declare a Variable with name "K_d" and dims "i". The dims on the Variable
+    are arbitrary, but become concrete when placed in the context of a model. Therefore, the model must be supplied with
+    a dictionary of dimension names and labels, called "coordinates" in packages for multi-dimensional array handing
+    (e.g. xArray). For example, if the model will recieve data with dimension i, then the coords dictionary should
+    provide a mapping from "i" to a list of labels for the dimension i. For example, {"i": ["Agriculture", "Industry",
+    "Service"]}.
+
+    When considering the "squareness" of a model, the "unpacked" dimensions of the variables and equations are
+    considered. Therefore, it may not be the case that the number of variables declared is equal to the number of
+    equations declared.
+
+    """
+
     def __init__(
         self,
-        coords: Optional[dict[str, Sequence[str]]] = None,
+        coords: Optional[dict[str, list[str, ...]]] = None,
         variables: Optional[Union[list[Variable], dict[str, Variable]]] = None,
         parameters: Optional[Union[list[Parameter], dict[str, Parameter]]] = None,
         equations: Optional[Union[list[Equation], dict[str, Equation]]] = None,
         numeraire: Optional[Variable] = None,
         parse_equations_to_sympy: bool = True,
+        backend: Optional[Literal["pytensor", "numba"]] = "numba",
+        mode: Optional[str] = None,
+        inverse_method: str = "solve",
+        compile=True,
     ):
         self.numeraire = None
         self.coords = {} if coords is None else coords
@@ -106,6 +183,9 @@ class CGEModel:
         self.f_hess: Optional[Callable] = None
         self.f_jac: Optional[Callable] = None
         self.f_dX: Optional[Callable] = None
+
+        if compile:
+            self._compile(backend=backend, mode=mode, inverse_method=inverse_method)
 
     def _initialize_group(self, objects, group_name):
         if objects is None:
@@ -310,8 +390,8 @@ class CGEModel:
         local_dict = var_dict | param_dict | str_dim_to_symbol
         fancy_dict = fancy_var_dict | fancy_param_dict | str_dim_to_symbol
         if self.parse_equations_to_sympy:
-            # TODO: Should i call substitute_reduce_ops here to remove the sum/product over dummy indices in the equation
-            #  lists? Downside: it will make very long expressions if the dim labels are long.
+            # TODO: Should i call substitute_reduce_ops here to remove the sum/product over dummy indices in the
+            #  equation lists? Downside: it will make very long expressions if the dim labels are long.
             try:
                 sympy_eq = sp.parse_expr(
                     equation.equation, local_dict=local_dict, transformations="all"
@@ -391,7 +471,22 @@ class CGEModel:
         var_names = ensure_input_is_sequence(var_names)
         return [self.get_variable(name) for name in var_names]
 
-    def get(self, names: Optional[list[str]] = None):
+    def get(
+        self, names: Optional[Union[str, list[str, ...]]] = None
+    ) -> list[Union[Variable, Parameter]]:
+        """
+        Retrieve a list of model objects (variables or parameters) from the model by name.
+
+        Parameters
+        ----------
+        names: str or list of str, optional
+            Variable or parameter names to retrieve from the model. If None, return all model variables and parameters.
+
+        Returns
+        -------
+        out: list of Variable or Parameter
+            The requested model objects.
+        """
         if names is None:
             names = self.parameter_names + self.variable_names
         if isinstance(names, str):
@@ -668,7 +763,7 @@ class CGEModel:
                 "Model must be compiled to a computational backend before it can be solved."
             )
 
-        x0, theta0 = variable_dict_to_flat_array(data, self)
+        x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
 
         res = optimize.root(
             f_system,
@@ -701,7 +796,7 @@ class CGEModel:
                 "Model must be compiled to a computational backend before it can be solved."
             )
 
-        x0, theta0 = variable_dict_to_flat_array(data, self)
+        x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
 
         res = optimize.minimize(
             f_resid,

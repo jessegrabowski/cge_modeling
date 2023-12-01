@@ -430,7 +430,7 @@ def list_of_array_to_idata(list_of_arrays: list, cge_model):
     n_variables = len(variables)
 
     coords = cge_model.coords.copy()
-    coords.update({"approx_step": range(len(list_of_arrays[0]))})
+    coords.update({"step": range(len(list_of_arrays[0]))})
 
     xr_var_dict = {
         obj.name: (("step",) + obj.dims, list_of_arrays[i]) for i, obj in enumerate(variables)
