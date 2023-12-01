@@ -1,12 +1,23 @@
+from typing import Callable
+
+import numpy as np
 import pytest
 
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Parameter, Variable
+from tests.utilities.models import (
+    calibrate_model_1,
+    calibrate_model_2,
+    load_model_1,
+    load_model_2,
+    model_1_data,
+    model_2_data,
+)
 
 
 @pytest.fixture()
 def model():
-    return CGEModel(coords={"i": ["A", "B", "C"]})
+    return CGEModel(coords={"i": ["A", "B", "C"]}, compile=False)
 
 
 @pytest.mark.parametrize(
@@ -104,3 +115,63 @@ def test_get(args, model):
         args = model.variable_names + model.parameter_names
 
     assert all([x in out_names for x in args])
+
+
+@pytest.mark.parametrize(
+    "model_function, calibrate_model, data",
+    [
+        (load_model_1, calibrate_model_1, model_1_data),
+        (load_model_2, calibrate_model_2, model_2_data),
+    ],
+    ids=["simple_model", "3-goods simple"],
+)
+def test_backends_agree(model_function: Callable, calibrate_model: Callable, data: dict):
+    model_numba = model_function(backend="numba")
+    model_pytensor = model_function(
+        backend="pytensor", mode="FAST_COMPILE", parse_equations_to_sympy=False
+    )
+
+    def solver_agreement_checks(results: list, names: list):
+        for res, name in zip(results, names):
+            assert res.success, f"{name} solver failed to converge"
+            assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
+
+        np.testing.assert_allclose(
+            np.around(results[0].x, 4), np.around(results[1].x, 4), atol=1e-5, rtol=1e-5
+        ), "Solvers disagree"
+
+    calibated_data = calibrate_model(**data)
+    np.testing.assert_allclose(model_pytensor.f_system(**calibated_data), 0)
+
+    labor_increase = calibated_data.copy()
+    labor_increase["L_s"] = 10_000
+    theta_labor_increase = np.array(
+        [labor_increase[x] for x in model_numba.parameter_names], dtype=float
+    )
+
+    # Test the root finder
+    res_numba = model_numba._solve_with_root(calibated_data, theta_labor_increase)
+    res_pytensor = model_pytensor._solve_with_root(calibated_data, theta_labor_increase)
+    solver_agreement_checks([res_numba, res_pytensor], ["Numba", "PyTensor"])
+
+    # Test minimization of residuals
+    res_numba = model_numba._solve_with_minimize(
+        calibated_data, theta_labor_increase, method="trust-ncg"
+    )
+    res_pytensor = model_pytensor._solve_with_minimize(
+        calibated_data, theta_labor_increase, method="trust-ncg"
+    )
+    solver_agreement_checks([res_numba, res_pytensor], ["Numba", "PyTensor"])
+
+    # Test Euler approximation
+    res_numba = model_numba._solve_with_euler_approximation(
+        calibated_data, theta_final=theta_labor_increase, n_steps=10_000
+    )
+    res_pytensor = model_pytensor._solve_with_euler_approximation(
+        calibated_data, theta_final=theta_labor_increase, n_steps=10_000
+    )
+
+    res_numba = res_numba.parameters.isel(step=-1).to_array().values
+    res_pytensor = res_pytensor.parameters.isel(step=-1).to_array().values
+
+    np.testing.assert_allclose(res_numba, res_pytensor)

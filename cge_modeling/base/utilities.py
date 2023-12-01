@@ -45,7 +45,7 @@ def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
 
 
 def _expand_var_by_index(
-    obj: Union[Variable, Parameter], coords: dict[str, list[str]]
+    obj: Union[Variable, Parameter], coords: dict[str, list[str, ...]]
 ) -> list[Union[Variable, Parameter]]:
     """
     Create a set of CGE Model objects from a single object using the cartesian product of the object's dimensions
@@ -154,7 +154,7 @@ def _replace_dim_marker_with_dim_name(s: str) -> str:
 
 
 def infer_object_shape_from_coords(
-    obj: Union[Variable, Parameter], coords: dict[str, list[str]]
+    obj: Union[Variable, Parameter], coords: dict[str, list[str, ...]]
 ) -> tuple[int]:
     """
     Infer the shape of a CGE Model object from a provided coordinate dictionary.
@@ -203,7 +203,7 @@ def infer_object_shape_from_coords(
 
 
 def flat_array_to_variable_dict(
-    x: np.ndarray, objects: list[Union[Variable, Parameter]], coords: dict[str, list[str]]
+    x: np.ndarray, objects: list[Union[Variable, Parameter]], coords: dict[str, list[str, ...]]
 ) -> dict[str, np.ndarray]:
     """
     Convert a flat array to a dictionary of variables and parameters.
@@ -315,7 +315,7 @@ def wrap_pytensor_func_for_scipy(
     f: Callable,
     variable_list: list[Variable],
     parameter_list: list[Parameter],
-    coords: dict[str, list[str]],
+    coords: dict[str, list[str, ...]],
 ) -> Callable:
     """
     Wrap a PyTensor function for use with scipy.optimize.root or scipy.optimize.minimize.
@@ -340,14 +340,13 @@ def wrap_pytensor_func_for_scipy(
         long vector of parameters as second input. The wrapped function will unpack these vectors into a dictionary of
         variables and parameters, and then unpack that dictionary into keyword arguments to the original function.
     """
-    all_objects = variable_list + parameter_list
 
     @ft.wraps(f)
     def inner_f(x0, theta):
         n_x = x0.shape[0]
         # Scipy will pass x0 as a single long vector, and theta as an arg.
         inputs = np.r_[x0, theta]
-        data = flat_array_to_variable_dict(inputs, all_objects, coords)
+        data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
         return f(**data)
 
     return inner_f

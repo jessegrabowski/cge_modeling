@@ -1,7 +1,9 @@
+import numpy as np
+
 from cge_modeling import CGEModel, Equation, Parameter, Variable
 
 
-def load_model_1(parse_equations_to_sympy=True):
+def load_model_1(**kwargs):
     variable_info = [
         # Firm Variables
         Variable(name="Y", description="Total output of goods"),
@@ -45,11 +47,48 @@ def load_model_1(parse_equations_to_sympy=True):
         variables=variable_info,
         parameters=param_info,
         equations=equations,
-        parse_equations_to_sympy=parse_equations_to_sympy,
+        **kwargs,
     )
 
 
-def load_model_2(parse_equations_to_sympy=True):
+def calibrate_model_1(L_s, K_s, P, r):
+    calib_dict = {"L_s": L_s, "K_s": K_s, "P": P, "r": r}
+
+    # Numeraire
+    w = 1
+
+    INC = w * L_s + r * K_s
+    C = INC / P
+    Y = C
+    K_d = K_s
+    L_d = L_s
+
+    alpha = r * K_d / Y / P
+    A = Y / (K_d**alpha * L_d ** (1 - alpha))
+    resid = L_d - L_s
+
+    calib_dict["w"] = w
+    calib_dict["income"] = INC
+    calib_dict["C"] = C
+    calib_dict["Y"] = Y
+    calib_dict["K_d"] = K_d
+    calib_dict["L_d"] = L_d
+    calib_dict["alpha"] = alpha
+    calib_dict["A"] = A
+    calib_dict["resid"] = resid
+
+    return calib_dict
+
+
+model_1_data = {"L_s": 7000.0, "K_s": 4000.0, "P": 1.0, "r": 1.0}
+
+
+def load_model_2(**kwargs):
+    backend = kwargs.get("backend", "numba")
+    sectors = ["0", "1", "2"]
+    coords = {"i": sectors, "j": sectors}
+    n_sectors = len(sectors)
+
     variable_info = [
         # Firm Variables
         Variable(name="Y", dims="i", description="Total output of good <dim:i>"),
@@ -157,10 +196,14 @@ def load_model_2(parse_equations_to_sympy=True):
         # Value chain bundle
         Equation(
             "Sector <dim:i> production of intermediate goods bundle",
-            "VC[None] * P_VC[None] = (P[:, None] * X).sum(axis=0).ravel()",
+            "VC[None] * P_VC[None] = (P[:, None] * X).sum(axis=0).ravel()"
+            if backend == "pytensor"
+            else "VC * P_VC = Sum(P.subs({i:j}) * X.subs([(i,k), (j,i), (k,j)]), "
+            + f"(j, 0, {n_sectors - 1}))",
         ),
         Equation(
-            "Sector <dim:i> demand for sector <dim:j> intermediate input", "X = psi_X * VC[:, None]"
+            "Sector <dim:i> demand for sector <dim:j> intermediate input",
+            "X = psi_X * VC[:, None]" if backend == "pytensor" else "X = psi_X * VC.subs({i:j})",
         ),
         # Value add bundle
         Equation(
@@ -177,22 +220,112 @@ def load_model_2(parse_equations_to_sympy=True):
         ),
         # # Household Equations
         Equation("Household income", "income = w * L_s + r * K_s"),
-        Equation("Household utility", "U = (C**gamma).prod()"),
+        Equation(
+            "Household utility",
+            "U = (C**gamma).prod()"
+            if backend == "pytensor"
+            else "U = Product(C**gamma, " + f"(i, 0, {n_sectors - 1}))",
+        ),
         Equation("Household demand for good <dim:i>", "C = gamma * income / P"),
         # # Market clearning conditions
-        Equation("Labor market clearing", "L_s = L_d.sum() + resid"),
-        Equation("Capital market clearing", "K_s = K_d.sum()"),
-        Equation("Sector <dim:i> goods market clearing", "Y = C + X.sum(axis=1)"),
-        Equation("Numeraire", "P[0] = P_Ag_bar"),
+        Equation(
+            "Labor market clearing",
+            "L_s = L_d.sum() + resid"
+            if backend == "pytensor"
+            else "L_s = resid + Sum(L_d, " + f"(i, 0, {n_sectors - 1}))",
+        ),
+        Equation(
+            "Capital market clearing",
+            "K_s = K_d.sum()"
+            if backend == "pytensor"
+            else f"K_s = Sum(K_d, (i, 0, {n_sectors - 1}))",
+        ),
+        Equation(
+            "Sector <dim:i> goods market clearing",
+            "Y = C + X.sum(axis=1)"
+            if backend == "pytensor"
+            else f"Y = C + Sum(X, (j, 0, {n_sectors - 1}))",
+        ),
+        Equation(
+            "Numeraire", "P[0] = P_Ag_bar" if backend == "pytensor" else "P.subs({i:0}) = P_Ag_bar"
+        ),
     ]
 
-    sectors = ["0", "1", "2"]
-    coords = {"i": sectors, "j": sectors}
-
     return CGEModel(
-        variables=variable_info,
-        parameters=param_info,
-        equations=equations,
-        coords=coords,
-        parse_equations_to_sympy=parse_equations_to_sympy,
+        variables=variable_info, parameters=param_info, equations=equations, coords=coords, **kwargs
     )
+
+
+def calibrate_model_2(L_d, K_d, Y, X, P, P_VA, P_VC, r, w, phi_VA, P_Ag_bar):
+    calib_dict = {
+        "L_d": L_d,
+        "K_d": K_d,
+        "Y": Y,
+        "X": X,
+        "P": P,
+        "r": r,
+        "w": w,
+        "P_VA": P_VA,
+        "P_VC": P_VC,
+        "phi_VA": phi_VA,
+        "P_Ag_bar": P_Ag_bar,
+    }
+
+    rho_VA = (phi_VA - 1) / phi_VA
+
+    # Numeraire
+    resid = 0.0
+
+    # Household calibration
+    L_s = L_d.sum()
+    K_s = K_d.sum()
+    income = w * L_s + r * K_s
+    C = Y - X.sum(axis=1)
+    gamma = C / income * P
+    U = (C**gamma).prod()
+
+    # Firm calibration
+    VA = (w * L_d + r * K_d) / P_VA
+    VC = (P[:, None] * X).sum(axis=0) / P_VC
+
+    alpha = r * K_d ** (1 / phi_VA) / (r * K_d ** (1 / phi_VA) + w * L_d ** (1 / phi_VA))
+    A = VA * (alpha * K_d**rho_VA + (1 - alpha) * L_d**rho_VA) ** (-1 / rho_VA)
+
+    psi_VA = VA / Y
+    psi_VC = VC / Y
+    psi_X = X / VC[None]
+
+    calib_dict["VA"] = VA
+    calib_dict["VC"] = VC
+    calib_dict["psi_VC"] = psi_VC
+    calib_dict["psi_VA"] = psi_VA
+    calib_dict["psi_X"] = psi_X
+    calib_dict["alpha"] = alpha
+    calib_dict["A"] = A
+
+    calib_dict["income"] = income
+    calib_dict["C"] = C
+    calib_dict["U"] = U
+    calib_dict["gamma"] = gamma
+
+    calib_dict["K_s"] = K_s
+    calib_dict["L_s"] = L_s
+    calib_dict["resid"] = resid
+    calib_dict["w"] = w
+
+    return calib_dict
+
+
+model_2_data = {
+    "L_d": np.array([1000.0, 2000.0, 4000.0]),
+    "K_d": np.array([500.0, 2000.0, 500.0]),
+    "X": np.array([[1000.0, 1000.0, 1000.0], [2000.0, 3500.0, 3000.0], [500.0, 2500.0, 1000.0]]),
+    "Y": np.array([5000.0, 11000.0, 9500.0]),
+    "phi_VA": np.array([3.0, 3.0, 3.0]),
+    "P": np.array([1.0, 1.0, 1.0]),
+    "P_VA": np.array([1.0, 1.0, 1.0]),
+    "P_VC": np.array([1.0, 1.0, 1.0]),
+    "r": 1.0,
+    "w": 1.0,
+    "P_Ag_bar": 1.0,
+}

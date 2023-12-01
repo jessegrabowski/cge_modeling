@@ -256,7 +256,7 @@ def find_equation_dims(eq: sp.Expr, index_symbols: list[sp.Idx]) -> tuple[str]:
     return cast(tuple[str], tuple(x.name for x in sorted_ids))
 
 
-def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, list[str]]) -> sp.Expr:
+def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, list[str, ...]]) -> sp.Expr:
     """
     Substitute a sum or product operation with a sum or product of expanded expressions.
 

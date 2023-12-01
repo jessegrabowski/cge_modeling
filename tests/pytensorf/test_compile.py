@@ -46,9 +46,19 @@ def test_make_cache():
     assert all([var in variables + parameters for var in cache.values()])
 
 
-@pytest.mark.parametrize("model_func", [load_model_1, load_model_2], ids=["1_Sector", "3_Sector"])
-def test_compile_to_pytensor(model_func):
-    cge_model = model_func(parse_equations_to_sympy=False)
+@pytest.mark.parametrize(
+    "model_func, kwargs",
+    [
+        (load_model_1, {"backend": "pytensor", "compile": False, "parse_equations_to_sympy": True}),
+        (
+            load_model_2,
+            {"backend": "pytensor", "compile": False, "parse_equations_to_sympy": False},
+        ),
+    ],
+    ids=["1_Sector", "3_Sector"],
+)
+def test_compile_to_pytensor(model_func, kwargs):
+    cge_model = model_func(**kwargs)
     n_variables = n_eq = len(cge_model.unpacked_variable_names)
     n_params = len(cge_model.unpacked_parameter_names)
 
