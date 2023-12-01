@@ -1,5 +1,6 @@
+import functools as ft
 import re
-from typing import Any, Sequence, Union, cast
+from typing import Any, Callable, Sequence, Union, cast
 
 import numpy as np
 
@@ -201,7 +202,58 @@ def infer_object_shape_from_coords(
     return shape
 
 
-def flat_array_to_variable_dict(x, objects, coords):
+def flat_array_to_variable_dict(
+    x: np.ndarray, objects: list[Union[Variable, Parameter]], coords: dict[str, list[str]]
+) -> dict[str, np.ndarray]:
+    """
+    Convert a flat array to a dictionary of variables and parameters.
+
+    Parameters
+    ----------
+    x: np.ndarray
+        Flat array containing all variable and parameters in the model. The ordering is assumed to match the ordering
+        given by list passed to the objects argument, with multidimensional objects flattened in row-major order.
+    objects: list[Union[Variable, Parameter]]
+        List of variables and parameters
+    coords: dict[str, list[str]]
+        Dictionary of coordinates mapping dimension names to lists of labels associated with that dimension.
+
+    Returns
+    -------
+    d: dict[str, np.ndarray]
+        Dictionary mapping variable and parameter names to numpy arrays containing the values of those variables and
+        parameters.
+
+    Notes
+    -----
+    This function is the inverse of variable_dict_to_flat_array.
+
+    The goal of this pair of functions is to hide  flattening and concatenation operations from the user. The user
+    should only have to reason about input and outputs in terms of each individual object, without ever having to
+    worry about unifying them into a single long vector or large matrix.
+
+    The ordering of the variables and parameters in the output vector is determined by the order of the variables and
+    parameters in the variable_list and parameter_list arguments. Variables are ordered first, followed by parameters.
+    Multidimensional objects are flattened in row-major order.
+
+    # TODO: This function cannot currently handle batch dimensions, but it should be able to.
+
+    Examples
+    --------
+    .. code-block:: python
+        from cge_modeling.base.primitives import Variable
+        from cge_modeling.base.utilities import flat_array_to_variable_dict
+
+        x = Variable(name='x', dims='i', description='Output of the <dim:i> sector')
+        coords = {'i': ['Agriculture', 'Industrial', 'Service']}
+        flat_array_to_variable_dict(np.array([1, 2, 3]), [x], coords)
+        # Out: {'x': array([1, 2, 3])}
+
+        z = Variable(name='phi_X', dims='i, j', description='Quantity of <dim:j> goods in sector <dim:i> value chain')
+        coords = {'i': ['Agriculture', 'Industrial', 'Service'], 'j': ['Agriculture', 'Industrial', 'Service']}
+        flat_array_to_variable_dict(np.array([1, 2, 3, 4, 5, 6, 7, 8, 9]), [z], coords)
+        # Out: {'phi_X': array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])}
+    """
     d = {}
     cursor = 0
     for obj in objects:
@@ -240,6 +292,12 @@ def variable_dict_to_flat_array(
 
     Notes
     -----
+    This function is the inverse of flat_array_to_variable_dict.
+
+    The goal of this pair of functions is to hide  flattening and concatenation operations from the user. The user
+    should only have to reason about input and outputs in terms of each individual object, without ever having to
+    worry about unifying them into a single long vector or large matrix.
+
     The ordering of the variables and parameters in the output vector is determined by the order of the variables and
     parameters in the variable_list and parameter_list arguments. Variables are ordered first, followed by parameters.
     Multidimensional objects are flattened in row-major order.
@@ -253,9 +311,38 @@ def variable_dict_to_flat_array(
     return variables, parameters
 
 
-def wrap_pytensor_func_for_scipy(f, variable_list, parameter_list, coords):
+def wrap_pytensor_func_for_scipy(
+    f: Callable,
+    variable_list: list[Variable],
+    parameter_list: list[Parameter],
+    coords: dict[str, list[str]],
+) -> Callable:
+    """
+    Wrap a PyTensor function for use with scipy.optimize.root or scipy.optimize.minimize.
+
+    Parameters
+    ----------
+    f: Callable
+        A compiled PyTensor function with an input signature f(**data), where data is a dictionary mapping variable
+        and parameter names to numpy arrays containing the values of those variables and parameters.
+
+    variable_list: list[Variable]
+        List of model variables
+    parameter_list: list[Parameter]
+        List of model parameters
+    coords: dict[str, list[str]]
+        Dictionary of coordinates mapping dimension names to lists of labels associated with that dimension.
+
+    Returns
+    -------
+    inner_f: Callable
+        A wrapped version of the input function that accepts a single long vector of variables as input, and a single
+        long vector of parameters as second input. The wrapped function will unpack these vectors into a dictionary of
+        variables and parameters, and then unpack that dictionary into keyword arguments to the original function.
+    """
     all_objects = variable_list + parameter_list
 
+    @ft.wraps(f)
     def inner_f(x0, theta):
         n_x = x0.shape[0]
         # Scipy will pass x0 as a single long vector, and theta as an arg.
