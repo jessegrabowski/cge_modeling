@@ -1,25 +1,89 @@
 import re
-from typing import Union
+from typing import Any, Sequence, Union, cast
 
 import numpy as np
 
-from cge_modeling.base.primitives import Parameter, Variable
+from cge_modeling.base.primitives import Equation, Parameter, Variable
+
+CGETypes = Union[Variable, Parameter, Equation]
 
 
-def _validate_input(obj, cls):
-    if not isinstance(obj, cls):
+def _validate_input(obj: Any, cls: CGETypes):
+    """
+    Validate that an input is an instance of a class.
+
+    Parameters
+    ----------
+    obj: Any
+        An object to validate
+    cls: Union[Variable, Parameter]
+        The class to validate against
+    """
+
+    if not isinstance(obj, cast(type, cls)):
         raise ValueError(f"Expected instance of type {cls.__name__}, found {type(obj).__name__}")
 
 
-def ensure_input_is_sequence(x):
+def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
+    """
+    Convert non-sequence inputs into a singleton list.
+
+    Parameters
+    ----------
+    x: Any
+        An anonymous input
+
+    Returns
+    -------
+    x: list[Any]
+        A list containing the input, or the input itself if it is already a sequence
+    """
     if not isinstance(x, (list, tuple)):
         x = [x]
     return x
 
 
-def _expand_var_by_index(obj: Union[Variable, Parameter], coords: dict[str, list[str]]):
+def _expand_var_by_index(
+    obj: Union[Variable, Parameter], coords: dict[str, list[str]]
+) -> list[Union[Variable, Parameter]]:
+    """
+    Create a set of CGE Model objects from a single object using the cartesian product of the object's dimensions
+
+    Parameters
+    ----------
+    obj: Union[Variable, Parameter]
+        A CGE Model object to be expanded
+    coords: dict[str, list[str]]
+        A dictionary of coordinates known by the model. Used to determine the number and labels of the new objects.
+
+    Returns
+    -------
+    output_set: list[Union[Variable, Parameter]]
+        A list of new CGE Model objects, one for each combination of dimensions in the input object.
+
+    Notes
+    -----
+    The new objects will have the same name, description, and type as the input object, but the abstract dimension names
+    will be replaced with actual labels from the coordinates dictionary.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from cge_modeling.base.primitives import Variable
+        from cge_modeling.base.utilities import _expand_var_by_index
+
+        x = Variable(name='x', dims='i', description='Quantity associated with sector <dim:i> ')
+        coords = {'i': ['Agriculture', 'Industrial', 'Service']}
+        expanded_x = _expand_var_by_index(x, coords)
+        for var in expanded_x:
+            print(var._full_latex_name)
+        # Out: x_{i=\text{Agriculture}}
+        #      x_{i=\text{Industrial}}
+        #      x_{i=\text{Service}}
+    """
     if not isinstance(obj, (Variable, Parameter)):
-        raise ValueError("Expected a model object for argument obj, got {type(obj)}")
+        raise ValueError(f"Expected a model object for argument obj, got {type(obj)}")
 
     dims = list(coords.keys())
     missing_dims = set(dims) - set(obj.dims)
@@ -30,11 +94,11 @@ def _expand_var_by_index(obj: Union[Variable, Parameter], coords: dict[str, list
         )
 
     cls = Variable if isinstance(obj, Variable) else Parameter
-    out = [obj]
+    output_set = [obj]
 
     for dim in dims:
         new_out = []
-        for obj in out:
+        for obj in output_set:
             labels = coords.get(dim, []) if dim in obj.dims else []
             for label in labels:
                 new_dim_vals = obj.dim_vals.copy()
@@ -49,29 +113,99 @@ def _expand_var_by_index(obj: Union[Variable, Parameter], coords: dict[str, list
                         description=obj.description,
                     )
                 )
-        out = new_out.copy()
+        output_set = new_out.copy()
 
-    return out
+    return output_set
 
 
-def _replace_dim_marker_with_dim_name(s):
+def _replace_dim_marker_with_dim_name(s: str) -> str:
+    """
+    Strip the dimension tag <dim:> from a description string, returning only the dimension label itself.
+
+    Parameters
+    ----------
+    s: str
+        A string containing a dimension marker, e.g. "<dim:i>"
+
+    Returns
+    -------
+    new_s: str
+        The input string with the dimension marker removed, e.g. "i"
+
+    Notes
+    -----
+    The dimension markers used in description strings are ugly, but they are an easy way to facilitate swapping in
+    arbitrary dimension labels when rendering equations to latex. Nevertheless, users will not want to see them when
+    inspecting the "compact" form of the model. This function removes them.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        from cge_modeling.base.utilities import _replace_dim_marker_with_dim_name
+
+        s = 'Sector <dim:i> demand for good <dim:j>'
+        _replace_dim_marker_with_dim_name(s)
+        # Out: 'Sector i demand for good j'
+    """
     s = re.sub("(<dim:(.+?)>)", r"\g<2>", s)
     return s
 
 
-def infer_object_shape_from_coords(obj, coords):
+def infer_object_shape_from_coords(
+    obj: Union[Variable, Parameter], coords: dict[str, list[str]]
+) -> tuple[int]:
+    """
+    Infer the shape of a CGE Model object from a provided coordinate dictionary.
+
+    Parameters
+    ----------
+    obj: Union[Variable, Parameter]
+        A CGE Model object
+    coords: dict[str, list[str]]
+        A dictionary of coordinates, mapping dimension names to lists of labels associated with that dimension.
+
+    Returns
+    -------
+    shape: tuple[int]
+        A tuple of integers representing the shape of the object.
+
+    Notes
+    -----
+    CGE Model objects do not themselves carry shape information, only dimension information. This is because the shape
+    information is not strictly necessary at model declaration time, and indeed might not even be known by the economist
+    when designing the model.
+
+    What will determine the shape information is the coordinate dictionary, which is known by the CGEModel object but
+    not the individual Variable and Parameter instances it contains. This function allows us to infer the shape of an
+    object from the coordinate dictionary.
+
+    Examples
+    --------
+    .. code-block:: python
+        from cge_modeling.base.primitives import Variable
+        from cge_modeling.base.utilities import infer_object_shape_from_coords
+
+        x = Variable(name='x', dims='i', description='Quantity associated with sector <dim:i> ')
+        coords = {'i': ['Agriculture', 'Industrial', 'Service']}
+        infer_object_shape_from_coords(x, coords)
+        # Out: (3,)
+
+        z = Variable(name='phi_X', dims='i, j', description='Quantity of <dim:j> goods in sector <dim:i> value chain')
+        coords = {'i': ['Agriculture', 'Industrial', 'Service'], 'j': ['Agriculture', 'Industrial', 'Service']}
+        infer_object_shape_from_coords(z, coords)
+        # Out: (3, 3)
+    """
     dims = obj.dims
     shape = tuple(len(coords[dim]) for dim in dims)
     return shape
 
 
-def flat_array_to_variable_dict(x, cge_model):
-    all_objects = cge_model.variables + cge_model.parameters
-
+def flat_array_to_variable_dict(x, objects, coords):
     d = {}
     cursor = 0
-    for obj in all_objects:
-        shape = infer_object_shape_from_coords(obj, cge_model.coords)
+    for obj in objects:
+        shape = infer_object_shape_from_coords(obj, coords)
         s = int(np.prod(shape))
         d[obj.name] = x[cursor : cursor + s].reshape(shape)
         cursor += s
@@ -79,19 +213,54 @@ def flat_array_to_variable_dict(x, cge_model):
     return d
 
 
-def variable_dict_to_flat_array(d, cge_model, concat_returns=True):
-    variables = np.r_[*[np.atleast_1d(d[var.name]).ravel() for var in cge_model.variables]]
-    parameters = np.r_[*[np.atleast_1d(d[var.name]).ravel() for var in cge_model.parameters]]
+def variable_dict_to_flat_array(
+    d: dict[str, np.ndarray], variable_list: [list[Variable]], parameter_list: list[Parameter]
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Convert a dictionary of variables and parameters to a single long vector.
+
+    Parameters
+    ----------
+    d: dict[str, np.ndarray]
+        Data dictionary mapping variable and parameter names to numpy arrays. Numpy arrays can be any dimension, and are
+        assumed to have dims corresponding to their object's dims.
+
+    variable_list: list[Variable]
+        List of variables in the model
+    parameter_list: list[Parameter]
+        List of parameters in the model
+
+    Returns
+    -------
+    variables: np.ndarray
+        A single long vector containing all variables in the model
+
+    parameters: np.ndarray
+        A single long vector containing all parameters in the model
+
+    Notes
+    -----
+    The ordering of the variables and parameters in the output vector is determined by the order of the variables and
+    parameters in the variable_list and parameter_list arguments. Variables are ordered first, followed by parameters.
+    Multidimensional objects are flattened in row-major order.
+
+    # TODO: This function cannot currently handle batch dimensions, but it should be able to.
+    """
+
+    variables = np.concatenate([np.atleast_1d(d[var.name]).ravel() for var in variable_list])
+    parameters = np.concatenate([np.atleast_1d(d[var.name]).ravel() for var in parameter_list])
 
     return variables, parameters
 
 
-def wrap_pytensor_func_for_scipy(f, cge_model):
+def wrap_pytensor_func_for_scipy(f, variable_list, parameter_list, coords):
+    all_objects = variable_list + parameter_list
+
     def inner_f(x0, theta):
         n_x = x0.shape[0]
         # Scipy will pass x0 as a single long vector, and theta as an arg.
         inputs = np.r_[x0, theta]
-        data = flat_array_to_variable_dict(inputs, cge_model)
+        data = flat_array_to_variable_dict(inputs, all_objects, coords)
         return f(**data)
 
     return inner_f

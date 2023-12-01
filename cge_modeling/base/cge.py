@@ -657,8 +657,12 @@ class CGEModel:
             f_system = self.f_system
             f_jac = self.f_jac
         elif self._compile_backend == "pytensor":
-            f_system = wrap_pytensor_func_for_scipy(self.f_system, self)
-            f_jac = wrap_pytensor_func_for_scipy(self.f_jac, self)
+            variables = self.variables
+            parameters = self.parameters
+            coords = self.coords
+
+            f_system = wrap_pytensor_func_for_scipy(self.f_system, variables, parameters, coords)
+            f_jac = wrap_pytensor_func_for_scipy(self.f_jac, variables, parameters, coords)
         else:
             raise ValueError(
                 "Model must be compiled to a computational backend before it can be solved."
@@ -684,9 +688,13 @@ class CGEModel:
             f_grad = self.f_grad
             f_hess = self.f_hess
         elif self._compile_backend == "pytensor":
-            f_resid = wrap_pytensor_func_for_scipy(self.f_resid, self)
-            f_grad = wrap_pytensor_func_for_scipy(self.f_grad, self)
-            f_hess = wrap_pytensor_func_for_scipy(self.f_hess, self)
+            variables = self.variables
+            parameters = self.parameters
+            coords = self.coords
+
+            f_resid = wrap_pytensor_func_for_scipy(self.f_resid, variables, parameters, coords)
+            f_grad = wrap_pytensor_func_for_scipy(self.f_grad, variables, parameters, coords)
+            f_hess = wrap_pytensor_func_for_scipy(self.f_hess, variables, parameters, coords)
 
         else:
             raise ValueError(
