@@ -25,3 +25,11 @@ def test_expand_variable_two_index():
     for i in coords["i"]:
         for j in coords["j"]:
             assert s.substitute(i=i, j=j) in all_latex
+
+
+def test_pack_and_unpack_is_bijective():
+    data_dict = {
+        "Y": np.array([1, 2, 3]),
+        "phi": np.array([[1, 2, 3], [4, 5, 6]]),
+        "L_s": np.array([3.0]),
+    }
