@@ -32,7 +32,7 @@ def _pretty_print_dim_flags(s, dims, dim_vals):
 @dataclass(slots=True, order=True, frozen=False, repr=False)
 class ModelObject(ABC):
     name: str
-    dims: Optional[Union[tuple[str], list[str], str]] = None
+    dims: Optional[Union[tuple[str, ...], list[str, ...], str]] = None
     dim_vals: Optional[dict[str, str]] = None
     latex_name: Optional[str] = None
     _full_latex_name: Optional[str] = None
