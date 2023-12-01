@@ -1,7 +1,13 @@
 from string import Template
 
-from cge_modeling.base.primitives import Variable
-from cge_modeling.base.utilities import _expand_var_by_index
+import numpy as np
+
+from cge_modeling.base.primitives import Parameter, Variable
+from cge_modeling.base.utilities import (
+    _expand_var_by_index,
+    flat_array_to_variable_dict,
+    variable_dict_to_flat_array,
+)
 
 
 def test_expand_variable():
@@ -28,8 +34,38 @@ def test_expand_variable_two_index():
 
 
 def test_pack_and_unpack_is_bijective():
+    variables = [
+        Variable("Y", dims="i", description="<dim:i> output"),
+    ]
+    parameters = [
+        Parameter(
+            "phi",
+            dims=("j", "i"),
+            description="Input-output coefficient between <dim:i> and <dim:j>",
+        ),
+        Parameter("L_s", description="Total labor supply"),
+    ]
+
     data_dict = {
         "Y": np.array([1, 2, 3]),
         "phi": np.array([[1, 2, 3], [4, 5, 6]]),
-        "L_s": np.array([3.0]),
+        "L_s": np.array(3.0),
     }
+
+    coords = {"i": ["A", "B", "C"], "j": ["Q", "R"]}
+
+    variable_array, param_array = variable_dict_to_flat_array(data_dict, variables, parameters)
+
+    assert variable_array.shape[0] == sum(np.prod(data_dict[x.name].shape) for x in variables)
+    assert param_array.shape[0] == sum(np.prod(data_dict[x.name].shape) for x in parameters)
+
+    data_dict_2 = flat_array_to_variable_dict(
+        np.concatenate([variable_array, param_array]), variables + parameters, coords
+    )
+
+    assert all(
+        [data_dict[x.name].shape == data_dict_2[x.name].shape for x in variables + parameters]
+    )
+    assert all(
+        [np.allclose(data_dict[x.name], data_dict_2[x.name]) for x in variables + parameters]
+    )
