@@ -196,14 +196,14 @@ def load_model_2(**kwargs):
         # Value chain bundle
         Equation(
             "Sector <dim:i> production of intermediate goods bundle",
-            "VC[None] * P_VC[None] = (P[:, None] * X).sum(axis=0).ravel()"
+            "VC * P_VC = (P[:, None] * X).sum(axis=0).ravel()"
             if backend == "pytensor"
             else "VC * P_VC = Sum(P.subs({i:j}) * X.subs([(i,k), (j,i), (k,j)]), "
             + f"(j, 0, {n_sectors - 1}))",
         ),
         Equation(
             "Sector <dim:i> demand for sector <dim:j> intermediate input",
-            "X = psi_X * VC[:, None]" if backend == "pytensor" else "X = psi_X * VC.subs({i:j})",
+            "X = psi_X * VC[None]" if backend == "pytensor" else "X = psi_X * VC.subs({i:j})",
         ),
         # Value add bundle
         Equation(

@@ -558,8 +558,12 @@ class CGEModel:
         f_dX = numba_linearize_cge_func(equations, variables, parameters)
 
         def euler_wrapper(*, theta_final, n_steps, **data):
-            x0 = np.array([data[x] for x in self.variable_names])
-            theta0 = np.array([data[x] for x in self.parameter_names])
+            x0 = np.concatenate(
+                [np.atleast_1d(data[x]).ravel() for x in self.variable_names], axis=0
+            )
+            theta0 = np.concatenate(
+                [np.atleast_1d(data[x]).ravel() for x in self.parameter_names], axis=0
+            )
 
             result = euler_approx(f_dX, x0, theta0, theta_final, n_steps)
             # Decompose the result back to a list of numpy arrays
