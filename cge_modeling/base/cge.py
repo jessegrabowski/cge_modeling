@@ -801,6 +801,8 @@ class CGEModel:
             )
 
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
+        print(x0)
+        print(theta0)
 
         res = optimize.minimize(
             f_resid,
