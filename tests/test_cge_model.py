@@ -125,6 +125,18 @@ def test_get(args, model):
     ],
     ids=["simple_model", "3-goods simple"],
 )
+def test_model_gradients(model_function, calibrate_model, data):
+    pass
+
+
+@pytest.mark.parametrize(
+    "model_function, calibrate_model, data",
+    [
+        (load_model_1, calibrate_model_1, model_1_data),
+        (load_model_2, calibrate_model_2, model_2_data),
+    ],
+    ids=["simple_model", "3-goods simple"],
+)
 def test_backends_agree(model_function: Callable, calibrate_model: Callable, data: dict):
     model_numba = model_function(backend="numba")
     model_pytensor = model_function(
@@ -135,6 +147,7 @@ def test_backends_agree(model_function: Callable, calibrate_model: Callable, dat
         for res, name in zip(results, names):
             assert res.success, f"{name} solver failed to converge"
             assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
+            assert np.all(np.isfinite(res.x)), f"{name} solver returned Infs"
 
         np.testing.assert_allclose(
             np.around(results[0].x, 4), np.around(results[1].x, 4), atol=1e-5, rtol=1e-5
@@ -167,17 +180,13 @@ def test_backends_agree(model_function: Callable, calibrate_model: Callable, dat
 
     # Test minimization of residuals
     res_numba = model_numba._solve_with_minimize(
-        calibated_data, theta_labor_increase, method="trust-ncg"
+        calibated_data, theta_labor_increase, method="trust-ncg", tol=1e-8
     )
     res_pytensor = model_pytensor._solve_with_minimize(
-        calibated_data, theta_labor_increase, method="trust-ncg"
+        calibated_data, theta_labor_increase, method="trust-ncg", tol=1e-8
     )
 
-    mean_pct_disagreement = (np.abs((res_numba.x - res_pytensor.x) / res_numba.x)).mean()
-    print(mean_pct_disagreement)
-
-    assert mean_pct_disagreement < 0.01, "Solvers disagree"
-    # solver_agreement_checks([res_numba, res_pytensor], ["Numba", "PyTensor"])
+    solver_agreement_checks([res_numba, res_pytensor], ["Numba", "PyTensor"])
 
     # Test Euler approximation
     res_numba = model_numba._solve_with_euler_approximation(

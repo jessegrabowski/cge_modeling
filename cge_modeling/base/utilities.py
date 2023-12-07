@@ -259,7 +259,8 @@ def flat_array_to_variable_dict(
     for obj in objects:
         shape = infer_object_shape_from_coords(obj, coords)
         s = int(np.prod(shape))
-        d[obj.name] = x[cursor : cursor + s].reshape(shape)
+        value = x[cursor : cursor + s].reshape(shape)
+        d[obj.name] = value
         cursor += s
 
     return d
@@ -343,8 +344,7 @@ def wrap_pytensor_func_for_scipy(
 
     @ft.wraps(f)
     def inner_f(x0, theta):
-        n_x = x0.shape[0]
-        # Scipy will pass x0 as a single long vector, and theta as an arg.
+        # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
         inputs = np.r_[x0, theta]
         data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
         return f(**data)
