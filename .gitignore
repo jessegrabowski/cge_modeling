@@ -163,3 +163,10 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/pycharm+all,macos,windows,jupyternotebooks
+
+tests/__pycache__/
+cge_modeling/__pycache__/
+cge_modeling/base/__pycache__/
+cge_modeling/pytensorf/__pycache__/
+cge_modeling/tools/__pycache__/
+tests/utilities/__pycache__/
