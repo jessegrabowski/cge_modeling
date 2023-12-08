@@ -5,9 +5,13 @@ import pytest
 
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Parameter, Variable
+from cge_modeling.base.utilities import variable_dict_to_flat_array
+from tests.utilities.fake_data import generate_data
 from tests.utilities.models import (
     calibrate_model_1,
     calibrate_model_2,
+    expected_model_1_jacobian,
+    expected_model_2_jacobian,
     load_model_1,
     load_model_2,
     model_1_data,
@@ -118,15 +122,28 @@ def test_get(args, model):
 
 
 @pytest.mark.parametrize(
-    "model_function, calibrate_model, data",
+    "model_function, jac_function",
     [
-        (load_model_1, calibrate_model_1, model_1_data),
-        (load_model_2, calibrate_model_2, model_2_data),
+        (load_model_1, expected_model_1_jacobian),
+        (load_model_2, expected_model_2_jacobian),
     ],
     ids=["simple_model", "3-goods simple"],
 )
-def test_model_gradients(model_function, calibrate_model, data):
-    pass
+@pytest.mark.parametrize("backend", ["numba", "pytensor"], ids=["numba", "pytensor"])
+def test_model_gradients(model_function, jac_function, backend):
+    mode = "FAST_COMPILE" if backend == "pytensor" else None
+    mod = model_function(backend=backend, parse_equations_to_sympy=backend == "numba", mode=mode)
+    data = generate_data(mod.variables + mod.parameters, mod.coords)
+
+    J_expected = jac_function(**data)
+
+    if backend == "numba":
+        x, theta = variable_dict_to_flat_array(data, mod.variables, mod.parameters)
+        J_actual = mod.f_jac(x, theta)
+    else:
+        J_actual = mod.f_jac(**data)
+
+    np.testing.assert_allclose(J_expected, J_actual, atol=1e-8)
 
 
 @pytest.mark.parametrize(
@@ -154,13 +171,9 @@ def test_backends_agree(model_function: Callable, calibrate_model: Callable, dat
         ), "Solvers disagree"
 
     calibated_data = calibrate_model(**data)
-    x0 = np.concatenate(
-        [np.atleast_1d(calibated_data[x]).ravel() for x in model_numba.variable_names], axis=0
+    x0, theta0 = variable_dict_to_flat_array(
+        calibated_data, model_numba.variables, model_numba.parameters
     )
-    theta0 = np.concatenate(
-        [np.atleast_1d(calibated_data[x]).ravel() for x in model_numba.parameter_names], axis=0
-    )
-
     resid_numba = model_numba.f_system(x0, theta0)
     resid_pytensor = model_pytensor.f_system(**calibated_data)
 
@@ -169,8 +182,8 @@ def test_backends_agree(model_function: Callable, calibrate_model: Callable, dat
 
     labor_increase = calibated_data.copy()
     labor_increase["L_s"] = 10_000
-    theta_labor_increase = np.concatenate(
-        [np.atleast_1d(labor_increase[x]).ravel() for x in model_numba.parameter_names], axis=0
+    _, theta_labor_increase = variable_dict_to_flat_array(
+        labor_increase, model_numba.variables, model_numba.parameters
     )
 
     # Test the root finder
