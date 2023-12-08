@@ -596,9 +596,8 @@ class CGEModel:
             self, inverse_method=inverse_method
         )
         inputs = variables + parameters
-        self.f_system = pytensor.function(inputs=inputs, outputs=system, mode=mode)
-        self.f_jac = pytensor.function(inputs=inputs, outputs=jac, mode=mode)
-
+        f_system = pytensor.function(inputs=inputs, outputs=system, mode=mode)
+        f_jac = pytensor.function(inputs=inputs, outputs=jac, mode=mode)
         resid = (system**2).sum()
         grad = pytensor.grad(resid, variables)
         grad = pt.specify_shape(
@@ -607,6 +606,16 @@ class CGEModel:
         hess = make_jacobian(grad, variables)
 
         f_root = pytensor.function(inputs=inputs, outputs=[resid, grad, hess], mode=mode)
+
+        if mode in ["JAX", "NUMBA"]:
+            # In JAX and NUMBA modes, pytensor puts a bunch of extra overhead around the (fast!) jitted functions.
+            # We can strip that all away by using the jit_fn direction.
+            self.f_system = lambda *args, **kwargs: f_system.vm.jit_fn(*args, **kwargs)[0]
+            self.f_jac = lambda *args, **kwargs: f_jac.vm.jit_fn(*args, **kwargs)[0]
+            self.f_root = lambda *args, **kwargs: f_root.vm.jit_fn(*args, **kwargs)[0]
+        else:
+            self.f_system = f_system
+            self.f_jac = f_jac
 
         def f_resid(**kwargs):
             return f_root(**kwargs)[0]
@@ -801,9 +810,6 @@ class CGEModel:
             )
 
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
-        print(x0)
-        print(theta0)
-
         res = optimize.minimize(
             f_resid,
             x0,
