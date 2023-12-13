@@ -154,7 +154,22 @@ def test_model_gradients(model_function, jac_function, backend):
     ],
     ids=["simple_model", "3-goods simple"],
 )
-def test_backends_agree(model_function: Callable, calibrate_model: Callable, data: dict):
+@pytest.mark.parametrize(
+    "method, solver_kwargs",
+    [
+        ("_solve_with_minimize", {"method": "trust-exact"}),
+        ("_solve_with_root", {"method": "hybr"}),
+        ("_solve_with_euler_approximation", {"n_steps": 500}),
+    ],
+    ids=["minimize", "root", "euler"],
+)
+def test_backends_agree(
+    model_function: Callable,
+    calibrate_model: Callable,
+    data: dict,
+    method: str,
+    solver_kwargs: dict,
+):
     model_numba = model_function(backend="numba")
     model_pytensor = model_function(
         backend="pytensor", mode="FAST_COMPILE", parse_equations_to_sympy=False
@@ -162,13 +177,23 @@ def test_backends_agree(model_function: Callable, calibrate_model: Callable, dat
 
     def solver_agreement_checks(results: list, names: list):
         for res, name in zip(results, names):
-            assert res.success, f"{name} solver failed to converge"
-            assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
-            assert np.all(np.isfinite(res.x)), f"{name} solver returned Infs"
+            if hasattr(res, "success"):
+                assert res.success, f"{name} solver failed to converge"
+            if hasattr(res, "x"):
+                assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
+                assert np.all(np.isfinite(res.x)), f"{name} solver returned Infs"
 
-        np.testing.assert_allclose(
-            np.around(results[0].x, 4), np.around(results[1].x, 4), atol=1e-5, rtol=1e-5
-        ), "Solvers disagree"
+                np.testing.assert_allclose(
+                    np.around(results[0].x, 4), np.around(results[1].x, 4), atol=1e-5, rtol=1e-5
+                ), "Solvers disagree"
+
+            else:
+                assert not np.all(np.isnan(res)), f"{name} solver returned NaNs"
+                assert np.all(np.isfinite(res)), f"{name} solver returned Infs"
+
+                np.testing.assert_allclose(
+                    np.around(results[0], 4), np.around(results[1], 4), atol=1e-5, rtol=1e-5
+                ), "Solvers disagree"
 
     calibated_data = calibrate_model(**data)
     x0, theta0 = variable_dict_to_flat_array(
@@ -182,34 +207,18 @@ def test_backends_agree(model_function: Callable, calibrate_model: Callable, dat
 
     labor_increase = calibated_data.copy()
     labor_increase["L_s"] = 10_000
+
     _, theta_labor_increase = variable_dict_to_flat_array(
         labor_increase, model_numba.variables, model_numba.parameters
     )
 
-    # Test the root finder
-    res_numba = model_numba._solve_with_root(calibated_data, theta_labor_increase)
-    res_pytensor = model_pytensor._solve_with_root(calibated_data, theta_labor_increase)
-    solver_agreement_checks([res_numba, res_pytensor], ["Numba", "PyTensor"])
+    res_numba = getattr(model_numba, method)(calibated_data, theta_labor_increase, **solver_kwargs)
+    res_pytensor = getattr(model_pytensor, method)(
+        calibated_data, theta_labor_increase, **solver_kwargs
+    )
 
-    # Test minimization of residuals
-    res_numba = model_numba._solve_with_minimize(
-        calibated_data, theta_labor_increase, method="trust-ncg", tol=1e-8
-    )
-    res_pytensor = model_pytensor._solve_with_minimize(
-        calibated_data, theta_labor_increase, method="trust-ncg", tol=1e-8
-    )
+    if method == "_solve_with_euler_approximation":
+        res_numba = res_numba.parameters.isel(step=-1).to_array().values
+        res_pytensor = res_pytensor.parameters.isel(step=-1).to_array().values
 
     solver_agreement_checks([res_numba, res_pytensor], ["Numba", "PyTensor"])
-
-    # Test Euler approximation
-    res_numba = model_numba._solve_with_euler_approximation(
-        calibated_data, theta_final=theta_labor_increase, n_steps=10_000
-    )
-    res_pytensor = model_pytensor._solve_with_euler_approximation(
-        calibated_data, theta_final=theta_labor_increase, n_steps=10_000
-    )
-
-    res_numba = res_numba.parameters.isel(step=-1).to_array().values
-    res_pytensor = res_pytensor.parameters.isel(step=-1).to_array().values
-
-    np.testing.assert_allclose(res_numba, res_pytensor)

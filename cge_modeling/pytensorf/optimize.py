@@ -1,31 +1,39 @@
 import functools as ft
+from typing import Callable, Optional, Union
 
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
 
+from cge_modeling.pytensorf.compile import flat_tensor_to_ragged_list
+from cge_modeling.tools.pytensor_tools import at_least_list, flatten_equations
 
-def eval_func_maybe_exog(X, exog, f):
-    if hasattr(exog, "data") and np.all(np.isnan(exog.data)):
-        out = f(*X)
-    else:
+
+def eval_func_maybe_exog(X, exog, f, has_exog):
+    if has_exog:
         out = f(*X, *exog)
+    else:
+        out = f(*X)
 
     return out
 
 
-def _newton_step(X, exog, F, J_inv, step_size, tol):
-    F_X = eval_func_maybe_exog(X, exog, F)
-    J_inv_X = eval_func_maybe_exog(X, exog, J_inv)
+def _newton_step(flat_X, exog, F, J_inv, step_size, has_exog, shapes):
+    X = flat_tensor_to_ragged_list(flat_X, shapes)
+    F_X = eval_func_maybe_exog(X, exog, F, has_exog)
+    J_inv_X = eval_func_maybe_exog(X, exog, J_inv, has_exog)
 
-    new_X = X - step_size * J_inv_X @ F_X
-    F_new_X = eval_func_maybe_exog(new_X, exog, F)
+    flat_F_X = flatten_equations(F_X)
+    flat_new_X = flat_X - step_size * J_inv_X @ flat_F_X
 
-    return (X, new_X, F_X, F_new_X)
+    new_X = flat_tensor_to_ragged_list(flat_new_X, [x.type.shape for x in X])
+    flat_F_new_X = eval_func_maybe_exog(new_X, exog, F, has_exog)
+
+    return flat_X, flat_new_X, flat_F_X, flat_F_new_X
 
 
-def no_op(X, F, J_inv, step_size, tol):
-    return (X, X, X, X)
+def no_op(X):
+    return X, X, X, X
 
 
 def compute_norms(X, new_X, F_X, F_new_X):
@@ -62,46 +70,127 @@ def backtrack_if_not_decreasing(is_decreasing, X, new_X):
     return pytensor.ifelse.ifelse(is_decreasing, new_X, X)
 
 
-def scan_body(X, converged, step_size, n_steps, tol, exog, F, J_inv, initial_step_size):
+def scan_body(*args, F, J_inv, initial_step_size, tol, has_exog, n_endog, n_exog):
+    X = args[:n_endog]
+    converged, step_size, n_steps = args[n_endog : n_endog + 3]
+    exog = args[-n_exog:]
+
+    shapes = [x.type.shape for x in X]
+    flat_X = flatten_equations(X)
+
     out = pytensor.ifelse.ifelse(
         converged,
-        no_op(X, F, J_inv, step_size, tol),
-        _newton_step(X, exog, F, J_inv, step_size, tol),
+        no_op(flat_X),
+        _newton_step(flat_X, exog, F, J_inv, step_size, has_exog, shapes),
     )
 
-    X, new_X, F_X, F_new_X = (out[i] for i in range(4))
-    norm_X, norm_new_X, norm_root, norm_root_new, norm_step = compute_norms(X, new_X, F_X, F_new_X)
+    flat_X, flat_new_X, flat_F_X, flat_F_new_X = (out[i] for i in range(4))
+    norm_X, norm_new_X, norm_root, norm_root_new, norm_step = compute_norms(
+        flat_X, flat_new_X, flat_F_X, flat_F_new_X
+    )
     is_converged = check_convergence(norm_step, norm_root, converged, tol)
 
     is_decreasing, new_step_size = check_stepsize(
         norm_root, norm_root_new, step_size, initial_step_size
     )
 
-    return_X = backtrack_if_not_decreasing(is_decreasing, X, new_X)
+    flat_return_X = backtrack_if_not_decreasing(is_decreasing, flat_X, flat_new_X)
+    return_X = flat_tensor_to_ragged_list(flat_return_X, shapes)
     new_n_steps = n_steps + (1 - is_converged)
 
-    return return_X, is_converged, new_step_size, new_n_steps
+    return return_X + [is_converged, new_step_size, new_n_steps]
 
 
-def root(f, f_jac_inv, x0, exog=None, step_size=1, max_iter=100, tol=1e-8):
+def _process_root_data(data: Optional[dict[str, np.ndarray]]) -> list[pt.TensorLike]:
+    if data is None:
+        return [pt.as_tensor_variable(np.nan, name="dummy_exog", shape=())]
+    else:
+        out = []
+        for name in data.keys():
+            x = np.array(data[name], dtype=pytensor.config.floatX)
+            out.append(pt.as_tensor_variable(x, name=name, shape=x.shape))
+        return out
+
+
+def root(
+    f: pt.Op,
+    f_jac_inv: pt.Op,
+    initial_data: dict[str, Union[np.ndarray, float]],
+    parameters: Optional[dict[str, Union[np.ndarray, float]]] = None,
+    step_size: int = 1,
+    max_iter: int = 100,
+    tol: float = 1e-8,
+) -> tuple[list[pt.TensorVariable], pt.TensorVariable, pt.TensorVariable, pt.TensorVariable]:
+    """
+    Find the root of a system of equations using Newton's method with backtracking.
+
+    Parameters
+    ----------
+    f: pytensor Op
+        A pytensor Op, typically created by CGEModel.compile_equations_to_pytensor, that takes a ragged list of
+        variables and parameters as input and returns a vector of residuls as output.
+    f_jac_inv: pytensor Op
+        A pytensor Op, typically created by CGEModel.compile_equations_to_pytensor, that takes a ragged list of
+        variables and parameters as input and returns the inverse of the Jacobian of the system of equations as output.
+    initial_data: dict[str, np.ndarray]
+        A dictionary of initial values for the variables in the system of equations. The keys are the names of the
+        variables and the values are the initial values.
+    parameters: Optional, dict[str, np.ndarray]
+        A dictionary of exogenous parameters for the system of equations. The keys are the names of the parameters and
+        the values are the parameter values.
+    step_size: int
+        The initial step size to use in Newton's method
+    max_iter: int
+        The maximum number of iterations to run Newton's method
+    tol: float
+        The tolerance for convergence. The algorithm will stop if the norm of the residuals is less than the tolerance
+        or if the norm of the step size is less than the tolerance.
+
+    Returns
+    -------
+    root_histories: list[pt.TensorVariable]
+        A list of the values of the variables at each iteration of the algorithm.
+
+    converged: pt.TensorVariable
+        A boolean tensor indicating whether the algorithm converged at each iteration.
+
+    step_size: pt.TensorVariable
+        The step size used at each iteration. Useful to diagnose whether the algorithm is converging.
+
+    n_steps: pt.TensorVariable
+        The number of steps taken at each iteration. Useful to diagnose whether the algorithm is converging.
+    """
+
     init_step_size = np.float64(step_size)
-    root_func = ft.partial(scan_body, F=f, J_inv=f_jac_inv, initial_step_size=init_step_size)
     converged = np.array(False)
     n_steps = 0
+    has_exog = parameters is not None
 
-    if exog is None:
-        exog = pt.as_tensor_variable(np.nan)
-    else:
-        exog = pt.as_tensor_variable(exog)
+    x0 = _process_root_data(initial_data)
+    exog = _process_root_data(parameters)
+
+    n_endog = len(x0)
+    n_exog = len(exog)
+
+    root_func = ft.partial(
+        scan_body,
+        F=f,
+        J_inv=f_jac_inv,
+        initial_step_size=init_step_size,
+        tol=tol,
+        has_exog=has_exog,
+        n_endog=n_endog,
+        n_exog=n_exog,
+    )
 
     outputs, updates = pytensor.scan(
         root_func,
-        outputs_info=[x0, converged, init_step_size, n_steps],
-        non_sequences=[tol, exog],
+        outputs_info=x0 + [converged, init_step_size, n_steps],
+        non_sequences=exog,
         n_steps=max_iter,
         strict=True,
     )
 
-    root, converged, step_size, n_steps = outputs
+    *root_histories, converged, step_size, n_steps = outputs
 
-    return root, converged, step_size, n_steps
+    return root_histories, converged, step_size, n_steps

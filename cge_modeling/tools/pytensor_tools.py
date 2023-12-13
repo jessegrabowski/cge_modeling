@@ -100,8 +100,17 @@ def flatten_equations(eqs: list[pt.TensorLike]) -> pt.TensorLike:
     these multidimensional expressions into a single vector to compute the Jacobian of the system. This function
     performs that flattening operation.
     """
-    expr_len = int(np.sum([np.prod(eq.type.shape) for eq in eqs]))
-    flat_expr = pt.concatenate([pt.atleast_1d(eq).ravel() for eq in eqs], axis=-1)
+    expr_len = 0
+    for eq in eqs:
+        if isinstance(eq, pt.TensorVariable):
+            expr_len += int(np.prod(eq.type.shape))
+        else:
+            expr_len += int(np.prod(np.atleast_1d(eq).size))
+
+    # expr_len = int(np.sum([np.prod(eq.type.shape) for eq in eqs]))
+    flat_expr = pt.concatenate(
+        [pt.atleast_1d(pt.cast(eq, pytensor.config.floatX)).ravel() for eq in eqs], axis=-1
+    )
     flat_expr = pt.specify_shape(flat_expr, shape=(expr_len,))
     return flat_expr
 
