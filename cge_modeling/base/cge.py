@@ -1,4 +1,5 @@
 import functools as ft
+import warnings
 from typing import Callable, Literal, Optional, Sequence, Union
 
 import numba as nb
@@ -19,6 +20,7 @@ from cge_modeling.base.utilities import (
     _replace_dim_marker_with_dim_name,
     _validate_input,
     ensure_input_is_sequence,
+    flat_array_to_variable_dict,
     infer_object_shape_from_coords,
     variable_dict_to_flat_array,
     wrap_pytensor_func_for_scipy,
@@ -837,6 +839,91 @@ class CGEModel:
         )
 
         return res
+
+    def generate_SAM(
+        self,
+        param_dict: dict[str, np.array],
+        initial_variable_guess: dict[str, np.array],
+        method: Literal["root", "minimize", "euler"] = "root",
+        use_jac: bool = True,
+        use_hess: bool = True,
+        n_steps: int = 100,
+        **solver_kwargs,
+    ) -> dict[str, np.array]:
+        """
+        Generate a Social Accounting Matrix (SAM) from the model parameters.
+
+        Parameters
+        ----------
+        param_dict: dict[str, np.array]
+            A dictionary of parameter values. The keys should be the names of the parameters, and the values should be
+            numpy arrays of the same shape as the parameter.
+
+        initial_variable_guess: dict[str, np.array]
+            A dictionary of initial values for the model variables. The keys should be the names of the variables, and
+            the values should be numpy arrays of the same shape as the variable.
+
+        method: str
+            The method to use to solve the model. One of 'root', 'minimize', or 'euler'. Defaults to 'root'.
+
+            Note that Euler is not recommended for generating a SAM, because it assumes the initial point is itself a
+            SAM (in which case you don't need this function). It is included for testing purposes only.
+
+        use_jac: bool
+            Whether to use the Jacobian of the system of equations when solving with the root or minimize methods.
+            Defaults to True.
+
+        use_hess: bool
+            Whether to use the Hessian of the loss function when solving with the minimize method. Ignored if method
+            is not 'minimize'. Defaults to True.
+
+        n_steps: int
+            The number of steps to use when solving with the Euler method. Ignored if method is not 'euler'. Defaults
+            to 100.
+
+        **solver_kwargs: dict
+            Additional keyword arguments to pass to the solver, either scipy.optimize.root or scipy.optimize.minimize,
+            depending on the chosen method. See those docstrings for details.
+
+        Returns
+        -------
+        variable_dict: dict[str, np.array]
+            A dictionary of variable values. The keys are the names of the variables, and the values are numpy arrays
+            of the same shape as the variable.
+
+        Notes
+        -----
+        This function generates a "SAM" by solving for the values of the model variables that are implied by the
+        provided parameter values. This mapping is valid by construction, because the structure of a correctly specified
+        CGE model will ensure all markets clear, resulting in a closed system of economic transactions between model
+        agents.
+
+        Initial variables need to be provided in order to pin down the **level** of the economy. In general, an infinite
+        number of solutions exist for a given set of parameter values. What is returned is just one solution, which is
+        close to the provided initial values.
+        """
+        SOLVER_FACTORY = {
+            "root": ft.partial(self._solve_with_root, use_jac=use_jac),
+            "minimize": ft.partial(self._solve_with_minimize, use_jac=use_jac, use_hess=use_hess),
+            "euler": ft.partial(self._solve_with_euler_approximation, n_steps=n_steps),
+        }
+
+        if method not in SOLVER_FACTORY:
+            raise ValueError(
+                f"Unknown method {method}. Must be one of {list(SOLVER_FACTORY.keys())}"
+            )
+
+        joint_dict = {**param_dict, **initial_variable_guess}
+        _, flat_params = variable_dict_to_flat_array(joint_dict, self.variables, self.parameters)
+        res = SOLVER_FACTORY[method](data=joint_dict, theta_final=flat_params, **solver_kwargs)
+        if not res.success:
+            warnings.warn(
+                "Solver did not converge. Results do not represent a valid SAM, and are returned for "
+                "diagnostic purposes only"
+            )
+        result_dict = flat_array_to_variable_dict(res.x, self.variables, self.coords)
+
+        return result_dict
 
     def simulate(
         self,
