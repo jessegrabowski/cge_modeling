@@ -3,6 +3,7 @@ import warnings
 from collections import defaultdict
 
 import arviz as az
+import numpy as np
 import sympy as sp
 import xarray as xr
 from IPython.display import Latex, display
@@ -11,6 +12,7 @@ from sympy.printing.latex import LatexPrinter
 from texttable import Texttable
 
 from cge_modeling.base.primitives import ModelObject
+from cge_modeling.base.utilities import flat_array_to_variable_dict
 from cge_modeling.tools.sympy_tools import symbol
 
 
@@ -448,3 +450,20 @@ def list_of_array_to_idata(list_of_arrays: list, cge_model):
         idata = az.InferenceData(variables=ds_vars, parameters=ds_params)
 
     return idata
+
+
+def optimizer_result_to_idata(res, theta, mod):
+    coords = mod.coords
+    result = flat_array_to_variable_dict(
+        np.r_[res.x, theta], mod.variables + mod.parameters, coords
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        optim_var_dict = {obj.name: (obj.dims, result[obj.name]) for obj in mod.variables}
+        optim_param_dict = {obj.name: (obj.dims, result[obj.name]) for obj in mod.parameters}
+        optim_idata = az.InferenceData(
+            variables=xr.Dataset(optim_var_dict, coords=coords),
+            parameters=xr.Dataset(optim_param_dict, coords=coords),
+        )
+
+    return optim_idata
