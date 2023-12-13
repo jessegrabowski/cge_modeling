@@ -1,5 +1,6 @@
 import functools as ft
 import warnings
+from copy import deepcopy
 from typing import Callable, Literal, Optional, Sequence, Union
 
 import numba as nb
@@ -7,6 +8,8 @@ import numpy as np
 import pytensor
 import pytensor.tensor as pt
 import sympy as sp
+import xarray as xr
+from arviz import InferenceData
 from scipy import optimize
 
 from cge_modeling.base.primitives import (
@@ -33,7 +36,11 @@ from cge_modeling.pytensorf.compile import (
     pytensor_objects_from_CGEModel,
 )
 from cge_modeling.tools.numba_tools import euler_approx, numba_lambdify
-from cge_modeling.tools.output_tools import display_latex_table, list_of_array_to_idata
+from cge_modeling.tools.output_tools import (
+    display_latex_table,
+    list_of_array_to_idata,
+    optimizer_result_to_idata,
+)
 from cge_modeling.tools.pytensor_tools import make_jacobian
 from cge_modeling.tools.sympy_tools import (
     enumerate_indexbase,
@@ -927,14 +934,14 @@ class CGEModel:
 
     def simulate(
         self,
-        initial_state,
-        final_values=None,
-        final_delta=None,
-        final_delta_pct=None,
-        use_euler_approximation=True,
-        use_root_solver=True,
+        initial_state: dict[str, Union[float, np.array]],
+        final_values: Optional[dict[str, Union[float, np.array]]] = None,
+        final_delta: Optional[dict[str, Union[float, np.array]]] = None,
+        final_delta_pct: Optional[dict[str, Union[float, np.array]]] = None,
+        use_euler_approximation: bool = True,
+        use_optimizer: bool = True,
+        optimizer_mode: Literal["root", "minimize"] = "root",
         n_iter_euler=10_000,
-        name=None,
         compile_kwargs=None,
         **optimizer_kwargs,
     ):
@@ -944,22 +951,66 @@ class CGEModel:
 
         Parameters
         ----------
-        initial_state: dict[str, np.arary]
+        initial_state: dict[str, np.array]
             A dictionary of initial values for the model variables and parameters. The keys should be the names of the
             variables and parameters, and the values should be numpy arrays of the same shape as the variable or
             parameter.
 
-        final_values:
-        final_delta
-        final_delta_pct
-        n_iter_euler
-        name
-        compile_kwargs
-        optimizer_kwargs
+            .. warning:: The inital state **must** represent a model equlibrium! This will be checked automatically
+            before simulation begins, and an error will be raised if the initial state does not represent an equlibrium.
+
+        final_values: dict[str, np.array], optional
+            A dictionary of exact final values for a subset of model parameters. The keys should be the names of the
+            parameters to be changed, and the values should be numpy arrays of the same shape as the parameter.
+
+            Exactly one of final_values, final_delta, or final_delta_pct must be provided.
+
+        final_delta: dict[str, np.array], optional
+            A dictionary of changes to be applied to a subset of the model parameters. Changes are added to the initial
+            values, so that positive values increase the parameter value and negative values decrease the parameter.
+            The keys should be the names of the parameters to be changed, and the values should be numpy arrays of the
+            same shape as the parameter.
+
+            Exactly one of final_values, final_delta, or final_delta_pct must be provided.
+
+        final_delta_pct: dict[str, np.array], optional
+            A dictionary of percentage changes to be applied to a subset of the model parameters. Values provided are
+            multipled by the initial values, so that values greater than 1.00 represent precentage increases, and values
+            less than 1.00 represent percentage decreases. The keys should be the names of the parameters to be changed,
+            and the values should be numpy arrays of the same shape as the parameter.
+
+            Exactly one of final_values, final_delta, or final_delta_pct must be provided.
+
+        use_euler_approximation: bool, optional
+            Whether to use the Euler approximation to compute the final state of the economy. Defaults to True. If
+            use_optimizer is also true, the Euler approximation will be used as the initial guess for the optimizer.
+
+        use_optimizer: bool, optional
+            Whether to use a numerical optimizer to compute the final state of the economy. Defaults to True. If
+            use_euler_approximation is also true, the Euler approximation will be used as the initial guess for the
+            optimizer.
+
+        optimizer_mode: str, optional
+            The type of optimizer to use. One of 'root' or 'minimize'. Ignored if use_optimizer is False. Defaults to
+            'root'.
+
+        n_iter_euler: int
+            The number of iterations to use when computing the Euler approximation. Defaults to 10,000. Ignored if
+            use_euler_approximation is False.
+
+        compile_kwargs: dict, optional
+            Additional keyword arguments to pass to the compile method. See the docstring for compile for details.
+
+        optimizer_kwargs: dict, optional
+            Additional keyword arguments to pass to the optimizer. See the docstring for scipy.optimize.root or
+            scipy.optimize.minimize for details.
 
         Returns
         -------
-
+        result: Result or InferenceData
+            A Result object containing the initial and final values of the model variables and parameters. If
+            use_euler_approximation is True, an InferenceData object containing the Euler approximation will be returned
+            instead.
         """
         if not self._compiled:
             if compile_kwargs is None:
@@ -967,54 +1018,61 @@ class CGEModel:
             self._compile(**compile_kwargs)
 
         if isinstance(initial_state, Result):
-            x0_var_param = initial_state.to_dict()["fitted"].copy()
+            x0_var_param = deepcopy(initial_state.to_dict()["fitted"])
         elif isinstance(initial_state, dict):
-            x0_var_param = initial_state.copy()
+            x0_var_param = deepcopy(initial_state)
         else:
             raise ValueError(
                 f"initial_state must be a Result or a dict of initial values, found {type(initial_state)}"
             )
 
-        x0, theta0 = state_dict_to_input_arrays(
-            x0_var_param, self.unpacked_variable_names, self.unpacked_parameter_names
-        )
-
+        final_param_dict = deepcopy(x0_var_param)
         if final_values is not None:
-            x0_var_param.update(final_values)
+            final_param_dict.update(final_values)
         elif final_delta is not None:
             for k, v in final_delta.items():
-                x0_var_param[k] += v
+                final_param_dict[k] += v
         elif final_delta_pct is not None:
             for k, v in final_delta_pct.items():
-                x0_var_param[k] *= v
+                final_param_dict[k] *= v
         else:
             raise ValueError()
 
-        x0, theta_simulation = state_dict_to_input_arrays(
-            x0_var_param, self.unpacked_variable_names, self.unpacked_parameter_names
-        )
-        euler_result = euler_approx(self.f_dX, x0, theta0, theta_simulation, n_iter_euler)
-        x0_improved = euler_result[: len(self.unpacked_variable_names)]
-
-        res = optimize.minimize(
-            self.f_resid,
-            x0_improved,
-            jac=self.f_grad,
-            hess=self.f_hess,
-            args=theta_simulation,
-            **optimizer_kwargs,
+        _, theta_simulation = variable_dict_to_flat_array(
+            final_param_dict, self.variables, self.parameters
         )
 
-        result = Result(
-            name=name,
-            success=res.success,
-            variables=self.unpacked_variable_names,
-            parameters=self.unpacked_parameter_names,
-            initial_values=initial_state.fitted_values,
-            fitted_values=np.r_[res.x, theta_simulation],
-        )
+        return_values = {}
 
-        return result
+        if use_euler_approximation:
+            idata_euler = self._solve_with_euler_approximation(
+                x0_var_param, theta_simulation, n_steps=n_iter_euler
+            )
+            return_values["euler"] = idata_euler
+            x0_var_param = (
+                idata_euler.isel(step=-1).to_dict()["variables"]
+                | idata_euler.isel(step=-1).to_dict()["parameters"]
+            )
+
+        if use_optimizer:
+            if optimizer_mode == "root":
+                res = self._solve_with_root(x0_var_param, theta_simulation, **optimizer_kwargs)
+            elif optimizer_mode == "minimize":
+                res = self._solve_with_minimize(x0_var_param, theta_simulation, **optimizer_kwargs)
+            else:
+                raise ValueError(f"Unknown optimizer mode {optimizer_mode}")
+
+            if not res.success:
+                warnings.warn(
+                    "Optimizer did not converge. Results do not represent a valid equlibriuim, and are "
+                    "returned for diagnostic purposes only"
+                )
+
+            idata_optim = optimizer_result_to_idata(res, theta_simulation, self)
+            return_values["optimizer"] = idata_optim
+            return_values["optim_res"] = res
+
+        return return_values
 
     def print_residuals(self, res):
         n_vars = len(self.unpacked_variable_names)
@@ -1023,7 +1081,39 @@ class CGEModel:
         for eq, val in zip(self.unpacked_equation_names, errors):
             print(f"{eq:<75}: {val:<10.3f}")
 
-    def check_for_equilibrium(self, data, tol=1e-6):
+    def check_for_equilibrium(
+        self, data: Union[dict[str, Union[float, np.array]], InferenceData, xr.Dataset], tol=1e-6
+    ):
+        """
+        Verify if a given state of the model is an equilibrium.
+
+        Parameters
+        ----------
+        data: dict, InferenceData, or xr.Dataset
+            The state of the model to check. Must contain values for all variables and parameters in the model.
+        tol: float
+            The tolerance for the squared error of the system of equations. Defaults to 1e-6.
+
+        Notes
+        -----
+        The data argument is expected to be either a dictionary of variable and parameter values.
+        """
+
+        if isinstance(data, InferenceData):
+            if not ("variables" in data.groups() and "parameters" in data.groups()):
+                raise ValueError("InferenceData must contain variables and parameters groups")
+
+            if "step" in data["variables"].dims:
+                data = (
+                    data.isel(step=-1).to_dict()["variables"]
+                    | data.isel(step=-1).to_dict()["parameters"]
+                )
+            else:
+                data = data.to_dict()["variables"] | data.to_dict()["parameters"]
+
+        elif isinstance(data, xr.Dataset):
+            data = {x.name: data[x.name].values for x in self.variables + self.parameters}
+
         errors = self.f_system(**data)
         sse = (errors**2).sum()
 
@@ -1217,10 +1307,3 @@ def numba_linearize_cge_func(equations, variables, parameters):
         return -np.linalg.solve(A, np.identity(A.shape[0])) @ B
 
     return f_dX
-
-
-def state_dict_to_input_arrays(state_dict, variable_names, param_names):
-    x = np.array([state_dict[k] for k in variable_names], dtype=float)
-    theta = np.array([state_dict[x] for x in param_names], dtype=float)
-
-    return x, theta
