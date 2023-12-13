@@ -1,15 +1,18 @@
-﻿,,Factor,Factor,Factor,Institution,Institution,Institution,Production,Production,Production,Activities,Activities,Activities,Other
-,,Labor,Capital,Energy,Household,Firms,Govt,Agriculture,Industry,Services,Agriculture,Industry,Services,Capital Accumulation
-Factor,Labor,,,,,,,,,,1300,1900,4000,
-Factor,Capital,,,,,,,,,,200,2100,500,
-Factor,Energy,,,,,,,,,,,,,
-Institution,Household,7200,,,,2800,,,,,,,,
-Institution,Firms,,2800,,,,,,,,,,,
-Institution,Govt,,,5000,3000,,,150,1020,280,,,,
-Production,Agriculture,,,,1700,,400,,,,1000,1000,1000,50
-Production,Industry,,,,1200,,1500,,,,2010,3510,3000,800
-Production,Services,,,,3400,,2300,,,,490,2490,1000,100
-Activities,Agriculture,,,,,,,5000,,,,,,
-Activities,Industry,,,,,,,,11000,,,,,
-Activities,Services,,,,,,,,,9500,,,,
-Other,Capital Accumulation,,,,700,,250,,,,,,,
+﻿,,Factor,Factor,Factor,Institution,Institution,Institution,Production,Production,Production,Activities,Activities,Activities,Activities,Other,
+,,Labor,Capital,Energy,Household,Firms,Govt,Agriculture,Industry,Services,Agriculture,Industry,Services,Power,Capital Accumulation,
+Factor,Labor,,,,,,,,,,1300,1900,4000,,,7200
+Factor,Capital,,,,,,,,,,200,2100,500,,,2800
+Factor,Energy,,,,,,,,,,1000,3000,1000,,,5000
+Institution,Household,7200,,,,2800,,,,,,,,,,10000
+Institution,Firms,,2800,,,,,,,,,,,,,2800
+Institution,Govt,,,5000,3000,,,150,1020,280,,,,,,9450
+Production,Agriculture,,,,1700,,400,,,,3020,3000,0,,50,8170
+Production,Industry,,,,1200,,6500,,,,2010,1510,1500,,800,13520
+Production,Services,,,,3400,,2300,,,,490,1490,1000,,100,8780
+Activities,Agriculture,,,,,,,8020,,,,,,,,8020
+Activities,Industry,,,,,,,,13020,,,,,,,13020
+Activities,Services,,,,,,,,,9500,,,,,,9500
+Activities,Power,,,,,,,,,,,,,,,0
+Other,Capital Accumulation,,,,700,,250,,,,,,,,,950
+,,,,,,,,,,,,,,,,0
+,,7200,2800,5000,10000,2800,9450,8170,14040,9780,8020,13000,8000,0,950,
