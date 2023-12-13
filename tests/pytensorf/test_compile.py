@@ -1,5 +1,4 @@
 import numpy as np
-import pytensor
 import pytensor.tensor as pt
 import pytest
 
@@ -7,7 +6,6 @@ from cge_modeling.base.primitives import Parameter, Variable
 from cge_modeling.pytensorf.compile import (
     compile_cge_model_to_pytensor,
     compile_euler_approximation_function,
-    make_printer_cache,
     object_to_pytensor,
 )
 from tests.utilities.models import load_model_1, load_model_2
@@ -30,20 +28,6 @@ def test_object_to_pytensor(cls, name, coords):
     assert pt_obj.name == name
     assert pt_obj.ndim == len(coords)
     assert pt_obj.type.shape == tuple(len(coords[dim]) for dim in coords.keys())
-
-
-def test_make_cache():
-    cge_model = load_model_1()
-    variables = [object_to_pytensor(var, cge_model.coords) for var in cge_model.variables]
-    parameters = [object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters]
-
-    cache = make_printer_cache(variables, parameters)
-
-    assert len(cache) == len(variables) + len(parameters)
-    assert all(
-        [key[0] in cge_model.variable_names + cge_model.parameter_names for key in cache.keys()]
-    )
-    assert all([var in variables + parameters for var in cache.values()])
 
 
 @pytest.mark.parametrize(

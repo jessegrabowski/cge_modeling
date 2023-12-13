@@ -25,6 +25,8 @@ from cge_modeling.base.utilities import (
 )
 from cge_modeling.pytensorf.compile import (
     compile_cge_model_to_pytensor,
+    compile_cge_model_to_pytensor_Op,
+    euler_approximation,
     euler_approximation_from_CGEModel,
     pytensor_objects_from_CGEModel,
 )
@@ -759,6 +761,21 @@ class CGEModel:
     def _solve_with_euler_approximation(self, data, theta_final, n_steps):
         result = self.f_euler(**data, theta_final=theta_final, n_steps=n_steps)
         return list_of_array_to_idata(result, self)
+
+    def _euler_approximation_Op(self, n_steps=100):
+        if not self._compile_backend == "pytensor":
+            raise ValueError('Can only create an fgraph when mode is "pytensor"')
+
+        flat_equations, variables, parameters = pytensor_objects_from_CGEModel(self)
+        theta_final, result = euler_approximation(
+            flat_equations, variables, parameters, n_steps=n_steps
+        )
+        theta_final.name = "theta_final"
+
+        inputs = variables + parameters + [theta_final]
+
+        euler_op = pytensor.compile.builders.OpFromGraph(inputs, result, inline=True)
+        return euler_op
 
     def _solve_with_root(self, data, theta_final, use_jac=True, **optimizer_kwargs):
         if self._compile_backend == "numba":

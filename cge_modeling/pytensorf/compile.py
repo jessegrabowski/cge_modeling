@@ -65,7 +65,8 @@ def pytensor_objects_from_CGEModel(cge_model):
 
 
 def compile_cge_model_to_pytensor(
-    cge_model, inverse_method: Literal["solve", "pinv", "svd"] = "solve"
+    cge_model,
+    inverse_method: Literal["solve", "pinv", "svd"] = "solve",
 ) -> tuple[tuple[list, list], tuple[pt.TensorLike, pt.TensorLike, pt.TensorLike, pt.TensorLike]]:
     """
     Compile a CGE model to a PyTensor function.
@@ -108,9 +109,13 @@ def compile_cge_model_to_pytensor(
     """
     flat_equations, variables, parameters = pytensor_objects_from_CGEModel(cge_model)
     n_eq = flat_equations.type.shape[0]
+    inputs = (variables, parameters)
 
     jac = make_jacobian(flat_equations, variables)
     jac.name = "jacobian"
+
+    B = make_jacobian(flat_equations, parameters)
+    B.name = "B"
 
     if inverse_method == "pinv":
         jac_inv = pt.linalg.pinv(jac)
@@ -128,17 +133,14 @@ def compile_cge_model_to_pytensor(
     jac_inv = pt.specify_shape(jac_inv, (n_eq, n_eq))
     jac_inv.name = "inverse_jacobian"
 
-    B = make_jacobian(flat_equations, parameters)
-    B.name = "B"
-
-    inputs = (variables, parameters)
     outputs = (flat_equations, jac, jac_inv, B)
 
     return inputs, outputs
 
 
 def compile_cge_model_to_pytensor_Op(
-    cge_model, inverse_method: Literal["solve", "pinv", "svd"] = "solve"
+    cge_model,
+    inverse_method: Literal["solve", "pinv", "svd"] = "solve",
 ) -> tuple[pt.Op, pt.Op, pt.Op]:
     """
     Compile a CGE model to a PyTensor Ops.
@@ -173,16 +175,31 @@ def compile_cge_model_to_pytensor_Op(
     need to be "anonymous". This function exists to facilitate that use case.
     """
 
-    inputs, outputs = compile_cge_model_to_pytensor(cge_model, inverse_method=inverse_method)
-    flat_equations, jac, jac_inv, B = outputs
-    variables, parameters = inputs
-    inputs = variables + parameters
+    (variables, parameters), outputs = compile_cge_model_to_pytensor(
+        cge_model, inverse_method=inverse_method
+    )
+
+    flat_equations, jac, jac_inv, _ = outputs
+    inputs = list(variables) + list(parameters)
 
     f_model = pytensor.compile.builders.OpFromGraph(inputs, outputs=[flat_equations], inline=True)
     f_jac = pytensor.compile.builders.OpFromGraph(inputs, outputs=[jac], inline=True)
     f_jac_inv = pytensor.compile.builders.OpFromGraph(inputs, outputs=[jac_inv], inline=True)
 
     return f_model, f_jac, f_jac_inv
+
+
+def flat_tensor_to_ragged_list(tensor, shapes):
+    out = []
+    cursor = 0
+
+    for shape in shapes:
+        s = int(np.prod(shape))
+        x = tensor[cursor : cursor + s].reshape(shape)
+        out.append(x)
+        cursor += s
+
+    return out
 
 
 def euler_approximation(
@@ -242,6 +259,7 @@ def euler_approximation(
     Bv.name = "Bv"
 
     step = -A_inv @ Bv
+
     f_step = pytensor.compile.builders.OpFromGraph(
         x_list + theta_list + [step_size], [step], inline=True
     )
@@ -256,23 +274,12 @@ def euler_approximation(
         step_size = args[-1]
 
         step = f_step(*x_prev, *theta_prev, step_size)
-        x_next = []
-        cursor = 0
+        delta_x = flat_tensor_to_ragged_list(step, x_shapes)
+        x_next = [x + dx for x, dx in zip(x_prev, delta_x)]
 
-        for x, shape in zip(x_prev, x_shapes):
-            s = int(np.prod(shape))
-            delta_var = step[cursor : cursor + s].reshape(shape)
-            x_next.append(x + delta_var)
-            cursor += s
-        assert len(x_next) == len(x_prev)
+        delta_theta = flat_tensor_to_ragged_list(step_size, theta_shapes)
+        theta_next = [theta + dtheta for theta, dtheta in zip(theta_prev, delta_theta)]
 
-        theta_next = []
-        cursor = 0
-        for theta, shape in zip(theta_prev, theta_shapes):
-            s = int(np.prod(shape))
-            delta_theta = step_size[cursor : cursor + s].reshape(shape)
-            theta_next.append(theta + delta_theta)
-            cursor += s
         assert len(theta_next) == len(theta_prev)
 
         return x_next + theta_next
