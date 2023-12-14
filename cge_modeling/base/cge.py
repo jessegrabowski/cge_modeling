@@ -851,7 +851,7 @@ class CGEModel:
         self,
         param_dict: dict[str, np.array],
         initial_variable_guess: dict[str, np.array],
-        method: Literal["root", "minimize", "euler"] = "root",
+        solve_method: Literal["root", "minimize", "euler"] = "root",
         use_jac: bool = True,
         use_hess: bool = True,
         n_steps: int = 100,
@@ -870,7 +870,7 @@ class CGEModel:
             A dictionary of initial values for the model variables. The keys should be the names of the variables, and
             the values should be numpy arrays of the same shape as the variable.
 
-        method: str
+        solve_method: str
             The method to use to solve the model. One of 'root', 'minimize', or 'euler'. Defaults to 'root'.
 
             Note that Euler is not recommended for generating a SAM, because it assumes the initial point is itself a
@@ -915,14 +915,16 @@ class CGEModel:
             "euler": ft.partial(self._solve_with_euler_approximation, n_steps=n_steps),
         }
 
-        if method not in SOLVER_FACTORY:
+        if solve_method not in SOLVER_FACTORY:
             raise ValueError(
-                f"Unknown method {method}. Must be one of {list(SOLVER_FACTORY.keys())}"
+                f"Unknown method {solve_method}. Must be one of {list(SOLVER_FACTORY.keys())}"
             )
 
         joint_dict = {**param_dict, **initial_variable_guess}
         _, flat_params = variable_dict_to_flat_array(joint_dict, self.variables, self.parameters)
-        res = SOLVER_FACTORY[method](data=joint_dict, theta_final=flat_params, **solver_kwargs)
+        res = SOLVER_FACTORY[solve_method](
+            data=joint_dict, theta_final=flat_params, **solver_kwargs
+        )
         if not res.success:
             warnings.warn(
                 "Solver did not converge. Results do not represent a valid SAM, and are returned for "
