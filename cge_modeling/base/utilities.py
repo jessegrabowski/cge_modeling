@@ -3,6 +3,7 @@ import re
 from typing import Any, Callable, Sequence, Union, cast
 
 import numpy as np
+from fastprogress.fastprogress import ProgressBar, progress_bar
 
 from cge_modeling.base.primitives import Equation, Parameter, Variable
 
@@ -350,3 +351,84 @@ def wrap_pytensor_func_for_scipy(
         return f(**data)
 
     return inner_f
+
+
+class CostFuncWrapper:
+    def __init__(self, maxeval=5000, progressbar=True, f=None, f_jac=None, f_hess=None):
+        self.n_eval = 0
+        self.maxeval = maxeval
+        self.f = f
+        self.use_jac = False
+        self.use_hess = False
+
+        if f_jac is None:
+            self.desc = "f = {:,.5g}"
+        else:
+            if f_hess is not None:
+                self.f_hess = f_hess
+                self.use_hess = True
+                self.desc = "f = {:,.5g}, ||grad|| = {:,.5g}, ||hess|| = {:,.5g}"
+
+            self.f_jac = f_jac
+            self.use_jac = True
+            self.desc = "f = {:,.5g}, ||grad|| = {:,.5g}"
+
+        self.previous_x = None
+        self.progressbar = progressbar
+        if progressbar:
+            self.progress = progress_bar(range(maxeval), total=maxeval, display=progressbar)
+            self.progress.update(0)
+        else:
+            self.progress = range(maxeval)
+
+    def __call__(self, x, params):
+        grad = None
+        hess = None
+        value = self.f(x, params)
+
+        if self.use_jac:
+            grad = self.f_jac(x, params)
+            if self.use_hess:
+                hess = self.f_hess(x, params)
+            if np.all(np.isfinite(x)):
+                self.previous_x = x
+        else:
+            self.previous_x = x
+
+        if self.n_eval % 10 == 0:
+            self.update_progress_desc(value, grad, hess)
+
+        if self.n_eval > self.maxeval:
+            self.update_progress_desc(value, grad, hess)
+            raise StopIteration
+
+        self.n_eval += 1
+        if self.progressbar:
+            assert isinstance(self.progress, ProgressBar)
+            self.progress.update_bar(self.n_eval)
+
+        if self.use_jac:
+            if self.use_hess:
+                return value, grad  # , hess
+            else:
+                return value, grad
+        else:
+            return value
+
+    def update_progress_desc(
+        self, value: float, grad: np.float64 = None, hess: np.float64 = None
+    ) -> None:
+        if isinstance(value, np.ndarray):
+            value = (value**2).sum()
+
+        if self.progressbar:
+            if grad is None:
+                self.progress.comment = self.desc.format(value)
+            else:
+                if hess is None:
+                    norm_grad = np.linalg.norm(grad)
+                    self.progress.comment = self.desc.format(value, norm_grad)
+                else:
+                    norm_grad = np.linalg.norm(grad)
+                    norm_hess = np.linalg.norm(hess)
+                    self.progress.comment = self.desc.format(value, norm_grad, norm_hess)

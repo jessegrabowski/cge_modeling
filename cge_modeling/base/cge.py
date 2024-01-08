@@ -20,6 +20,7 @@ from cge_modeling.base.primitives import (
     _SympyEquation,
 )
 from cge_modeling.base.utilities import (
+    CostFuncWrapper,
     _replace_dim_marker_with_dim_name,
     _validate_input,
     ensure_input_is_sequence,
@@ -803,11 +804,11 @@ class CGEModel:
             )
 
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
-
+        maxeval = optimizer_kwargs.pop("niter", 5000)
         res = optimize.root(
-            f_system,
+            CostFuncWrapper(maxeval=maxeval, f=f_system, f_jac=f_jac if use_jac else None),
             x0,
-            jac=f_jac if use_jac else None,
+            jac=use_jac,
             args=theta_final,
             **optimizer_kwargs,
         )
@@ -836,10 +837,16 @@ class CGEModel:
             )
 
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
+        maxeval = optimizer_kwargs.pop("niter", 5000)
         res = optimize.minimize(
-            f_resid,
+            CostFuncWrapper(
+                maxeval=maxeval,
+                f=f_resid,
+                f_jac=f_grad if use_jac else None,
+                f_hess=f_hess if use_hess else None,
+            ),
             x0,
-            jac=f_grad if use_jac else None,
+            jac=use_jac,
             hess=f_hess if use_hess else None,
             args=theta_final,
             **optimizer_kwargs,
@@ -852,6 +859,7 @@ class CGEModel:
         param_dict: dict[str, np.array],
         initial_variable_guess: dict[str, np.array],
         solve_method: Literal["root", "minimize", "euler"] = "root",
+        fixed_values: Optional[dict[str, np.array]] = None,
         use_jac: bool = True,
         use_hess: bool = True,
         n_steps: int = 100,
@@ -869,6 +877,10 @@ class CGEModel:
         initial_variable_guess: dict[str, np.array]
             A dictionary of initial values for the model variables. The keys should be the names of the variables, and
             the values should be numpy arrays of the same shape as the variable.
+
+        fixed_values: dict[str, np.array], optional
+            A dictionary of exact values for a subset of model variables. The keys should be the names of the variables
+            to be changed, and the values should be numpy arrays of the same shape as the variable.
 
         solve_method: str
             The method to use to solve the model. One of 'root', 'minimize', or 'euler'. Defaults to 'root'.
@@ -925,12 +937,17 @@ class CGEModel:
         res = SOLVER_FACTORY[solve_method](
             data=joint_dict, theta_final=flat_params, **solver_kwargs
         )
-        if not res.success:
-            warnings.warn(
-                "Solver did not converge. Results do not represent a valid SAM, and are returned for "
-                "diagnostic purposes only"
-            )
-        result_dict = flat_array_to_variable_dict(res.x, self.variables, self.coords)
+
+        if not solve_method == "euler":
+            if not res.success:
+                warnings.warn(
+                    "Solver did not converge. Results do not represent a valid SAM, and are returned for "
+                    "diagnostic purposes only"
+                )
+
+            result_dict = flat_array_to_variable_dict(res.x, self.variables, self.coords)
+        else:
+            result_dict = res
 
         return result_dict
 
