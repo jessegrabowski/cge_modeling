@@ -220,8 +220,8 @@ def float_to_array(arr):
     return np.asarray(arr, np.float64)
 
 
-@nb.njit(cache=True)
-def euler_approx(f, x0, theta0, theta, n_steps):
+@nb.njit(cache=True, nogil=True)
+def euler_approx(f, x0, theta0, theta, n_steps, progress_bar):
     """
     Compute the solution to a non-linear function g(x, theta + dtheta) by iteratively computing a linear approximation
     f(x[t], theta + epsilon[t]) at the point (f(x[t-1], theta + epsilon[t-1]), theta + epsilon[t-1]), where epsilon[-1] = dtheta
@@ -286,5 +286,6 @@ def euler_approx(f, x0, theta0, theta, n_steps):
         dx = f(step_size, x).ravel()
         x = x + np.concatenate((dx, step_size))
         output[t, :] = x
+        progress_bar.update(1)
 
     return output

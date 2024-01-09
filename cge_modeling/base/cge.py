@@ -1,4 +1,5 @@
 import functools as ft
+import sys
 import warnings
 from copy import deepcopy
 from typing import Callable, Literal, Optional, Sequence, Union
@@ -10,6 +11,7 @@ import pytensor.tensor as pt
 import sympy as sp
 import xarray as xr
 from arviz import InferenceData
+from numba_progress import ProgressBar as NumbaProgressBar
 from scipy import optimize
 
 from cge_modeling.base.primitives import (
@@ -21,10 +23,12 @@ from cge_modeling.base.primitives import (
 )
 from cge_modeling.base.utilities import (
     CostFuncWrapper,
+    _optimzer_early_stopping_wrapper,
     _replace_dim_marker_with_dim_name,
     _validate_input,
     ensure_input_is_sequence,
     flat_array_to_variable_dict,
+    flat_mask_from_param_names,
     infer_object_shape_from_coords,
     variable_dict_to_flat_array,
     wrap_pytensor_func_for_scipy,
@@ -577,7 +581,8 @@ class CGEModel:
                 [np.atleast_1d(data[x]).ravel() for x in self.parameter_names], axis=0
             )
 
-            result = euler_approx(f_dX, x0, theta0, theta_final, n_steps)
+            with NumbaProgressBar(total=n_steps) as progress:
+                result = euler_approx(f_dX, x0, theta0, theta_final, n_steps, progress)
             # Decompose the result back to a list of numpy arrays
             shapes = [
                 infer_object_shape_from_coords(x, self.coords)
@@ -787,7 +792,15 @@ class CGEModel:
         euler_op = pytensor.compile.builders.OpFromGraph(inputs, result, inline=True)
         return euler_op
 
-    def _solve_with_root(self, data, theta_final, use_jac=True, **optimizer_kwargs):
+    def _solve_with_root(
+        self,
+        data,
+        theta_final,
+        use_jac=True,
+        fixed_values=None,
+        progressbar=True,
+        **optimizer_kwargs,
+    ):
         if self._compile_backend == "numba":
             f_system = self.f_system
             f_jac = self.f_jac
@@ -805,18 +818,32 @@ class CGEModel:
 
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
-        res = optimize.root(
-            CostFuncWrapper(maxeval=maxeval, f=f_system, f_jac=f_jac if use_jac else None),
+        objective = CostFuncWrapper(
+            maxeval=maxeval, f=f_system, f_jac=f_jac if use_jac else None, progressbar=progressbar
+        )
+
+        f_optim = ft.partial(
+            optimize.root,
+            objective,
             x0,
             jac=use_jac,
             args=theta_final,
+            callback=objective.callback,
             **optimizer_kwargs,
         )
+        res = _optimzer_early_stopping_wrapper(f_optim)
 
         return res
 
     def _solve_with_minimize(
-        self, data, theta_final, use_jac=True, use_hess=True, **optimizer_kwargs
+        self,
+        data,
+        theta_final,
+        use_jac=True,
+        use_hess=True,
+        progressbar=True,
+        fixed_values=None,
+        **optimizer_kwargs,
     ):
         if self._compile_backend == "numba":
             f_resid = self.f_resid
@@ -838,20 +865,27 @@ class CGEModel:
 
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
-        res = optimize.minimize(
-            CostFuncWrapper(
-                maxeval=maxeval,
-                f=f_resid,
-                f_jac=f_grad if use_jac else None,
-                f_hess=f_hess if use_hess else None,
-            ),
+
+        objective = CostFuncWrapper(
+            maxeval=maxeval,
+            f=f_resid,
+            f_jac=f_grad if use_jac else None,
+            f_hess=f_hess if use_hess else None,
+            progressbar=progressbar,
+        )
+
+        f_optim = ft.partial(
+            optimize.minimize,
+            objective,
             x0,
             jac=use_jac,
             hess=f_hess if use_hess else None,
             args=theta_final,
+            callback=objective.callback,
             **optimizer_kwargs,
         )
 
+        res = _optimzer_early_stopping_wrapper(f_optim)
         return res
 
     def generate_SAM(
@@ -934,6 +968,7 @@ class CGEModel:
 
         joint_dict = {**param_dict, **initial_variable_guess}
         _, flat_params = variable_dict_to_flat_array(joint_dict, self.variables, self.parameters)
+
         res = SOLVER_FACTORY[solve_method](
             data=joint_dict, theta_final=flat_params, **solver_kwargs
         )
@@ -1133,7 +1168,13 @@ class CGEModel:
         elif isinstance(data, xr.Dataset):
             data = {x.name: data[x.name].values for x in self.variables + self.parameters}
 
-        errors = self.f_system(**data)
+        if self._compile_backend == "pytensor":
+            errors = self.f_system(**data)
+        else:
+            var_inputs, param_inputs = variable_dict_to_flat_array(
+                data, self.variables, self.parameters
+            )
+            errors = self.f_system(var_inputs, param_inputs)
         sse = (errors**2).sum()
 
         if sse < tol:
