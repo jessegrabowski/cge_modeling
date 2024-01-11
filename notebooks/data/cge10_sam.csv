@@ -1,22 +1,22 @@
-﻿,,Factor,Factor,Factor,Factor,Institution,Institution,Institution,Production,Production,Production,Production,Production,Production,Activities,Activities,Activities,Activities,Activities,Activities,Other
-,,Labor,Capital,Coal,Nuclear,Household,Firms,Govt,Agriculture,Industry,Services,Utility,Coal,Nuclear,Agriculture,Industry,Services,Utility,Coal,Nuclear,Capital Accumulation
-Factor,Labor,,,,,,,,,,,,,,1300,2000,4000,100,600,200,
-Factor,Capital,,,,,,,,,,,,,,300,2100,600,100,400,800,
-Factor,Coal,,,,,,,,,,,,,,,,,,1000,,
-Factor,Nuclear,,,,,,,,,,,,,,,,,,,1000,
-Institution,Household,8200,,1000,1000,,4300,,,,,,,,,,,,,,
-Institution,Firms,,4300,,,,,,,,,,,,,,,,,,
-Institution,Govt,,,,,1350,,,,,,,,,,,,,,,
-Production,Agriculture,,,,,2100,,350,,,,,,,1000,500,1100,100,,,50
-Production,Industry,,,,,3800,,0,,,,,,,1510,3490,1500,100,,,800
-Production,Services,,,,,4100,,1000,,,,,,,490,2010,1900,100,,,100
-Production,Utility,,,,,2200,,,,,,,,,600,1100,600,100,,,
-Production,Coal,,,,,,,,,,,,,,0,0,0,2000,,,
-Production,Nuclear,,,,,,,,,,,,,,0,0,0,2000,,,
-Activities,Agriculture,,,,,,,,5200,,,,,,,,,,,,
-Activities,Industry,,,,,,,,,11200,,,,,,,,,,,
-Activities,Services,,,,,,,,,,9700,,,,,,,,,,
-Activities,Utility,,,,,,,,,,,4600,,,,,,,,,
-Activities,Coal,,,,,,,,,,,,2000,,,,,,,,
-Activities,Nuclear,,,,,,,,,,,,,2000,,,,,,,
-Other,Capital Accumulation,,,,,950,,,,,,,,,,,,,,,
+﻿,,Factor,Factor,Factor,Factor,Factor,Institution,Institution,Production,Production,Production,Production,Production,Production,Activities,Activities,Activities,Activities,Activities,Activities,Other
+,,Labor,Capital,Coal,Nuclear,Electricity,Household,Govt,Agriculture,Industry,Services,Utility,Coal,Nuclear,Agriculture,Industry,Services,Utility,Coal,Nuclear,Capital Accumulation
+Factor,Labor,,,,,,,,,,,,,,1300,2000,4000,,200,200,
+Factor,Capital,,,,,,,,,,,,,,300,2100,600,,400,300,
+Factor,Coal,,,,,,,,,,,,,,,,,,400,,
+Factor,Nuclear,,,,,,,,,,,,,,,,,,,800,
+Factor,Electricity,,,,,,,,,,,,,,700,900,700,,,,
+Institution,Household,7700,3700,400,800,,,,,,,,,,,,,,,,
+Institution,Govt,,,,,,1350,,,,,,,,,,,,,,
+Production,Agriculture,,,,,,2100,350,,,,,,,1000,500,1100,,,,50
+Production,Industry,,,,,,3800,0,,,,,,,1310,3490,1600,,,,800
+Production,Services,,,,,,4400,1000,,,,,,,490,2010,1900,,,,100
+Production,Utility,,,,,2300,,,,,,,,,,,,,,,
+Production,Coal,,,,,,,,,,,,,,,,,1000,,,
+Production,Nuclear,,,,,,,,,,,,,,,,,1300,,,
+Activities,Agriculture,,,,,,,,5100,,,,,,,,,,,,
+Activities,Industry,,,,,,,,,11000,,,,,,,,,,,
+Activities,Services,,,,,,,,,,9900,,,,,,,,,,
+Activities,Utility,,,,,,,,,,,2300,,,,,,,,,
+Activities,Coal,,,,,,,,,,,,1000,,,,,,,,
+Activities,Nuclear,,,,,,,,,,,,,1300,,,,,,,
+Other,Capital Accumulation,,,,,,950,,,,,,,,,,,,,,

@@ -1,0 +1,13 @@
+﻿,,Factor,Factor,Factor,Institution,Institution,Production,Production,Production,Activities,Activities,Activities
+,,Labor,Capital,Energy,Household,Firms,Agriculture,Industry,Services,Agriculture,Industry,Services
+Factor,Labor,,,,,,,,,1000,2000,4000
+Factor,Capital,,,,,,,,,500,2000,500
+Factor,Energy,,,,,,,,,500,2000,500
+Institution,Household,7000,,3000,,3000,,,,,,
+Institution,Firms,,3000,,,,,,,,,
+Production,Agriculture,,,,3000,,,,,1900,0,1100
+Production,Industry,,,,3500,,,,,2000,3500,3000
+Production,Services,,,,6500,,,,,100,2500,1000
+Activities,Agriculture,,,,,,6000,,,,,
+Activities,Industry,,,,,,,12000,,,,
+Activities,Services,,,,,,,,10100,,,
