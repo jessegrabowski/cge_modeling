@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Union
 
-import numpy as np
 import pandas as pd
 import sympy as sp
 from sympy.abc import greeks
@@ -29,6 +28,10 @@ def _pretty_print_dim_flags(s, dims, dim_vals):
     return s
 
 
+def _process_subscript_chunks(chunks):
+    return ", ".join(chunks)
+
+
 @dataclass(slots=True, order=True, frozen=False, repr=False)
 class ModelObject(ABC):
     name: str
@@ -40,7 +43,7 @@ class ModelObject(ABC):
     base_name: str = None
     real: bool = True
     positive: bool = True
-    extend_subscript: bool = False
+    extend_subscript: Union[bool, int] = False
     assumptions: dict = field(default_factory=dict)
 
     def __post_init__(self):
@@ -124,9 +127,13 @@ class ModelObject(ABC):
     def _initialize_full_latex_name(self):
         idx_subscript = self._make_latex_subscript()
         base_latex_name = self.latex_name
+        int_extend = int(self.extend_subscript)
 
         if self.extend_subscript:
-            *base_chunks, subscript = base_latex_name.split("_")
+            tokens = base_latex_name.split("_")
+            base_chunks, subscript_chunks = tokens[:-int_extend], tokens[-int_extend:]
+            subscript = _process_subscript_chunks(subscript_chunks)
+
             if len(base_chunks) == 0:
                 base_latex_name, subscript = subscript, base_chunks
             else:

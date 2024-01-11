@@ -1,8 +1,11 @@
 import functools as ft
 import re
-from typing import Any, Callable, Sequence, Union, cast
+import sys
+import warnings
+from typing import Any, Callable, Optional, Sequence, Union, cast
 
 import numpy as np
+from fastprogress.fastprogress import ProgressBar, progress_bar
 
 from cge_modeling.base.primitives import Equation, Parameter, Variable
 
@@ -331,7 +334,7 @@ def wrap_pytensor_func_for_scipy(
         List of model variables
     parameter_list: list[Parameter]
         List of model parameters
-    coords: dict[str, list[str]]
+    coords: dict[str, list[str, ...]]
         Dictionary of coordinates mapping dimension names to lists of labels associated with that dimension.
 
     Returns
@@ -350,3 +353,143 @@ def wrap_pytensor_func_for_scipy(
         return f(**data)
 
     return inner_f
+
+
+def flat_mask_from_param_names(param_dict, names):
+    keys = list(param_dict.keys())
+    count_dict = {k: np.prod(np.atleast_1d(v).shape) for k, v in param_dict.items()}
+    counts = np.concatenate([np.atleast_1d(count_dict[var]).ravel() for var in keys])
+    cumcounts = counts.cumsum()
+
+    slice_dict = count_dict.copy()
+
+    for i, k in enumerate(keys):
+        slice_dict[k] = slice(cumcounts[i] - counts[i], cumcounts[i])
+
+    flat_data = np.concatenate([np.atleast_1d(param_dict[var]).ravel() for var in keys])
+    mask = np.full(flat_data.shape, False, dtype="bool")
+
+    if isinstance(names, str):
+        names = [names]
+
+    for name in names:
+        mask[slice_dict[name]] = True
+
+    return mask
+
+
+def _optimzer_early_stopping_wrapper(f_optim):
+    objective = f_optim.args[0]
+    progressbar = objective.progressbar
+
+    res = f_optim()
+
+    total_iters = objective.n_eval
+    if progressbar:
+        objective.progress.total = total_iters
+        objective.progress.update(total_iters)
+        print(file=sys.stdout)
+
+    return res
+
+
+class CostFuncWrapper:
+    def __init__(
+        self,
+        f: Callable,
+        f_jac: Optional[Callable] = None,
+        f_hess: Optional[Callable] = None,
+        maxeval: int = 5000,
+        progressbar: bool = True,
+        update_every: int = 10,
+    ):
+        self.n_eval = 0
+        self.maxeval = maxeval
+        self.f = f
+        self.use_jac = False
+        self.use_hess = False
+        self.update_every = update_every
+        self.interrupted = False
+        self.desc = "f = {:,.5g}"
+
+        if f_jac is not None:
+            self.desc += ", ||grad|| = {:,.5g}"
+            self.use_jac = True
+            self.f_jac = f_jac
+
+        if f_hess is not None:
+            self.desc += ", ||hess|| = {:,.5g}"
+            self.use_hess = True
+            self.f_hess = f_hess
+
+        self.previous_x = None
+        self.progressbar = progressbar
+        if progressbar:
+            self.progress = progress_bar(range(maxeval), total=maxeval, display=progressbar)
+            self.progress.update(0)
+        else:
+            self.progress = range(maxeval)
+
+    def step(self, x, params):
+        grad = None
+        hess = None
+        value = self.f(x, params)
+
+        if self.use_jac:
+            grad = self.f_jac(x, params)
+            if self.use_hess:
+                hess = self.f_hess(x, params)
+            if np.all(np.isfinite(x)):
+                self.previous_x = x
+        else:
+            self.previous_x = x
+
+        if self.n_eval % self.update_every == 0:
+            self.update_progress_desc(value, grad, hess)
+
+        if self.n_eval > self.maxeval:
+            self.update_progress_desc(value, grad, hess)
+            self.interrupted = True
+            return value, grad
+
+        self.n_eval += 1
+        if self.progressbar:
+            assert isinstance(self.progress, ProgressBar)
+            self.progress.update_bar(self.n_eval)
+
+        if self.use_jac:
+            if self.use_hess:
+                return value, grad  # , hess
+            else:
+                return value, grad
+        else:
+            return value
+
+    def __call__(self, x, params):
+        try:
+            return self.step(x, params)
+        except (KeyboardInterrupt, StopIteration):
+            self.interrupted = True
+            return self.step(self.x, params)
+
+    def callback(self, xk):
+        if self.interrupted:
+            raise StopIteration
+
+    def update_progress_desc(
+        self, value: float, grad: np.float64 = None, hess: np.float64 = None
+    ) -> None:
+        if isinstance(value, np.ndarray):
+            value = (value**2).sum()
+
+        if self.progressbar:
+            if grad is None:
+                self.progress.comment = self.desc.format(value)
+            else:
+                if hess is None:
+                    norm_grad = np.linalg.norm(grad)
+                    self.progress.comment = self.desc.format(value, norm_grad)
+                else:
+                    norm_grad = np.linalg.norm(grad)
+                    norm_hess = np.linalg.norm(hess)
+                    self.progress.comment = self.desc.format(value, norm_grad, norm_hess)

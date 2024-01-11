@@ -10,3 +10,7 @@ pytensor~=2.17.4
 latextable~=1.0.1
 texttable~=1.7.0
 sympytensor~=1.0.0
+xarray~=2023.11.0
+arviz~=0.16.1
+fastprogress~=1.0.3
+numba_progress

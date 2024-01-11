@@ -11,6 +11,10 @@ dependencies:
   - numba
   - IPython
   - pytensor
+  - tqdm
+  - numba-progress
+  - fastprogress
+
   - pip:
     - latextable
     - texttable
