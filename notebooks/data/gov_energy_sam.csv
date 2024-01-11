@@ -1,0 +1,22 @@
+﻿,,Factor,Factor,Factor,Factor,Institution,Institution,Institution,Production,Production,Production,Production,Production,Production,Activities,Activities,Activities,Activities,Activities,Activities,Other
+,,Labor,Capital,Coal,Nuclear,Household,Firms,Govt,Agriculture,Industry,Services,Coal,Nuclear,Utility,Agriculture,Industry,Services,Coal,Nuclear,Utility,Capital Accumulation
+Factor,Labor,,,,,,,,,,,,,,1300,1900,4000,600,200,100,
+Factor,Capital,,,,,,,,,,,,,,200,2100,500,400,800,100,
+Factor,Coal,,,,,,,,,,,,,,,,,1000,,,
+Factor,Nuclear,,,,,,,,,,,,,,,,,,1000,,
+Institution,Household,8100,,1000,1000,,4100,,,,,,,,,,,,,,
+Institution,Firms,,4100,,,,,,,,,,,,,,,,,,
+Institution,Govt,,,,,1350,,,,,,,,,,,,,,,
+Production,Agriculture,,,,,2000,,350,,,,,,,1000,500,1100,,,,50
+Production,Industry,,,,,3700,,0,,,,,,,1510,3490,1500,,,,800
+Production,Services,,,,,4000,,1000,,,,,,,490,2010,1900,,,,100
+Production,Coal,,,,,,,,,,,,,,,,,,,2000,
+Production,Nuclear,,,,,,,,,,,,,,,,,,,2000,
+Production,Utility,,,,,2200,,,,,,,,,500,1000,500,,,,
+Activities,Agriculture,,,,,,,,5000,,,,,,,,,,,,
+Activities,Industry,,,,,,,,,11000,,,,,,,,,,,
+Activities,Services,,,,,,,,,,9500,,,,,,,,,,
+Activities,Coal,,,,,,,,,,,2000,,,,,,,,,
+Activities,Nuclear,,,,,,,,,,,,2000,,,,,,,,
+Activities,Utility,,,,,,,,,,,,,4200,,,,,,,
+Other,Capital Accumulation,,,,,950,,,,,,,,,,,,,,,
