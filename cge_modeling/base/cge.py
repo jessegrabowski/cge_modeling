@@ -1181,6 +1181,16 @@ class CGEModel:
             print(f"Equilibrium found! Total squared error: {sse:0.6f}")
         else:
             print(f"Equilibrium not found. Total squared error: {sse:0.6f}")
+            longest_name = max(len(x) for x in self.unpacked_equation_names)
+
+            print("\n")
+            print(f'{"Equation":<{longest_name + 10}}', "Residual")
+            print("=" * 100)
+
+            for eq_name, resid in zip(self.unpacked_equation_names, errors):
+                is_negative = resid < 0
+                pad = "" if is_negative else " "
+                print(f"{eq_name:<{longest_name + 10}}{pad}{resid:0.6f}")
 
 
 def recursive_solve_symbolic(equations, known_values=None, max_iter=100):
