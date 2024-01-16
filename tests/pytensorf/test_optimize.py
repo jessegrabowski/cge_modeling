@@ -3,6 +3,7 @@ import pytensor
 import pytensor.tensor as pt
 from numpy.testing import assert_allclose
 
+from cge_modeling.base.utilities import flat_array_to_variable_dict
 from cge_modeling.pytensorf.compile import (
     compile_cge_model_to_pytensor,
     compile_cge_model_to_pytensor_Op,
@@ -169,3 +170,9 @@ def test_sector_model_from_compile():
     )
 
     root_eval = _postprocess_root_return(root_history)
+    root_point = flat_array_to_variable_dict(root_eval, mod.variables, mod.coords)
+
+    # Check residuals are zero at the root
+    assert_allclose(
+        mod.f_system(**root_point, **params).ravel(), np.zeros(mod.n_variables), atol=1e-8
+    )
