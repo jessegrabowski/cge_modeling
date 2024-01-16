@@ -411,7 +411,7 @@ class CGEModel:
         param_dicts = [{"modelobj": param} for param in unpacked_vars]
         self._unpacked_variables = dict(zip(unpacked_names, param_dicts))
 
-    def add_equation(self, equation: Equation, overwrite: bool = False):
+    def add_sympy_equation(self, equation: Equation, overwrite: bool = False):
         _validate_input(equation, Equation)
         var_dict = {k: v.to_sympy() for k, v in self._variables.items()}
         fancy_var_dict = {k: v.to_sympy(use_latex_name=True) for k, v in self._variables.items()}
@@ -423,58 +423,62 @@ class CGEModel:
 
         local_dict = var_dict | param_dict | str_dim_to_symbol
         fancy_dict = fancy_var_dict | fancy_param_dict | str_dim_to_symbol
-        if self.parse_equations_to_sympy:
-            # TODO: Should i call substitute_reduce_ops here to remove the sum/product over dummy indices in the
-            #  equation lists? Downside: it will make very long expressions if the dim labels are long.
-            try:
-                sympy_eq = sp.parse_expr(
-                    equation.equation, local_dict=local_dict, transformations="all"
-                )
-                fancy_eq = sp.parse_expr(
-                    equation.equation, local_dict=fancy_dict, transformations="all"
-                )
-            except Exception as e:
-                raise ValueError(
-                    f"""Could not parse equation "{equation.name}":\n{equation.equation}\n\nEncountered the """
-                    f"following error:\n{e}"
-                )
 
-            if self.numeraire:
-                x = self.numeraire.to_sympy()
-                sympy_eq = sympy_eq.subs({x: 1})
-
-            # Standardize equation
-            try:
-                standard_eq = substitute_reduce_ops(sympy_eq.lhs - sympy_eq.rhs, self.coords)
-            except Exception as e:
-                raise ValueError(
-                    f"""Could not standardize equation "{equation.name}":\n{sympy_eq}\n\nEncountered the """
-                    f"following error:\n{e}"
-                )
-
-            eq_id = equation.eq_id
-            if eq_id is None:
-                eq_id = len(self.equations) + 1
-
-            new_eq = _SympyEquation(
-                name=equation.name,
-                equation=equation.equation,
-                symbolic_eq=sympy_eq,
-                _eq=standard_eq,
-                _fancy_eq=fancy_eq,
-                dims=find_equation_dims(standard_eq, list(str_dim_to_symbol.values())),
-                eq_id=eq_id,
+        # TODO: Should i call substitute_reduce_ops here to remove the sum/product over dummy indices in the
+        #  equation lists? Downside: it will make very long expressions if the dim labels are long.
+        try:
+            sympy_eq = sp.parse_expr(
+                equation.equation, local_dict=local_dict, transformations="all"
             )
-        else:
-            new_eq = equation
+            fancy_eq = sp.parse_expr(
+                equation.equation, local_dict=fancy_dict, transformations="all"
+            )
+        except Exception as e:
+            raise ValueError(
+                f"""Could not parse equation "{equation.name}":\n{equation.equation}\n\nEncountered the """
+                f"following error:\n{e}"
+            )
+
+        if self.numeraire:
+            x = self.numeraire.to_sympy()
+            sympy_eq = sympy_eq.subs({x: 1})
+
+        # Standardize equation
+        try:
+            standard_eq = substitute_reduce_ops(sympy_eq.lhs - sympy_eq.rhs, self.coords)
+        except Exception as e:
+            raise ValueError(
+                f"""Could not standardize equation "{equation.name}":\n{sympy_eq}\n\nEncountered the """
+                f"following error:\n{e}"
+            )
+
+        eq_id = equation.eq_id
+        if eq_id is None:
+            eq_id = len(self.equations) + 1
+
+        new_eq = _SympyEquation(
+            name=equation.name,
+            equation=equation.equation,
+            symbolic_eq=sympy_eq,
+            _eq=standard_eq,
+            _fancy_eq=fancy_eq,
+            dims=find_equation_dims(standard_eq, list(str_dim_to_symbol.values())),
+            eq_id=eq_id,
+        )
 
         self._add_object(new_eq, "equations", overwrite)
+
+    def add_pytensor_equation(self, equation: Equation, overwrite: bool = False) -> None:
+        self._add_object(equation, "equations", overwrite)
 
     def add_equations(self, equations: list[Equation], overwrite: bool = False):
         equations = ensure_input_is_sequence(equations)
         [_validate_input(equation, Equation) for equation in equations]
+        add_function = (
+            self.add_sympy_equation if self.parse_equations_to_sympy else self.add_pytensor_equation
+        )
         for equation in equations:
-            self.add_equation(equation, overwrite)
+            add_function(equation, overwrite)  # type: ignore
 
     def _unpack_equations(self, *args):
         if self.equations is None:
