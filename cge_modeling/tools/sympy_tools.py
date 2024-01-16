@@ -354,7 +354,9 @@ def expand_obj_by_indices(
     """
     out = []
 
-    dims = obj.dims if dims is None else dims
+    dims = getattr(obj, "dims", "no_dims") if dims is None else dims
+    if dims == "no_dims":
+        return [obj]
     dims = _validate_dims(obj, dims, on_unused_dim)
 
     # Take the cartesian product of dimensions to be expanded to form all possible combinations of labels

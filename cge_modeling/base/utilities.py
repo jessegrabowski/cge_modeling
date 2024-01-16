@@ -2,14 +2,61 @@ import functools as ft
 import re
 import sys
 import warnings
+from itertools import product
 from typing import Any, Callable, Optional, Sequence, Union, cast
 
 import numpy as np
 from fastprogress.fastprogress import ProgressBar, progress_bar
 
-from cge_modeling.base.primitives import Equation, Parameter, Variable
+from cge_modeling.base.primitives import (
+    Equation,
+    Parameter,
+    Variable,
+    _pretty_print_dim_flags,
+)
 
 CGETypes = Union[Variable, Parameter, Equation]
+
+
+def unpack_equation_strings(
+    equations: list[Equation, ...], coords: dict[str, list[str]]
+) -> list[str, ...]:
+    """
+    Helper function to unpack equations names with <dim:i> tags to a long list of equations.
+
+    Parameters
+    ----------
+    equations: Equation
+        List of equation objects from a CGE model
+    coords: dict
+        Dictionary mapping dimension names to  lists of labels
+
+    Returns
+    -------
+    unpacked_names: list[str, ...]
+        List of unpacked equation names
+    """
+
+    unpacked_names = []
+    dims = list(coords.keys())
+    dims_pattern = "|".join([re.escape(x) for x in dims])
+    pattern = f"<dim:({dims_pattern})>"
+
+    for eq in equations:
+        name = eq.name
+        named_dims = re.findall(pattern, name)
+
+        if len(named_dims) == 0:
+            unpacked_names.append(name)
+            continue
+        labels = [coords[dim] for dim in named_dims]
+        label_prod = product(*labels)
+        for labels in label_prod:
+            sub_dict = dict(zip(named_dims, labels))
+            new_name = _pretty_print_dim_flags(name, named_dims, sub_dict)
+            unpacked_names.append(new_name)
+
+    return unpacked_names
 
 
 def _validate_input(obj: Any, cls: CGETypes):

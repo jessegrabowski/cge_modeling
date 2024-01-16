@@ -30,6 +30,7 @@ from cge_modeling.base.utilities import (
     flat_array_to_variable_dict,
     flat_mask_from_param_names,
     infer_object_shape_from_coords,
+    unpack_equation_strings,
     variable_dict_to_flat_array,
     wrap_pytensor_func_for_scipy,
 )
@@ -157,8 +158,11 @@ class CGEModel:
         compile=True,
     ):
         self.numeraire = None
-        self.coords = {} if coords is None else coords
+        self.coords: dict[str, list[str, ...]] = {} if coords is None else coords
         self.parse_equations_to_sympy = parse_equations_to_sympy
+
+        self._sympy_cache = {}
+        self._pytensor_cache = {}
         self._symbolic_coords = {sp.Idx(k): v for k, v in self.coords.items()}
 
         self._variables = {}
@@ -184,9 +188,11 @@ class CGEModel:
         if numeraire:
             del self._variables[numeraire]
 
-        # self.n_equations = len(self.unpacked_equation_names)
+        self.n_equations = len(self.unpacked_equation_names)
         self.n_variables = len(self.unpacked_variable_names)
         self.n_parameters = len(self.unpacked_parameter_names)
+
+        self.check_initialization()
 
         self.scenarios: dict[str, Result] = {}
 
@@ -202,6 +208,13 @@ class CGEModel:
 
         if compile:
             self._compile(backend=backend, mode=mode, inverse_method=inverse_method)
+
+    def check_initialization(self):
+        if self.n_variables != self.n_equations:
+            raise ValueError(
+                f"Found {self.n_variables} variables but {self.n_equations} equations. "
+                "System is not square. Check your model equations."
+            )
 
     def _initialize_group(self, objects, group_name):
         if objects is None:
@@ -300,16 +313,25 @@ class CGEModel:
 
     @property
     def unpacked_equation_symbols(self):
-        return [
-            self._unpacked_equations[eq_name]["symbol"] for eq_name in self.unpacked_equation_names
-        ]
+        if self.parse_equations_to_sympy:
+            return [
+                self._unpacked_equations[eq_name]["symbol"]
+                for eq_name in self.unpacked_equation_names
+            ]
+        else:
+            raise NotImplementedError(
+                "Symbolic equations not available when sympy parsing is disabled"
+            )
 
     @property
     def unpacked_equations(self):
-        return [
-            self._unpacked_equations[eq_name]["modelobj"]
-            for eq_name in self.unpacked_equation_names
-        ]
+        if self.parse_equations_to_sympy:
+            return [
+                self._unpacked_equations[eq_name]["modelobj"]
+                for eq_name in self.unpacked_equation_names
+            ]
+        else:
+            raise NotImplementedError("Cannot unpack equations when sympy parsing is disabled")
 
     def _add_object(
         self,
@@ -343,10 +365,6 @@ class CGEModel:
 
         expanded_objects = []
         for obj in objs:
-            if isinstance(obj, Equation) and not self.parse_equations_to_sympy:
-                expanded_objects.append(obj)
-                continue
-
             expanded_objs = expand_obj_by_indices(
                 obj, self.coords, dims=None, on_unused_dim="ignore"
             )
@@ -461,10 +479,14 @@ class CGEModel:
     def _unpack_equations(self, *args):
         if self.equations is None:
             raise ValueError("Cannot unpack equations before they are added to the model.")
-        unpacked_eqs = self._unpack_objects(self.equations)
-        unpacked_names = [eq.name for eq in unpacked_eqs]
-        param_dicts = [{"modelobj": param} for param in unpacked_eqs]
-        self._unpacked_equations = dict(zip(unpacked_names, param_dicts))
+        if self.parse_equations_to_sympy:
+            unpacked_eqs = self._unpack_objects(self.equations)
+            unpacked_names = [eq.name for eq in unpacked_eqs]
+            param_dicts = [{"modelobj": eq} for eq in unpacked_eqs]
+            self._unpacked_equations = dict(zip(unpacked_names, param_dicts))
+        else:
+            unpacked_eq_names = unpack_equation_strings(self.equations, self.coords)
+            self._unpacked_equations = dict.fromkeys(unpacked_eq_names, None)
 
     def _get_object(self, obj_name: str, group: Literal["variables", "parameters"]):
         return getattr(self, f"_{group}")[obj_name]
