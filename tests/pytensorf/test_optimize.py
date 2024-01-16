@@ -84,6 +84,9 @@ def test_small_model():
     expected_root = np.array(
         [1.16392629e04, 1.16392629e04, 7000.0, 4000.0, 0.897630824, 0.861940299, 0.0]
     )
+    f_model_compiled = pytensor.function(
+        inputs=variables + params, outputs=equations, mode="FAST_COMPILE"
+    )
 
     # Check optimizer converges to the scipy result
     assert_allclose(root_eval, expected_root, atol=1e-8)
@@ -92,7 +95,7 @@ def test_small_model():
     assert_allclose(root_eval[0], root_eval[1], atol=1e-8)
 
     # Check residuals are zero at the root
-    assert_allclose(f_model(*root_eval, **param_vals).eval(), np.zeros(7), atol=1e-8)
+    assert_allclose(f_model_compiled(*root_eval, **param_vals).ravel(), np.zeros(7), atol=1e-8)
 
 
 def test_small_model_from_compile():
@@ -166,4 +169,3 @@ def test_sector_model_from_compile():
     )
 
     root_eval = _postprocess_root_return(root_history)
-    print(root_eval)
