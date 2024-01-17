@@ -15,6 +15,7 @@ dependencies:
   - matplotlib
   - pymc
   - pytensor
+  - matplotlib
 
   # JAX Backend
   - jax
@@ -24,6 +25,7 @@ dependencies:
   - pip:
       - texttable
       - latextable
+      - squarify
 
   # For building docs
   - sphinx>=5.1.0,<6
