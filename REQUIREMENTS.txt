@@ -14,3 +14,4 @@ xarray~=2023.11.0
 arviz~=0.16.1
 fastprogress~=1.0.3
 numba_progress
+matplotlib

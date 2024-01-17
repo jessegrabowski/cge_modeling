@@ -14,11 +14,13 @@ dependencies:
   - tqdm
   - numba-progress
   - fastprogress
+  - matplotlib
 
   - pip:
     - latextable
     - texttable
     - sympytensor
+    - squarify
 
   # Testing dependencies
   - pre-commit
