@@ -653,9 +653,9 @@ class CGEModel:
         if mode in ["JAX", "NUMBA"]:
             # In JAX and NUMBA modes, pytensor puts a bunch of extra overhead around the (fast!) jitted functions.
             # We can strip that all away by using the jit_fn direction.
-            self.f_system = lambda *args, **kwargs: f_system.vm.jit_fn(*args, **kwargs)[0]
-            self.f_jac = lambda *args, **kwargs: f_jac.vm.jit_fn(*args, **kwargs)[0]
-            self.f_root = lambda *args, **kwargs: f_root.vm.jit_fn(*args, **kwargs)[0]
+            self.f_system = lambda *args, **kwargs: np.array(f_system.vm.jit_fn(*args, **kwargs)[0])
+            self.f_jac = lambda *args, **kwargs: np.array(f_jac.vm.jit_fn(*args, **kwargs)[0])
+            self.f_root = lambda *args, **kwargs: np.array(f_root.vm.jit_fn(*args, **kwargs)[0])
         else:
             self.f_system = f_system
             self.f_jac = f_jac
