@@ -1,0 +1,16 @@
+,,Factor,Factor,Institution,Institution,Production,Production,Activities,Activities,Income Tax,Sales Tax,Sales Tax,Use Tax,Use Tax,Other
+,,Labor,Capital,Household,Govt,Milk,Bread,Milk,Bread,Household,Milk,Bread,Labor,Capital,Investment
+Factor,Labor,,,,,,,2000,6000,,,,,,
+Factor,Capital,,,,,,,2500,700,,,,,,
+Institution,Household,8000,3200,,,,,,,,,,,,
+Institution,Govt,,,,,,,,,800,300,1000,1700,1500,
+Production,Milk,,,2000,4000,,,1500,700,,,,,,1000
+Production,Bread,,,5830,1170,,,1700,1100,,,,,,400
+Activities,Milk,,,,,7700,,,,,,,,,
+Activities,Bread,,,,,,8500,,,,,,,,
+Income Tax,Household,,,800,,,,,,,,,,,
+Sales Tax,Milk,,,300,,,,,,,,,,,
+Sales Tax,Bread,,,1000,,,,,,,,,,,
+Use Tax,Labor,,,,,500,1200,,,,,,,,
+Use Tax,Capital,,,,,1000,500,,,,,,,,
+Other,Investment,,,1270,130,,,,,,,,,,
