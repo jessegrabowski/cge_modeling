@@ -9,7 +9,9 @@ from matplotlib.gridspec import GridSpec
 from cge_modeling import CGEModel
 
 
-def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list[slice, ...]]:
+def prepare_gridspec_figure(
+    n_cols: int, n_plots: int
+) -> tuple[GridSpec, list[tuple[slice, slice], ...]]:
     """
      Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
 
