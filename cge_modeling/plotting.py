@@ -1,9 +1,17 @@
+from typing import Optional, Union
+
+import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import Colormap
 from matplotlib.gridspec import GridSpec
 
+from cge_modeling import CGEModel
 
-def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list[slice, ...]]:
+
+def prepare_gridspec_figure(
+    n_cols: int, n_plots: int
+) -> tuple[GridSpec, list[tuple[slice, slice], ...]]:
     """
      Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
 
@@ -44,15 +52,43 @@ def prepare_gridspec_figure(n_cols: int, n_plots: int) -> tuple[GridSpec, list[s
 
 
 def plot_lines(
-    idata,
-    mod,
-    n_cols=5,
-    var_names=None,
-    initial_values=None,
-    plot_euler=None,
-    plot_optimizer=None,
+    idata: az.InferenceData,
+    mod: CGEModel,
+    n_cols: int = 5,
+    var_names: Optional[list[str]] = None,
+    initial_values: Optional[dict[str, np.ndarray]] = None,
+    plot_euler: bool = True,
+    plot_optimizer: bool = True,
     **figure_kwargs,
-):
+) -> plt.Figure:
+    """
+    Trace the evolution of the variables in the model over the course of the optimizer's iterations.
+
+    Parameters
+    ----------
+    idata: az.InferenceData
+        The InferenceData object returned by the model's simulate method.
+    mod: CGEModel
+        The model object.
+    n_cols: int, default 5
+        The number of columns in the grid of plots.
+    var_names: list of str, optional
+        Name of the variables to plot. If None, all variables will be plotted.
+    initial_values: dict[str, np.array], optional
+        The initial values of the variables in the model; those passed to the simulate method. If None, the initial
+        values will be taken from the InferenceData object.
+    plot_euler: bool, default True
+        Whether to trace the shape of the function in the shock direction using steps from the Euler approximation.
+    plot_optimizer: bool, default True
+        Whether to plot the final values of each variable found by the optimizer.
+    figure_kwargs: dict
+        Additional keyword arguments to pass to plt.figure.
+
+    Returns
+    -------
+    fig: plt.Figure
+        The figure object containing the plot.
+    """
     if var_names is None:
         var_names = mod.variable_names
     n_vars = len(var_names)
@@ -85,12 +121,48 @@ def plot_lines(
         )
         [spine.set_visible(False) for spine in axis.spines.values()]
         axis.grid(ls="--", lw=0.5)
+
     fig.tight_layout()
+    return fig
 
 
-def plot_kateplot(idata, initial_values, var_names, shock_name, mod, rename_dict=None, cmap=None):
+def plot_kateplot(
+    idata: az.InferenceData,
+    initial_values: dict[str, np.array],
+    mod: CGEModel,
+    var_names: Union[str, list[str]],
+    shock_name: Optional[str] = None,
+    rename_dict: Optional[dict[str, str]] = None,
+    cmap: Optional[Union[str, Colormap]] = None,
+) -> plt.Figure:
+    """
+    Make an area plot of the initial and final values of the variables in the model.
+
+    Parameters
+    ----------
+    idata: az.InferenceData
+        The InferenceData object returned by the model's simulate method.
+    initial_values: dict[str, np.array]
+        The initial values of the variables in the model; those passed to the simulate method.
+    mod: CGEModel
+        The model object.
+    var_names: str or list of str
+        Name of the variables to plot. All variables must have dimensions, and all dimensions must be the same.
+    shock_name: str, optional
+        The name of the variable that was shocked, used in the title of the plot. If None, the title will just be
+        "Pre-Shock" and "Post-Shock".
+    rename_dict: dict[str, str], optional
+        A dictionary mapping the variable names to more descriptive (or human readable) names for the plot.
+    cmap: str or matplotlib.colors.Colormap, optional
+        The colormap to use for the plot. If None, the default colormap will be used.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure object containing the plot.
+    """
     try:
-        import squarify
+        import squarify  # noqa
     except ImportError as e:
         raise ImportError(
             'Package "squarify" is required to make kateplots. '
@@ -100,10 +172,15 @@ def plot_kateplot(idata, initial_values, var_names, shock_name, mod, rename_dict
     if rename_dict is None:
         rename_dict = {}
 
+    if shock_name is None:
+        shock_name = "Shock"
+
     fig, ax = plt.subplots(1, 2, figsize=(14, 4))
 
     if cmap is None:
-        cmap = plt.cm.tab10
+        cmap = plt.cm.get_cmap("tab10")
+    elif isinstance(cmap, str):
+        cmap = plt.cm.get_cmap(cmap)
 
     dims = [idata["optimizer"].variables[var].dims for var in var_names]
     if not all([dim == dims[0] for dim in dims]):
@@ -113,9 +190,19 @@ def plot_kateplot(idata, initial_values, var_names, shock_name, mod, rename_dict
 
     labels = [label for dim in dims for label in mod.coords[dim]]
     pretty_labels = [rename_dict.get(label, label) for label in labels]
+    if len(pretty_labels) == 0:
+        raise ValueError("The selected variable is a scalar; cannot create an area plot.")
 
-    pre_data = np.r_[*[initial_values[var].ravel() for var in var_names]]
-    post_data = np.r_[*[idata["optimizer"].variables[var].data.ravel() for var in var_names]]
+    pre_data = np.concatenate([np.atleast_1d(initial_values[var]).ravel() for var in var_names])
+    post_data = np.concatenate(
+        [idata["optimizer"].variables[var].data.ravel() for var in var_names]
+    )
+
+    zero_mask = np.isclose(pre_data, 0) | np.isclose(post_data, 0)
+    pre_data = pre_data[~zero_mask]
+    post_data = post_data[~zero_mask]
+
+    pretty_labels = [label for label, mask in zip(pretty_labels, zero_mask) if not mask]
 
     colors = cmap(np.linspace(0, 1, len(pre_data)))
     for axis, data, title in zip(
@@ -124,3 +211,5 @@ def plot_kateplot(idata, initial_values, var_names, shock_name, mod, rename_dict
         axis.grid(ls="--", lw=0.5)
         axis.set(title=title)
         squarify.plot(sizes=data, label=pretty_labels, alpha=0.8, ax=axis, color=colors)
+
+    return fig
