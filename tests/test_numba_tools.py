@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 import sympy as sp
 
-from cge_modeling.tools.numba_tools import numba_lambdify
+from cge_modeling.base.primitives import Variable
+from cge_modeling.tools.numba_tools import _generate_numba_signature, numba_lambdify
 
 
 def test_numba_lambdify_single_output():
@@ -37,3 +38,34 @@ def test_numba_lambdify_matrix_output():
 
     outputs = f_func(1, 2, 3)
     np.testing.assert_allclose(outputs, np.array([5, 6]).reshape((2, 1)))
+
+
+signature_parameterizations = [
+    [True, True, True, "float64[:, :](float64, float64, float64[:, :])"],
+    [True, True, False, "float64[:, :](float64, float64, float64)"],
+    [True, False, True, "float64[:](float64, float64, float64[:, :])"],
+    [True, False, False, "float64[:](float64, float64, float64)"],
+    [False, True, True, "float64[:, :](float64, float64, float64[:, :])"],
+    [False, True, False, "float64[:, :](float64, float64, float64)"],
+    [False, False, True, "float64(float64, float64, float64[:, :])"],
+]
+
+
+@pytest.mark.parametrize("stack, matrix_out, matrix_in, expected", signature_parameterizations)
+def test_generate_numba_signature(stack, matrix_out, matrix_in, expected):
+    variables = [Variable(name, dims=None) for name in ["x", "y"]]
+    z = Variable("z", dims=("i", "j") if matrix_in else None)
+    output = sp.MatrixSymbol("Y", 3, 3) if matrix_out else sp.Symbol("Y")
+
+    signature = _generate_numba_signature(
+        inputs=variables + [z], outputs=[output], stack_outputs=stack
+    )
+    assert signature == expected
+
+
+def test_generate_numba_signature_multiple_output():
+    variables = [Variable(name, dims=None) for name in ["x", "y", "z"]]
+    outputs = [sp.MatrixSymbol(name, 3, 3) for name in ["Y", "Z"]]
+
+    signature = _generate_numba_signature(inputs=variables, outputs=outputs)
+    assert signature == "Tuple((float64[:, :], float64[:, :]))(float64, float64, float64)"
