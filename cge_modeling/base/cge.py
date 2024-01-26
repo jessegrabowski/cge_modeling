@@ -103,7 +103,7 @@ class CGEModel:
         This is required for the model to be compiled to the "pytensor" backend. Defaults to True.
 
     backend: str, optional
-        Computational backend to compile the model to. One of "pytensor" or "numba". Defaults to "numba".
+        Computational backend to compile the model to. One of "pytensor", "numba", or "numpy". Defaults to "numba".
 
     mode: str, optional
         Compilation mode for the pytensor backend. One of None, "JAX", or "NUMBA". Defaults to None. Note that this
@@ -152,7 +152,7 @@ class CGEModel:
         equations: Optional[Union[list[Equation], dict[str, Equation]]] = None,
         numeraire: Optional[Variable] = None,
         parse_equations_to_sympy: bool = True,
-        backend: Optional[Literal["pytensor", "numba"]] = "numba",
+        backend: Optional[Literal["pytensor", "numba", "numpy"]] = "numba",
         mode: Optional[str] = None,
         inverse_method: str = "solve",
         compile=True,
@@ -583,17 +583,39 @@ class CGEModel:
         # Compute Jacobian of the nonlinear system
         jac = sp.Matrix(equations).jacobian(variables)
 
+        if self._compile_backend == "numpy":
+            lambdify_func = lambda inputs, outputs, *args, **kwargs: sp.lambdify(
+                args=inputs, expr=outputs, modules="numpy"
+            )
+        else:
+            lambdify_func = numba_lambdify
+
         # Functions used by optimize.root to directly solve the system of equations
-        self.f_system = numba_lambdify(
-            variables, sp.Matrix(equations), parameters, ravel_outputs=True
+        self.f_system = lambdify_func(
+            inputs=self.variables + self.parameters,
+            outputs=equations,
+            stack_outputs=True,
+            ravel_outputs=True,
+            coords=self.coords,
         )
-        self.f_jac = numba_lambdify(variables, jac, parameters)
+        self.f_jac = lambdify_func(
+            inputs=self.variables + self.parameters, outputs=[jac], coords=self.coords
+        )
 
         # Functions used by optimize.minimize to solve the system of equations by minimizing the loss function
         # Save these as member functions so they can be reused by optimizers
-        self.f_resid = numba_lambdify(variables, resid, parameters)
-        self.f_grad = numba_lambdify(variables, grad, parameters, ravel_outputs=True)
-        self.f_hess = numba_lambdify(variables, hess, parameters)
+        self.f_resid = lambdify_func(
+            inputs=self.variables + self.parameters, outputs=[resid], coords=self.coords
+        )
+        self.f_grad = lambdify_func(
+            inputs=self.variables + self.parameters,
+            outputs=[grad],
+            ravel_outputs=True,
+            coords=self.coords,
+        )
+        self.f_hess = lambdify_func(
+            inputs=self.variables + self.parameters, outputs=[hess], coords=self.coords
+        )
 
         # Compile the one-step linear approximation function used by the iterative Euler approximation
         # We don't need to save this because it's only used internally by the euler_approx function
@@ -827,20 +849,22 @@ class CGEModel:
         progressbar=True,
         **optimizer_kwargs,
     ):
-        if self._compile_backend == "numba":
-            f_system = self.f_system
-            f_jac = self.f_jac
-        elif self._compile_backend == "pytensor":
-            variables = self.variables
-            parameters = self.parameters
-            coords = self.coords
+        # if self._compile_backend == "numba":
+        #     f_system = self.f_system
+        #     f_jac = self.f_jac
+        # elif self._compile_backend == "pytensor":
 
-            f_system = wrap_pytensor_func_for_scipy(self.f_system, variables, parameters, coords)
-            f_jac = wrap_pytensor_func_for_scipy(self.f_jac, variables, parameters, coords)
-        else:
+        if self._compile_backend not in ["numba", "pytensor"]:
             raise ValueError(
                 "Model must be compiled to a computational backend before it can be solved."
             )
+
+        variables = self.variables
+        parameters = self.parameters
+        coords = self.coords
+
+        f_system = wrap_pytensor_func_for_scipy(self.f_system, variables, parameters, coords)
+        f_jac = wrap_pytensor_func_for_scipy(self.f_jac, variables, parameters, coords)
 
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
@@ -871,23 +895,24 @@ class CGEModel:
         fixed_values=None,
         **optimizer_kwargs,
     ):
-        if self._compile_backend == "numba":
-            f_resid = self.f_resid
-            f_grad = self.f_grad
-            f_hess = self.f_hess
-        elif self._compile_backend == "pytensor":
-            variables = self.variables
-            parameters = self.parameters
-            coords = self.coords
+        # if self._compile_backend == "numba":
+        #     f_resid = self.f_resid
+        #     f_grad = self.f_grad
+        #     f_hess = self.f_hess
+        # elif self._compile_backend == "pytensor":
 
-            f_resid = wrap_pytensor_func_for_scipy(self.f_resid, variables, parameters, coords)
-            f_grad = wrap_pytensor_func_for_scipy(self.f_grad, variables, parameters, coords)
-            f_hess = wrap_pytensor_func_for_scipy(self.f_hess, variables, parameters, coords)
-
-        else:
+        if self._compile_backend not in ["numba", "pytensor"]:
             raise ValueError(
                 "Model must be compiled to a computational backend before it can be solved."
             )
+
+        variables = self.variables
+        parameters = self.parameters
+        coords = self.coords
+
+        f_resid = wrap_pytensor_func_for_scipy(self.f_resid, variables, parameters, coords)
+        f_grad = wrap_pytensor_func_for_scipy(self.f_grad, variables, parameters, coords)
+        f_hess = wrap_pytensor_func_for_scipy(self.f_hess, variables, parameters, coords)
 
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
@@ -1354,36 +1379,7 @@ def expand_compact_system(
     return equations, named_variables, named_parameters
 
 
-def compile_cge_to_numba(
-    compact_equations,
-    compact_variables,
-    compact_params,
-    index_dict,
-    numeraire_dict=None,
-):
-    equations, variables, parameters = expand_compact_system(
-        compact_equations, compact_variables, compact_params, index_dict, numeraire_dict
-    )
-
-    resid = sum(eq**2 for eq in equations)
-    grad = sp.Matrix([resid.diff(x) for x in variables])
-    jac = sp.Matrix(equations).jacobian(variables)
-    hess = grad.jacobian(variables)
-
-    f_system = numba_lambdify(variables, sp.Matrix(equations), parameters, ravel_outputs=True)
-    f_resid = numba_lambdify(variables, resid, parameters)
-    f_grad = numba_lambdify(variables, grad, parameters, ravel_outputs=True)
-    f_hess = numba_lambdify(variables, hess, parameters)
-    f_jac = numba_lambdify(variables, jac, parameters)
-
-    return (f_resid, f_grad, f_hess), (f_system, f_jac), (variables, parameters)
-
-
 def numba_linearize_cge_func(equations, variables, parameters):
-    # equations, variables, parameters = expand_compact_system(
-    #     compact_equations, compact_variables, compact_params, index_dict
-    # )
-
     A_mat = sp.Matrix([[eq.diff(x) for x in variables] for eq in equations])
     B_mat = sp.Matrix([[eq.diff(x) for x in parameters] for eq in equations])
 
@@ -1392,13 +1388,13 @@ def numba_linearize_cge_func(equations, variables, parameters):
     A_sub = A_mat.subs(sub_dict)
     Bv = B_mat.subs(sub_dict) @ sp.Matrix([[x] for x in parameters])
 
-    nb_A_sub = numba_lambdify(exog_vars=parameters, expr=A_sub, endog_vars=list(sub_dict.values()))
-    nb_B_sub = numba_lambdify(exog_vars=parameters, expr=Bv, endog_vars=list(sub_dict.values()))
+    nb_A_sub = numba_lambdify(parameters + list(sub_dict.values()), outputs=[A_sub])
+    nb_B_sub = numba_lambdify(parameters + list(sub_dict.values()), outputs=[Bv])
 
     @nb.njit
-    def f_dX(endog, exog):
-        A = nb_A_sub(endog, exog)
-        B = nb_B_sub(endog, exog)
+    def f_dX(*inputs):
+        A = nb_A_sub(*inputs)
+        B = nb_B_sub(*inputs)
 
         return -np.linalg.solve(A, np.identity(A.shape[0])) @ B
 

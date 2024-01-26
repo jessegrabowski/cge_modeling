@@ -1,4 +1,5 @@
 import re
+from itertools import product
 from typing import Callable, List, Optional, Union
 
 import numba as nb
@@ -57,11 +58,12 @@ class NumbaFriendlyNumPyPrinter(NumPyPrinter):
 
 
 def numba_lambdify(
-    exog_vars: List[sp.Symbol],
-    expr: Union[List[sp.Expr], sp.Matrix, List[sp.Matrix]],
-    endog_vars: Optional[List[sp.Symbol]] = None,
+    inputs: List[sp.Symbol],
+    outputs: Union[List[sp.Expr], sp.Matrix, List[sp.Matrix]],
+    coords: Optional[dict[str, list[str]]] = None,
     func_signature: Optional[str] = None,
     ravel_outputs=False,
+    stack_outputs=False,
 ) -> Callable:
     """
     Convert a sympy expression into a Numba-compiled function.  Unlike sp.lambdify, the resulting function can be
@@ -72,16 +74,14 @@ def numba_lambdify(
 
     Parameters
     ----------
-    exog_vars: list of sympy.Symbol
-        A list of "exogenous" variables. The distinction between "exogenous" and "enodgenous" is
-        useful when passing the resulting function to a scipy.optimize optimizer. In this context, exogenous
-        variables should be the choice varibles used to minimize the function.
-    expr : list of sympy.Expr or sp.Matrix
-        The sympy expression(s) to be converted. Expects a list of expressions (in the case that we're compiling a
-        system to be stacked into a single output vector), a single matrix (which is returned as a single nd-array)
-        or a list of matrices (which are returned as a list of nd-arrays)
-    endog_vars : Optional, list of sympy.Symbol
-        A list of "exogenous" variables, passed as a second argument to the function.
+    inputs: list of sympy.Symbol
+        A list of inputs to the symbolic function
+    outputs : list of sympy.Expr or sp.Matrix
+        A list of outputs from the symbolic function. That is, a list of symbolic expressions composed of the inputs.
+    coords: dict[str, list[str]], optional
+        A dictionary mapping the names of the coordinates of input variables to the names of the dimensions of those
+        coordinates. This is used to infer shape information about the variables. If None, all variables are assumed to
+        be scalars.
     func_signature: str
         A numba function signature, passed to the numba.njit decorator on the generated function.
     ravel_outputs: bool, default False
@@ -109,107 +109,75 @@ def numba_lambdify(
     else:
         decorator = f"@nb.njit({func_signature})"
 
-    len_checks = []
-    len_checks.append(
-        f'    assert len(exog_inputs) == {len(exog_vars)}, "Expected {len(exog_vars)} exog_inputs"'
-    )
-    if endog_vars is not None:
-        len_checks.append(
-            f'    assert len(endog_inputs) == {len(endog_vars)}, "Expected {len(endog_vars)} exog_inputs"'
-        )
-    len_checks = "\n".join(len_checks)
+    if not isinstance(outputs, list):
+        raise ValueError(f"Outputs must be a list of sympy expressions, found {type(outputs)}")
+    if coords is None:
+        coords = {}
 
-    # Special case: expr is [[]]. This can occur if no user-defined steady-state values were provided.
-    # It shouldn't happen otherwise.
-    if expr == [[]]:
-        sub_dict = ()
-        code = ""
-        retvals = ["[None]"]
+    # Clean up the outputs so they can be nicely printed to numba code.
+    outputs = [item.subs(FLOAT_SUBS) for item in outputs]
 
-    else:
-        # Need to make the float substitutions so that numba can correctly interpret everything, but we have to handle
-        # several cases:
-        # Case 1: expr is just a single Sympy thing
-        if isinstance(expr, (sp.Matrix, sp.Expr)):
-            expr = expr.subs(FLOAT_SUBS)
+    # Find common subexpressions and assign them to local variables
+    sub_dict, outputs = sp.cse(outputs)
 
-        # Case 2: expr is a list. Items in the list are either lists of expressions (systems of equations),
-        # single equations, or matrices.
-        elif isinstance(expr, list):
-            new_expr = []
-            for item in expr:
-                # Case 2a: It's a simple list of sympy things
-                if isinstance(item, (sp.Matrix, sp.Expr)):
-                    new_expr.append(item.subs(FLOAT_SUBS))
-                    new_expr.append(item)
-                # Case 2b: It's a system of equations, List[List[sp.Expr]]
-                elif isinstance(item, list):
-                    if all([isinstance(x, (sp.Matrix, sp.Expr)) for x in item]):
-                        new_expr.append([x.subs(FLOAT_SUBS) for x in item])
-                    else:
-                        raise ValueError("Unexpected input type for expr")
-            expr = new_expr
+    # Converting matrices to a list of lists is convenient because NumPyPrinter() won't wrap them in np.array
+    final_outputs = []
+    for output in outputs:
+        if hasattr(output, "tolist"):
+            final_outputs.append(output.tolist())
         else:
-            raise ValueError("Unexpected input type for expr")
+            final_outputs.append(output)
 
-        sub_dict, expr = sp.cse(expr)
+    codes = []
+    retvals = []
+    for i, expr in enumerate(final_outputs):
+        code = printer.doprint(expr)
 
-        # Converting matrices to a list of lists is convenient because NumPyPrinter() won't wrap them in np.array
-        exprs = []
-        for ex in expr:
-            if hasattr(ex, "tolist"):
-                exprs.append(ex.tolist())
-            else:
-                exprs.append(ex)
+        delimiter = "]," if "]," in code else ","
+        delimiter = ","
+        code = code.split(delimiter)
+        code = [" " * 8 + eq.strip() for eq in code]
+        code = f"{delimiter}\n".join(code)
+        code = code.replace("numpy.", "np.")
 
-        codes = []
-        retvals = []
-        for i, expr in enumerate(exprs):
-            code = printer.doprint(expr)
+        # Handle conversion of 0 to 0.0
+        code = re.sub(ZERO_PATTERN, r"0.0\g<1>", code)
+        code_name = f"retval_{i}"
+        retvals.append(code_name)
+        code = f"    {code_name} = np.array(\n{code}\n    )"
+        if ravel_outputs:
+            code += ".ravel()"
 
-            delimiter = "]," if "]," in code else ","
-            delimiter = ","
-            code = code.split(delimiter)
-            code = [" " * 8 + eq.strip() for eq in code]
-            code = f"{delimiter}\n".join(code)
-            code = code.replace("numpy.", "np.")
+        codes.append(code)
+    code = "\n".join(codes)
 
-            # Handle conversion of 0 to 0.0
-            code = re.sub(ZERO_PATTERN, r"0.0\g<1>", code)
-            code_name = f"retval_{i}"
-            retvals.append(code_name)
-            code = f"    {code_name} = np.array(\n{code}\n    )"
-            if ravel_outputs:
-                code += ".ravel()"
-
-            codes.append(code)
-        code = "\n".join(codes)
-
-    input_signature = "exog_inputs"
-    unpacked_inputs = "\n".join(
-        [
-            f"    {getattr(x, 'safe_name', x.name)} = exog_inputs[{i}]"
-            for i, x in enumerate(exog_vars)
-        ]
+    input_signature = ", ".join(
+        [f"{getattr(x, 'safe_name', x.name)}" for i, x in enumerate(inputs)]
     )
-    if endog_vars is not None:
-        input_signature += ", endog_inputs"
-        exog_unpacked = "\n".join(
-            [
-                f"    {getattr(x, 'safe_name', x.name)} = endog_inputs[{i}]"
-                for i, x in enumerate(endog_vars)
-            ]
-        )
-        unpacked_inputs += "\n" + exog_unpacked
 
+    coord_unpacking = []
+    for input in inputs:
+        dims = getattr(input, "dims", "no_dims")
+        if dims == "no_dims" or len(dims) == 0:
+            continue
+        labels = [coords[dim] for dim in dims]
+        lhs = ", ".join(["_".join((input.name,) + label) for label in product(*labels)])
+        coord_unpacking.append(
+            f"{lhs} = {input.name}.ravel()" if len(dims) > 1 else f"{lhs} = {input.name}"
+        )
+
+    coord_unpacking = "\n".join(f"    {eq}" for eq in coord_unpacking)
     assignments = "\n".join(
         [f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}" for x, y in sub_dict]
     )
     returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
-    full_code = f"{decorator}\ndef f({input_signature}):\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"
+    if stack_outputs:
+        returns = f"np.stack({returns}).squeeze()"
+
+    full_code = f"{decorator}\ndef f({input_signature})\n\n{coord_unpacking}\n\n{assignments}\n\n{code}\n\n    return {returns}"
 
     docstring = f"'''Automatically generated code:\n{full_code}'''"
-    code = f"{decorator}\ndef f({input_signature}):\n    {docstring}\n{len_checks}\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"
+    code = f"{decorator}\ndef f({input_signature}):\n    {docstring}\n\n{coord_unpacking}\n\n{assignments}\n\n{code}\n\n    return {returns}"
 
     exec(code)
     return locals()["f"]
@@ -229,7 +197,7 @@ def euler_approx(f, x0, theta0, theta, n_steps, progress_bar):
     Parameters
     ----------
     f: njit function
-        Linearized function to be approximated. Must have signature f(endog, exog) -> array[:]
+        Linearized function to be approximated. Must have signature f(**inputs) -> array[:]
 
     x0: np.ndarray
         Array of values of model variables representing the point at which g is linearized.
@@ -283,7 +251,7 @@ def euler_approx(f, x0, theta0, theta, n_steps, progress_bar):
     step_size = dtheta / n_steps
 
     for t in range(1, n_steps + 1):
-        dx = f(step_size, x).ravel()
+        dx = f(*step_size, *x).ravel()
         x = x + np.concatenate((dx, step_size))
         output[t, :] = x
         progress_bar.update(1)
