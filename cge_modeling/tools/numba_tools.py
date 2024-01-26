@@ -121,7 +121,8 @@ def _generate_numba_signature(
             output_dims.append(0)
 
     if stack_outputs or len(outputs) == 1:
-        output_signature = _make_signature(dtype="float64", ndims=max(output_dims))
+        ndims = max(output_dims) if not stack_outputs else max(1, max(output_dims))
+        output_signature = _make_signature(dtype="float64", ndims=ndims)
     else:
         output_signature = ", ".join(
             [_make_signature(dtype="float64", ndims=dim) for dim in output_dims]
@@ -173,6 +174,7 @@ def numba_lambdify(
     The function returned by this function is pickleable.
     """
     from numba import float64  # inspect: ignore
+    from numba.core.types.containers import Tuple  # inspect: ignore
 
     ZERO_PATTERN = re.compile(r"(?<![\.\w])0([ ,\]])")
     FLOAT_SUBS = {

@@ -55,7 +55,11 @@ signature_parameterizations = [
 def test_generate_numba_signature(stack, matrix_out, matrix_in, expected):
     variables = [Variable(name, dims=None) for name in ["x", "y"]]
     z = Variable("z", dims=("i", "j") if matrix_in else None)
-    output = sp.MatrixSymbol("Y", 3, 3) if matrix_out else sp.Symbol("Y")
+
+    if stack and not matrix_out:
+        output = [sp.Symbol("Y"), sp.Symbol("Z")]
+    else:
+        output = sp.MatrixSymbol("Y", 3, 3) if matrix_out else sp.Symbol("Y")
 
     signature = _generate_numba_signature(
         inputs=variables + [z], outputs=[output], stack_outputs=stack
