@@ -1,4 +1,5 @@
 import re
+import string
 from itertools import product
 from typing import Callable, List, Optional, Union
 
@@ -6,6 +7,8 @@ import numba as nb
 import numpy as np
 import sympy as sp
 from sympy.printing.numpy import NumPyPrinter, _known_functions_numpy
+
+from cge_modeling.base.primitives import Parameter, Variable
 
 _known_functions_numpy.update({"DiracDelta": lambda x: 0.0, "log": "log"})
 
@@ -57,9 +60,79 @@ class NumbaFriendlyNumPyPrinter(NumPyPrinter):
         )
 
 
+def _make_signature(dtype: str, ndims: int) -> str:
+    """
+    Create a numba function signature for a given data type and number of dimensions.
+
+    Parameters
+    ----------
+    dtype: str
+        A string representing the data type of the variable.
+    ndims: int
+        The number of dimensions of the variable.
+
+    Returns
+    -------
+    str
+        A string representing the numba function signature.
+    """
+    if ndims == 0:
+        return dtype
+    else:
+        return f"{dtype}[{', '.join([':'] * ndims)}]"
+
+
+def _generate_numba_signature(
+    inputs: list[Union[Variable, Parameter]],
+    outputs: list[sp.Expr or sp.Matrix],
+    stack_outputs: bool = False,
+) -> str:
+    """
+    Convert a list of sympy symbols into a numba function signature. This is used to generate a numba function signature
+    for numba_lambdify.
+
+    Parameters
+    ----------
+    inputs: list of Variable or Parameter
+        A list of inputs to the symbolic function
+    outputs : list of sympy Expr or Matrix
+        A list of outputs from the symbolic function. That is, a list of symbolic expressions composed of the inputs.
+    stack_outputs: bool
+        If true, the jitted function will return a single array containing all outputs. Otherwise a tuple is returned.
+    Returns
+    -------
+    str
+        A string representing the numba function signature.
+    """
+    if stack_outputs or len(outputs) == 1:
+        signature = string.Template("$output_signature($input_signature)")
+    else:
+        signature = string.Template("Tuple(($output_signature))($input_signature)")
+
+    input_ndims = [len(getattr(input, "dims", [])) for input in inputs]
+    input_signatures = [_make_signature(dtype="float64", ndims=ndims) for ndims in input_ndims]
+    input_signature = ", ".join(input_signatures)
+
+    output_dims = []
+    for output in outputs:
+        if isinstance(output, (sp.Matrix, sp.MatrixExpr, sp.MatrixSymbol)):
+            output_dims.append(sum(int(x) > 1 for x in output.shape))
+        else:
+            output_dims.append(0)
+
+    if stack_outputs or len(outputs) == 1:
+        output_signature = _make_signature(dtype="float64", ndims=max(output_dims))
+    else:
+        output_signature = ", ".join(
+            [_make_signature(dtype="float64", ndims=dim) for dim in output_dims]
+        )
+
+    return signature.substitute(input_signature=input_signature, output_signature=output_signature)
+
+
 def numba_lambdify(
-    inputs: List[sp.Symbol],
-    outputs: Union[List[sp.Expr], sp.Matrix, List[sp.Matrix]],
+    inputs: List[Union[Variable, Parameter]],
+    outputs: List[Union[sp.Expr or sp.Matrix]],
     coords: Optional[dict[str, list[str]]] = None,
     func_signature: Optional[str] = None,
     ravel_outputs=False,
@@ -74,7 +147,7 @@ def numba_lambdify(
 
     Parameters
     ----------
-    inputs: list of sympy.Symbol
+    inputs: list of Variable or Parameter objects
         A list of inputs to the symbolic function
     outputs : list of sympy.Expr or sp.Matrix
         A list of outputs from the symbolic function. That is, a list of symbolic expressions composed of the inputs.
@@ -87,6 +160,8 @@ def numba_lambdify(
     ravel_outputs: bool, default False
         If true, all outputs of the jitted function will be raveled before they are returned. This is useful for
         removing size-1 dimensions from sympy vectors.
+    stack_outputs: bool, default False
+        If true, all outputs of the jitted function will be stacked into a single array before they are returned.
 
     Returns
     -------
@@ -97,6 +172,8 @@ def numba_lambdify(
     -----
     The function returned by this function is pickleable.
     """
+    from numba import float64  # inspect: ignore
+
     ZERO_PATTERN = re.compile(r"(?<![\.\w])0([ ,\]])")
     FLOAT_SUBS = {
         sp.core.numbers.One(): sp.Float(1),
@@ -105,7 +182,9 @@ def numba_lambdify(
     printer = NumbaFriendlyNumPyPrinter()
 
     if func_signature is None:
-        decorator = "@nb.njit"
+        signature = _generate_numba_signature(inputs, outputs, stack_outputs)
+        decorator = f"@nb.njit({signature})"
+
     else:
         decorator = f"@nb.njit({func_signature})"
 
