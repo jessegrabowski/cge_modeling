@@ -251,9 +251,14 @@ def numba_lambdify(
     assignments = "\n".join(
         [f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}" for x, y in sub_dict]
     )
-    returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
     if stack_outputs:
-        returns = f"np.stack({returns}).squeeze()"
+        retvals = [retvals] if len(retvals) == 1 else retvals
+        one_d_retvals = [f"np.atleast_1d({x})" for x in retvals]
+        returns = f'({",".join(one_d_retvals)})'
+        returns = f"np.concatenate({returns}, axis=-1)"
+
+    else:
+        returns = f'({",".join(retvals)})' if len(retvals) > 1 else retvals[0]
 
     full_code = f"{decorator}\ndef f({input_signature})\n\n{coord_unpacking}\n\n{assignments}\n\n{code}\n\n    return {returns}"
 

@@ -4,7 +4,7 @@ from cge_modeling.plotting import plot_kateplot, plot_lines
 from tests.utilities.models import calibrate_model_2, load_model_2, model_2_data
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def test_data():
     mod = load_model_2()
     calibrated_data = calibrate_model_2(**model_2_data)
