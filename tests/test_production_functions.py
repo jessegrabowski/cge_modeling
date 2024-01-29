@@ -1,6 +1,9 @@
+from typing import Literal, cast
+
 import pytest
 
 from cge_modeling.production_functions import (
+    BACKEND_TYPE,
     CES,
     _add_second_alpha,
     _check_pairwise_lengths_match,
@@ -75,8 +78,8 @@ def test_CES(alpha):
         factor_prices=factor_prices,
         output=output,
         output_price=output_price,
-        A=A,
-        alphas=alpha,
+        TFP=A,
+        factor_shares=alpha,
         epsilon=epsilon,
     )
 
@@ -106,12 +109,12 @@ def test_dixit_stiglitz(A, alpha, backend):
         factor_prices=factor_prices,
         output=output,
         output_price=output_price,
-        A=A,
-        alphas=alpha,
+        TFP=A,
+        factor_shares=alpha,
         epsilon=epsilon,
         dims=dims,
         coords=coords,
-        backend=backend,
+        backend=cast(BACKEND_TYPE, backend),
     )
 
     alpha_str = "alpha * " if alpha is not None else ""
