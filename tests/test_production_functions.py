@@ -1,6 +1,9 @@
+from itertools import chain
 from typing import Literal, cast
 
+import numpy as np
 import pytest
+import sympy as sp
 
 from cge_modeling.production_functions import (
     BACKEND_TYPE,
@@ -92,6 +95,49 @@ def test_CES(alpha):
     assert K_demand == "K = Y / A * ((1 - alpha) * P * A / r) ** epsilon"
 
 
+def test_computation_of_CES():
+    factors = ["L", "K"]
+    factor_prices = ["w", "r"]
+    output = "Y"
+    output_price = "P"
+    A = "A"
+    epsilon = "epsilon"
+
+    eq_production, *(L_demand, K_demand) = CES(
+        factors=factors,
+        factor_prices=factor_prices,
+        output=output,
+        output_price=output_price,
+        TFP=A,
+        factor_shares="alpha",
+        epsilon=epsilon,
+    )
+    inputs = ["L", "K", "w", "r", "Y", "P", "A", "epsilon", "alpha"]
+
+    eq = sp.parse_expr(eq_production, transformations="all")
+    f_eq = sp.lambdify(inputs, eq.rhs)
+
+    def CES_Y(L, K, A, alpha, epsilon):
+        return A * (
+            (alpha) * L ** ((epsilon - 1) / epsilon) + (1 - alpha) * K ** ((epsilon - 1) / epsilon)
+        ) ** (epsilon / (epsilon - 1))
+
+    sympy_out = f_eq(L=10, K=8, w=1, r=1, P=1, A=1, alpha=0.5, epsilon=3, Y=1)
+    exact = CES_Y(L=10, K=8, A=1, alpha=0.5, epsilon=3)
+
+    np.testing.assert_allclose(sympy_out, exact)
+
+    def CES_demand(factor_price, output, output_price, TFP, factor_share, epsilon):
+        return output / TFP * ((factor_share) * output_price * TFP / factor_price) ** epsilon
+
+    for demand, a_val in zip([L_demand, K_demand], [0.3, 0.7]):
+        eq = sp.parse_expr(demand, transformations="all")
+        f_eq = sp.lambdify(inputs, eq.rhs)
+        sympy_out = f_eq(L=10, K=8, w=1, r=1, P=1, A=2, alpha=0.3, epsilon=3, Y=1)
+        exact = CES_demand(1, 1, 1, 2, a_val, 3)
+        np.testing.assert_allclose(sympy_out, exact)
+
+
 @pytest.mark.parametrize("A", ["A", None], ids=["A", "no_A"])
 @pytest.mark.parametrize("alpha", ["alpha", None], ids=["alpha", "no_alpha"])
 @pytest.mark.parametrize("backend", ["numba", "pytensor"], ids=["numba", "pytensor"])
@@ -120,7 +166,7 @@ def test_dixit_stiglitz(A, alpha, backend):
 
     alpha_str = "alpha * " if alpha is not None else ""
     if backend == "numba":
-        prod_expected_inner = f"Sum({alpha_str}X ** ((epsilon - 1) / epsilon), (i, 0, 2)) ** (epsilon / (epsilon - 1))"
+        prod_expected_inner = f"Sum({alpha_str}X ** ((epsilon - 1) / epsilon), ({dims}, 0, 2)) ** (epsilon / (epsilon - 1))"
     elif backend == "pytensor":
         prod_expected_inner = (
             f"({alpha_str}X ** ((epsilon - 1) / epsilon)).sum() ** (epsilon / (epsilon - 1))"
@@ -137,7 +183,70 @@ def test_dixit_stiglitz(A, alpha, backend):
 
 
 @pytest.mark.parametrize("backend", ["numba", "pytensor"], ids=["numba", "pytensor"])
-def test_2d_leontief(backend):
+def test_dixit_stiglitz_computation(backend):
+    def dx_Y(X, A, alpha, epsilon):
+        return A * ((alpha * X) ** ((epsilon - 1) / epsilon)).sum() ** (epsilon / (epsilon - 1))
+
+    def dx_X(Y, A, alpha, P_Y, P_X, epsilon):
+        return Y / A * ((alpha * A * P_Y) / P_X) ** epsilon
+
+    factors = "X"
+    factor_prices = "P_X"
+    output = "Y"
+    output_price = "P_Y"
+    epsilon = "epsilon"
+    dims = "f"
+    coords = {"f": ["A", "B", "C", "D", "E", "F", "G"]}
+    eq_production, X_demand = dixit_stiglitz(
+        factors=factors,
+        factor_prices=factor_prices,
+        output=output,
+        output_price=output_price,
+        TFP="A",
+        factor_shares="alpha",
+        epsilon=epsilon,
+        dims=dims,
+        coords=coords,
+        backend=cast(BACKEND_TYPE, backend),
+    )
+
+    inputs = ["X", "P_X", "Y", "P_Y", "A", "alpha", "epsilon"]
+    f = sp.Idx("f")
+
+    local_dict = {
+        "X": sp.IndexedBase("X")[f],
+        "P_X": sp.IndexedBase("P_X")[f],
+        "alpha": sp.IndexedBase("alpha")[f],
+        "Y": sp.Symbol("Y"),
+        "P_Y": sp.Symbol("P_Y"),
+        "A": sp.Symbol("A"),
+        "epsilon": sp.Symbol("epsilon"),
+        "f": f,
+    }
+
+    if backend == "numba":
+        eq = sp.parse_expr(eq_production, transformations="all", local_dict=local_dict)
+        f_eq = sp.lambdify(inputs, eq.rhs)
+        k = len(coords["f"])
+
+        sympy_out = f_eq(
+            X=np.arange(k), P_X=np.ones(k), Y=1, P_Y=1, A=1, alpha=np.full(k, 1 / k), epsilon=3
+        )
+        exact = dx_Y(X=np.arange(k), A=1, alpha=np.full(k, 1 / k), epsilon=3)
+        np.testing.assert_allclose(sympy_out, exact)
+
+        eq = sp.parse_expr(X_demand, transformations="all")
+        f_eq = sp.lambdify(inputs, eq.rhs, local_dict=local_dict)
+        sympy_out = f_eq(X=1, P_X=1, Y=1, P_Y=1, A=1, alpha=0.5, epsilon=3)
+        exact = dx_X(Y=1, A=1, alpha=0.5, P_Y=1, P_X=1, epsilon=3)
+        np.testing.assert_allclose(sympy_out, exact)
+
+    elif backend == "pytensor":
+        assert False
+
+
+@pytest.mark.parametrize("backend", ["numba", "pytensor"], ids=["numba", "pytensor"])
+def test_2d_leontief(backend: BACKEND_TYPE):
     factors = ["X"]
     factor_prices = ["P_X"]
     output = "Y"
