@@ -136,7 +136,12 @@ def test_model_gradients(model_function, jac_function, backend):
     data = generate_data(mod.variables + mod.parameters, mod.coords)
 
     J_expected = jac_function(**data)
-    J_actual = mod.f_jac(**data)
+
+    if backend == "numba":
+        x, theta = variable_dict_to_flat_array(data, mod.variables, mod.parameters)
+        J_actual = mod.f_jac(x, theta)
+    else:
+        J_actual = mod.f_jac(**data)
 
     np.testing.assert_allclose(J_expected, J_actual, atol=1e-8)
 
@@ -194,7 +199,7 @@ def test_backends_agree(
     x0, theta0 = variable_dict_to_flat_array(
         calibated_data, model_numba.variables, model_numba.parameters
     )
-    resid_numba = model_numba.f_system(**calibated_data)
+    resid_numba = model_numba.f_system(x0, theta0)
     resid_pytensor = model_pytensor.f_system(**calibated_data)
 
     np.testing.assert_allclose(resid_numba, 0, atol=1e-8)
