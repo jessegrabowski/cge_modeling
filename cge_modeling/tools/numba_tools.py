@@ -141,7 +141,6 @@ def numba_lambdify(
                 # Case 2a: It's a simple list of sympy things
                 if isinstance(item, (sp.Matrix, sp.Expr)):
                     new_expr.append(item.subs(FLOAT_SUBS))
-                    new_expr.append(item)
                 # Case 2b: It's a system of equations, List[List[sp.Expr]]
                 elif isinstance(item, list):
                     if all([isinstance(x, (sp.Matrix, sp.Expr)) for x in item]):
@@ -151,7 +150,6 @@ def numba_lambdify(
             expr = new_expr
         else:
             raise ValueError("Unexpected input type for expr")
-
         sub_dict, expr = sp.cse(expr)
 
         # Converting matrices to a list of lists is convenient because NumPyPrinter() won't wrap them in np.array
