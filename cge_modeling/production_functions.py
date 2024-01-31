@@ -1,3 +1,4 @@
+import string
 from itertools import combinations, product
 from string import Template
 from typing import Literal, Optional, Sequence, Union, cast
@@ -280,12 +281,9 @@ def dixit_stiglitz(
                 f"{name} has length {len(var)}"
             )
 
-    if isinstance(factors, list):
-        factors = factors[0]
-    if isinstance(factor_prices, list):
-        factor_prices = factor_prices[0]
-    if isinstance(factor_shares, list):
-        factor_shares = factor_shares[0]
+    factors, factor_prices, factor_shares = map(
+        unwrap_singleton_list, (factors, factor_prices, factor_shares)
+    )
 
     share_str = "$factor_share * " if factor_shares is not None else ""
     TFP_str = f"$TFP * " if TFP is not None else ""
@@ -325,6 +323,109 @@ def dixit_stiglitz(
     return production_function, factor_demands
 
 
+def _1d_leontief(
+    factors: Union[str, list[str]],
+    factor_prices: Union[str, list[str]],
+    output: str,
+    output_price: str,
+    factor_shares: Union[str, list[str]],
+    *args,
+    **kwargs,
+) -> tuple[str, ...]:
+    """
+    Helper function to generate Leontief production equaitons for the case where ndim == 1.
+
+    """
+    zp_rhs = " + ".join([f"{price} * {factor}" for factor, price in zip(factors, factor_prices)])
+    zero_profit = f"{output_price} * {output} = {zp_rhs}"
+
+    factor_demands = (
+        f"{factor} = {output} * {share}" for factor, share in zip(factors, factor_shares)
+    )
+
+    return (zero_profit,) + tuple(factor_demands)
+
+
+def _2d_leontief(
+    factors: Union[str, list[str]],
+    factor_prices: Union[str, list[str]],
+    output: str,
+    output_price: str,
+    factor_shares: Union[str, list[str]],
+    dims: str,
+    coords: dict[str, list[str]],
+    backend: Literal["numba", "pytensor"] = "numba",
+) -> tuple[str, ...]:
+    r"""
+    Helper function to generate Leontief production equations for the case where ndim == 2.
+
+    Notes
+    -----
+    Sympy is quite restrictive in terms of broadcasting, so there are many hoops to jump through here.
+    Assume that X is an N x N matrix of factor demands, phi is an N x N matrix of technological coefficients,
+    Y is an N x 1 vector of outputs and P_Y, P_X are N x 1 vectors of prices for X and Y, respectively.
+
+    The important thing about X is that it is indexed by the same labels twice. The columns represent demands by
+    the j-th label to the i-th label. The rows, on the other hand, represent supply by the  i-th label to the
+    j-th label. This is the standard representation of an input-output matrix in CGE modeling.
+
+    The zero profit condition will ask us to sum across the **rows** of X:
+
+    [X_00,   | , X_02, X_03]
+    [X_10,   | , X_12, X_13]
+    [--------+-------------]-> This sum gives total demand for goods produced by the i-th label
+    [X_20,   | , X_22, X_23]
+            \_/
+             This sum gives total supply of goods produced by the j-th label
+
+    If broadcasting, this operation is quite simple: we multiply X * phi, then sum across the columns with axis=0.
+    With simpy indexed symbols, however, this is not possible. First, these don't have a notion of axis, so we
+    have to manually manipulate the indices to get what we want.
+
+    - First, make P_Y * Y a "column vector" by swapping the core and batch dimensions
+    - Next, "transpose" X by swapping the core and batch dimension labels. This is necessary because the labels on the
+        left- and right-hand sides of the equations need to agree -- since we've switched the core and batch on the
+        left, we also have to do it on the right.
+    - Finally, we can multiply (X * phi) and sum across the batch dimension
+
+    This is all necessary because from the supply perspective, the 2nd dimension of X is the core dimension.
+    """
+
+    def _swapaxes(x, i, j):
+        sub_template = Template("$x.subs({$i:$j})")
+        return sub_template.safe_substitute(x=x, i=i, j=j)
+
+    def _T(x, i, j, coords):
+        named_dims = set(list(coords.keys()))
+
+        # Use the first lowercase letter that hasn't been declared as a dim by the user as a temp
+        temp_dim = sorted(list(set(string.ascii_lowercase) - named_dims))[0]
+        return x + f".subs([({i}, {temp_dim}), ({j}, {i}), ({temp_dim}, {j})])"
+
+    factors, factor_prices, factor_shares = map(
+        unwrap_singleton_list, (factors, factor_prices, factor_shares)
+    )
+
+    if backend == "numba":
+        core_dim, batch_dim = dims
+        rhs = (
+            f"Sum({_swapaxes(factor_prices, core_dim, batch_dim)} * {_T(factors, core_dim, batch_dim, coords)}, "
+            + f"({batch_dim}, 0, {len(coords[batch_dim]) - 1}))"
+        )
+        zero_profit = f"{output_price} * {output} = {rhs}"
+
+        factor_demands = f"{factors} = {factor_shares} * {_swapaxes(output, core_dim, batch_dim)}"
+
+    elif backend == "pytensor":
+        zero_profit = f"{output_price} * {output} = ({factor_prices}[:, None] * {factors}).sum(axis=0).ravel()"
+        factor_demands = f"{factors} = {factor_shares} * {output}[None]"
+
+    else:
+        raise ValueError(f"backend must be one of 'numba' or 'pytensor', found {backend}")
+
+    return zero_profit, factor_demands
+
+
 def leontief(
     factors: Union[str, list[str]],
     factor_prices: Union[str, list[str]],
@@ -334,7 +435,7 @@ def leontief(
     dims: str,
     coords: dict[str, list[str]],
     backend: Literal["numba", "pytensor"] = "numba",
-) -> tuple[str, str]:
+) -> tuple[str, ...]:
     """
     Generate string equations representing a Leontief production process.
 
@@ -357,15 +458,11 @@ def leontief(
 
     Parameters
     ----------
-    factors: str or list of str
-        Production factor. If a list is provided, it must be of length 1.
+    factors: list of str
+        Input factors to the production process.
 
-        .. warning::
-        Despite the plural name, the Dixit-Stiglitz production function expects only a single facto input. The name
-        is plural to be consistent with other production functions.
-
-    factor_prices: str or list of str
-        Production factor prices. If a list is provided, it must be of length 1.
+    factor_prices: list of str
+        Production factor prices.
 
     output: str
         Name of the output of the production function
@@ -373,19 +470,17 @@ def leontief(
     output_price: str
         Name of the price of the output
 
-    A: str, optional
-        Technology parameter. If not provided, it is omitted from the equations, which is equivalent to setting it to 1.
-
-    alphas: str, optional
-        Factor shares in the production function. If a list is provided, it must be of length 1. If not provided, it is
-        omitted from the equations, which is equivalent to setting it to 1.
-
-    epsilon:
-        Elasticity of substitution parameter
+    factor_shares: list of str
+        Factor shares in the production function.
 
     dims: Sequence of str or str
-        Sequence of named dimensions for variables in the equations to be generated. All dimensions should appear in
-        the coords dictionary as keys, otherwise an error will be raised.
+        Sequence of dimensions indexing inputs and outputs into the Leontief production process. If a string or a list
+        of length one is provided, the inputs and outputs will be assumed to be indexed by the provided dimension.
+
+        If length == 2, the *second* dimension will be assumed to index the outputs, and the inputs will be reduced over
+        the first dimension. This is the most common case in CGE modeling, when inputs to an intermediate consumption/
+        value chain process are represented by an N x N matrix, with sectoral supply on the first dimension and sectoral
+        demand on the second dimension.
 
     coords: dict of str: list of str
         Dictionary of coordinates for the model, mapping dimension names to lists of labels.
@@ -396,8 +491,27 @@ def leontief(
 
     Returns
     -------
-    (variables, parameters, equations): tuple of tuples of strings
-        output and factor equations
+    (zero_profit_constraint, factor_demands): tuple of strings
+        Equations representing the Leontief production function and resulting factor demands
     """
 
-    pass
+    _check_pairwise_lengths_match(
+        ["factors", "factor_prices", "factor_shares"], [factors, factor_prices, factor_shares]
+    )
+
+    if isinstance(dims, str) or len(dims) == 1:
+        if len(factors) == 1:
+            raise ValueError(
+                f"Leontief production function expects at least two factors when len(dims) == 1, found {len(factors)}"
+            )
+        return _1d_leontief(
+            factors, factor_prices, output, output_price, factor_shares, dims, coords, backend
+        )
+    else:
+        if len(factors) != 1:
+            raise ValueError(
+                f"Leontief production function expects exactly one factor when len(dims) == 2, found {len(factors)}"
+            )
+        return _2d_leontief(
+            factors, factor_prices, output, output_price, factor_shares, dims, coords, backend
+        )

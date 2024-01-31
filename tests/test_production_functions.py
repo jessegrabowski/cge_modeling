@@ -8,6 +8,7 @@ from cge_modeling.production_functions import (
     _add_second_alpha,
     _check_pairwise_lengths_match,
     dixit_stiglitz,
+    leontief,
     unpack_string_inputs,
 )
 
@@ -133,3 +134,72 @@ def test_dixit_stiglitz(A, alpha, backend):
 
     assert eq_production == prod_expected
     assert X_demand == X_demand_expected
+
+
+@pytest.mark.parametrize("backend", ["numba", "pytensor"], ids=["numba", "pytensor"])
+def test_2d_leontief(backend):
+    factors = ["X"]
+    factor_prices = ["P_X"]
+    output = "Y"
+    output_price = "P_Y"
+    factor_shares = ["phi_X"]
+
+    coords = {"i": ["A", "B", "C"], "j": ["A", "B", "C"]}
+    dims = ["i", "j"]
+
+    zero_profit, *factor_demands = leontief(
+        factors=factors,
+        factor_prices=factor_prices,
+        output=output,
+        output_price=output_price,
+        factor_shares=factor_shares,
+        dims=dims,
+        coords=coords,
+        backend=backend,
+    )
+
+    if backend == "numba":
+        assert zero_profit == (
+            f"{output_price} * {output} = Sum({factor_prices[0]}.subs("
+            + "{"
+            + f"{dims[0]}:{dims[1]}"
+            + "}) "
+            f"* {factors[0]}"
+            f".subs([({dims[0]}, a), ({dims[1]}, {dims[0]}), (a, {dims[1]})]), "
+            f"({dims[1]}, 0, {len(coords[dims[1]]) - 1}))"
+        )
+
+    elif backend == "pytensor":
+        assert (
+            zero_profit
+            == f"{output_price} * {output} = ({factor_prices[0]}[:, None] * {factors[0]}).sum(axis=0).ravel()"
+        )
+        assert factor_demands[0] == f"{factors[0]} = {factor_shares[0]} * {output}[None]"
+    else:
+        assert False
+
+
+def test_1d_leontief():
+    factors = ["VA", "VC"]
+    factor_prices = ["P_VA", "P_VC"]
+    output = "Y"
+    output_price = "P_Y"
+    factor_shares = ["phi_VA", "phi_VC"]
+
+    coords = {"i": ["A", "B", "C"], "j": ["A", "B", "C"]}
+    dims = "i"
+
+    zero_profit, *factor_demands = leontief(
+        factors=factors,
+        factor_prices=factor_prices,
+        output=output,
+        output_price=output_price,
+        factor_shares=factor_shares,
+        dims=dims,
+        coords=coords,
+        backend="numba",
+    )
+
+    assert zero_profit == "P_Y * Y = P_VA * VA + P_VC * VC"
+    for i, demand in enumerate(factor_demands):
+        assert demand == f"{factors[i]} = {output} * {factor_shares[i]}"
