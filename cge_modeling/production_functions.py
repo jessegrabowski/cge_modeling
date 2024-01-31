@@ -3,8 +3,6 @@ from itertools import combinations, product
 from string import Template
 from typing import Literal, Optional, Sequence, Union, cast
 
-import sympy as sp
-
 from cge_modeling.tools.pytensor_tools import at_least_list
 
 BACKEND_TYPE = Literal["numba", "pytensor"]
@@ -27,10 +25,10 @@ def unwrap_singleton_list(x):
 
 
 def unpack_string_inputs(
-    *inputs: Union[str, list[str]],
+    *inputs: Union[str, list[str, ...]],
     dims: Optional[Sequence[str]] = None,
-    coords: Optional[dict[str, list[str]]] = None,
-) -> list[list[str]]:
+    coords: Optional[dict[str, list[str, ...]]] = None,
+) -> list[list[str, ...]]:
     """
     Unpack string inputs into lists of variables using the provided dims and coords.
 
@@ -69,7 +67,7 @@ def unpack_string_inputs(
 
     labels = [coords[dim] for dim in dims]
     label_prod = product(*labels)
-    outputs: list[list[str]] = [[] for _ in inputs]
+    outputs: list[list[str, ...]] = [[] for _ in inputs]
 
     for labels in label_prod:
         label_list = [x for x in labels]
@@ -80,13 +78,15 @@ def unpack_string_inputs(
     return outputs
 
 
-def _add_second_alpha(alpha: Union[str, list[str]], factors: Union[str, list[str]]) -> list[str]:
+def _add_second_alpha(
+    alpha: Union[str, list[str, ...]], factors: Union[str, list[str, ...]]
+) -> list[str, ...]:
     if not isinstance(factors, list) or len(factors) != 2:
         # If there are not exactly two factors, we don't need to add a second alpha. It will either be unpacked
         # later, or it will be an error.
-        return cast(list[str], at_least_list(alpha))
+        return cast(list[str, ...], at_least_list(alpha))
 
-    alpha = cast(list[str], at_least_list(alpha))
+    alpha = cast(list[str, ...], at_least_list(alpha))
 
     if len(factors) == 2 and len(alpha) == 1:
         alpha.append(f"1 - {alpha[0]}")
@@ -199,13 +199,13 @@ def CES(
 
 
 def dixit_stiglitz(
-    factors: Union[str, list[str]],
-    factor_prices: Union[str, list[str]],
+    factors: Union[str, list[str, ...]],
+    factor_prices: Union[str, list[str, ...]],
     output: str,
     output_price: str,
     epsilon: str,
     dims: str,
-    coords: dict[str, list[str]],
+    coords: dict[str, list[str, ...]],
     backend: BACKEND_TYPE = "numba",
     TFP: Optional[str] = None,
     factor_shares: Optional[str] = None,
@@ -324,11 +324,11 @@ def dixit_stiglitz(
 
 
 def _1d_leontief(
-    factors: Union[str, list[str]],
-    factor_prices: Union[str, list[str]],
+    factors: Union[str, list[str, ...]],
+    factor_prices: Union[str, list[str, ...]],
     output: str,
     output_price: str,
-    factor_shares: Union[str, list[str]],
+    factor_shares: Union[str, list[str, ...]],
     *args,
     **kwargs,
 ) -> tuple[str, ...]:
@@ -347,13 +347,13 @@ def _1d_leontief(
 
 
 def _2d_leontief(
-    factors: Union[str, list[str]],
-    factor_prices: Union[str, list[str]],
+    factors: Union[str, list[str, ...]],
+    factor_prices: Union[str, list[str, ...]],
     output: str,
     output_price: str,
-    factor_shares: Union[str, list[str]],
+    factor_shares: Union[str, list[str, ...]],
     dims: str,
-    coords: dict[str, list[str]],
+    coords: dict[str, list[str, ...]],
     backend: Literal["numba", "pytensor"] = "numba",
 ) -> tuple[str, ...]:
     r"""
@@ -427,13 +427,13 @@ def _2d_leontief(
 
 
 def leontief(
-    factors: Union[str, list[str]],
-    factor_prices: Union[str, list[str]],
+    factors: Union[str, list[str, ...]],
+    factor_prices: Union[str, list[str, ...]],
     output: str,
     output_price: str,
-    factor_shares: Union[str, list[str]],
-    dims: str,
-    coords: dict[str, list[str]],
+    factor_shares: Union[str, list[str, ...]],
+    dims: Union[str, list[str, ...]],
+    coords: dict[str, list[str, ...]],
     backend: Literal["numba", "pytensor"] = "numba",
 ) -> tuple[str, ...]:
     """
