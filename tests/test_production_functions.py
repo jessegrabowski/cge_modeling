@@ -232,6 +232,7 @@ def test_dixit_stiglitz_computation(backend):
         sympy_out = f_eq(
             X=np.arange(k), P_X=np.ones(k), Y=1, P_Y=1, A=1, alpha=np.full(k, 1 / k), epsilon=3
         )
+        print(eq)
         exact = dx_Y(X=np.arange(k), A=1, alpha=np.full(k, 1 / k), epsilon=3)
         np.testing.assert_allclose(sympy_out, exact)
 
