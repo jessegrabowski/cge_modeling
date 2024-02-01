@@ -1,0 +1,30 @@
+,,Factor,Factor,Factor,Factor,Factor,Institution,Institution,Institution,Production,Production,Production,Production,Production,Activities,Activities,Activities,Activities,Activities,Income Tax,Sales Tax,Sales Tax,Sales Tax,Sales Tax,Sales Tax,Use Tax,Use Tax,Use Tax,Other
+,,Labor,Capital,Coal,Nuclear,Electricity,Household,Grid,Govt,Agriculture,Industry,Services,Coal,Nuclear,Agriculture,Industry,Services,Coal,Nuclear,Household,Agriculture,Industry,Services,Coal,Nuclear,Labor,Capital,Energy,Capital Accumulation
+Factor,Labor,,,,,,,,,,,,,,14000,21000,41000,1500,500,0,0,0,0,0,0,0,0,0,0
+Factor,Capital,,,,,,,,,,,,,,4000,22000,7000,500,800,0,0,0,0,0,0,0,0,0,0
+Factor,Coal,,,,,,,,,,,,,,0,0,0,9000,0,0,0,0,0,0,0,0,0,0,0
+Factor,Nuclear,,,,,,,,,,,,,,0,0,0,0,12000,0,0,0,0,0,0,0,0,0,0
+Factor,Electricity,,,,,,,,,,,,,,14000,18000,13000,0,0,0,0,0,0,0,0,0,0,0,0
+Institution,Household,78000,34300,9000,12000,,,,,,,,,,,,,,,0,0,0,0,0,0,0,0,0,0
+Institution,Grid,,,,,45000,,,,,,,,,,,,,,0,0,0,0,0,0,0,0,0,0
+Institution,Govt,,,,,,,,,,,,,,,,,,,6000,5000,8000,4000,-10000,2000,7500,9200,1500,0
+Production,Agriculture,,,,,,24000,0,7500,0,0,0,0,0,2300,8000,11000,3200,4000,0,0,0,0,0,0,0,0,0,1000
+Production,Industry,,,,,,30800,0,19700,0,0,0,0,0,6000,30400,20000,6100,2000,0,0,0,0,0,0,0,0,0,8000
+Production,Services,,,,,,46000,0,5000,0,0,0,0,0,17200,17100,13000,5700,2000,0,0,0,0,0,0,0,0,0,1500
+Production,Coal,,,,,,0,29000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Production,Nuclear,,,,,,0,24000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Activities,Agriculture,,,,,,0,0,0,57500,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Activities,Industry,,,,,,0,0,0,0,116500,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Activities,Services,,,,,,0,0,0,0,0,105000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Activities,Coal,,,,,,0,0,0,0,0,0,26000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Activities,Nuclear,,,,,,0,0,0,0,0,0,0,21300,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Income Tax,Household,,,,,,6000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Sales Tax,Agriculture,,,,,,5000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Sales Tax,Industry,,,,,,8000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Sales Tax,Services,,,,,,4000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Sales Tax,Coal,,,,,,0,-10000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Sales Tax,Nuclear,,,,,,0,2000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Use Tax,Labor,,,,,,0,0,0,1000,2000,1000,2000,1500,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Use Tax,Capital,,,,,,0,0,0,2000,4000,1000,1000,1200,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Use Tax,Energy,,,,,,0,0,0,500,500,500,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Other,Capital Accumulation,,,,,,9500,0,1000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

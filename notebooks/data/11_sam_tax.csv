@@ -1,0 +1,28 @@
+﻿,,Factor,Factor,Factor,Factor,Factor,Institution,Institution,Production,Production,Production,Production,Production,Activities,Activities,Activities,Activities,Activities,Income Tax,Sales Tax,Sales Tax,Sales Tax,Sales Tax,Sales Tax,Use Tax,Use Tax,Other
+,,Labor,Capital,Coal,Nuclear,Electricity,Household,Govt,Agriculture,Industry,Services,Coal,Nuclear,Agriculture,Industry,Services,Coal,Nuclear,Household,Agriculture,Industry,Services,Coal,Nuclear,Labor,Capital,Capital Accumulation
+Factor,Labor,,,,,,,,,,,,,1400,2100,4100,150,50,,,,,,,,,
+Factor,Capital,,,,,,,,,,,,,400,2200,700,50,80,,,,,,,,,
+Factor,Coal,,,,,,,,,,,,,,,,850,,,,,,,,,,
+Factor,Nuclear,,,,,,,,,,,,,,,,,1200,,,,,,,,,
+Factor,Electricity,,,,,,,,,,,,,1400,1800,1300,,,,,,,,,,,
+Institution,Household,7800,3430,850,1200,,,,,,,,,,,,,,,,,,,,,,
+Institution,Govt,,,,,,,,,,,,,,,,,,600,500,800,400,100,100,750,920,
+Production,Agriculture,,,,,,2150,1000,,,,,,230,800,1100,20,400,,,,,,,,,100
+Production,Industry,,,,,,3030,1970,,,,,,600,3040,2000,610,200,,,,,,,,,800
+Production,Services,,,,,,4650,1100,,,,,,1470,1710,1300,20,300,,,,,,,,,150
+Production,Coal,,,,,2000,,,,,,,,,,,,,,,,,,,,,
+Production,Nuclear,,,,,2500,,,,,,,,,,,,,,,,,,,,,
+Activities,Agriculture,,,,,,,,5500,,,,,,,,,,,,,,,,,,
+Activities,Industry,,,,,,,,,11650,,,,,,,,,,,,,,,,,
+Activities,Services,,,,,,,,,,10500,,,,,,,,,,,,,,,,
+Activities,Coal,,,,,,,,,,,1700,,,,,,,,,,,,,,,
+Activities,Nuclear,,,,,,,,,,,,2230,,,,,,,,,,,,,,
+Income Tax,Household,,,,,,600,,,,,,,,,,,,,,,,,,,,
+Sales Tax,Agriculture,,,,,,500,,,,,,,,,,,,,,,,,,,,
+Sales Tax,Industry,,,,,,800,,,,,,,,,,,,,,,,,,,,
+Sales Tax,Services,,,,,,400,,,,,,,,,,,,,,,,,,,,
+Sales Tax,Coal,,,,,,100,,,,,,,,,,,,,,,,,,,,
+Sales Tax,Nuclear,,,,,,100,,,,,,,,,,,,,,,,,,,,
+Use Tax,Labor,,,,,,,,100,200,100,200,150,,,,,,,,,,,,,,
+Use Tax,Capital,,,,,,,,200,400,100,100,120,,,,,,,,,,,,,,
+Other,Capital Accumulation,,,,,,950,100,,,,,,,,,,,,,,,,,,,
