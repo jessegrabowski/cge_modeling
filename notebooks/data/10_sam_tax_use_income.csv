@@ -1,0 +1,30 @@
+﻿,,Factor,Factor,Factor,Factor,Factor,Institution,Institution,Production,Production,Production,Production,Production,Production,Activities,Activities,Activities,Activities,Activities,Activities,Income Tax,Sales Tax,Sales Tax,Sales Tax,Sales Tax,Sales Tax,Use Tax,Use Tax,Other
+,,Labor,Capital,Coal,Nuclear,Electricity,Household,Govt,Agriculture,Industry,Services,Utility,Coal,Nuclear,Agriculture,Industry,Services,Utility,Coal,Nuclear,Household,Agriculture,Industry,Services,Coal,Nuclear,Labor,Capital,Capital Accumulation
+Factor,Labor,,,,,,,,,,,,,,1400,2100,4100,,200,200,,,,,,,,,
+Factor,Capital,,,,,,,,,,,,,,400,2200,700,,400,300,,,,,,,,,
+Factor,Coal,,,,,,,,,,,,,,,,,,850,,,,,,,,,,
+Factor,Nuclear,,,,,,,,,,,,,,,,,,,1200,,,,,,,,,
+Factor,Electricity,,,,,,,,,,,,,,1400,1800,1300,,,,,,,,,,,,
+Institution,Household,8000,4000,850,1200,,,,,,,,,,,,,,,,,,,,,,,,
+Institution,Govt,,,,,,,,,,,,,,,,,,,,600,,,,,,400,700,
+Production,Agriculture,,,,,,3150,400,,,,,,,230,800,1100,,20,400,,,,,,,,,100
+Production,Industry,,,,,,4700,400,,,,,,,1000,3040,1700,,510,100,,,,,,,,,800
+Production,Services,,,,,,4650,800,,,,,,,1470,1710,1300,,20,300,,,,,,,,,150
+Production,Utility,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Production,Coal,,,,,2000,,,,,,,,,,,,,,,,,,,,,,,
+Production,Nuclear,,,,,2500,,,,,,,,,,,,,,,,,,,,,,,
+Activities,Agriculture,,,,,,,,5900,,,,,,,,,,,,,,,,,,,,
+Activities,Industry,,,,,,,,,11650,,,,,,,,,,,,,,,,,,,
+Activities,Services,,,,,,,,,,10200,,,,,,,,,,,,,,,,,,
+Activities,Utility,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Activities,Coal,,,,,,,,,,,,2000,,,,,,,,,,,,,,,,
+Activities,Nuclear,,,,,,,,,,,,,2500,,,,,,,,,,,,,,,
+Income Tax,Household,,,,,,600,,,,,,,,,,,,,,,,,,,,,,
+Sales Tax,Agriculture,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sales Tax,Industry,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sales Tax,Services,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sales Tax,Coal,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sales Tax,Nuclear,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Use Tax,Labor,,,,,,,,100,200,100,,,,,,,,,,,,,,,,,,
+Use Tax,Capital,,,,,,,,200,400,100,,,,,,,,,,,,,,,,,,
+Other,Capital Accumulation,,,,,,950,100,,,,,,,,,,,,,,,,,,,,,
