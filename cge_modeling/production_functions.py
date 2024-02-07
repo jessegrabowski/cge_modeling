@@ -337,7 +337,7 @@ def _1d_leontief(
 
     """
     zp_rhs = " + ".join([f"{price} * {factor}" for factor, price in zip(factors, factor_prices)])
-    zero_profit = f"{output_price} * {output} = {zp_rhs}"
+    zero_profit = f"{output} = ({zp_rhs}) / ({output_price})"
 
     factor_demands = (
         f"{factor} = {output} * {share}" for factor, share in zip(factors, factor_shares)
@@ -392,7 +392,7 @@ def _2d_leontief(
     """
 
     def _swapaxes(x, i, j):
-        sub_template = Template("$x.subs({$i:$j})")
+        sub_template = Template("$x.subs({$j:$i})")
         return sub_template.safe_substitute(x=x, i=i, j=j)
 
     def _T(x, i, j, coords):
@@ -408,16 +408,26 @@ def _2d_leontief(
 
     if backend == "numba":
         core_dim, batch_dim = dims
-        rhs = (
-            f"Sum({_swapaxes(factor_prices, core_dim, batch_dim)} * {_T(factors, core_dim, batch_dim, coords)}, "
-            + f"({batch_dim}, 0, {len(coords[batch_dim]) - 1}))"
-        )
-        zero_profit = f"{output_price} * {output} = {rhs}"
+        n_core, n_batch = (len(coords[x]) for x in dims)
+
+        if n_core == n_batch:
+            rhs = (
+                f"Sum({_swapaxes(factor_prices, core_dim, batch_dim)} * {_T(factors, core_dim, batch_dim, coords)}, "
+                + f"({batch_dim}, 0, {len(coords[batch_dim]) - 1}))"
+            )
+        elif n_core > n_batch:
+            rhs = (
+                f"Sum({factor_prices} * {factors}, ({batch_dim}, 0, {len(coords[batch_dim]) - 1}))"
+            )
+        elif n_core < n_batch:
+            raise NotImplementedError
+
+        zero_profit = f"{output} = {rhs} / ({output_price})"
 
         factor_demands = f"{factors} = {factor_shares} * {_swapaxes(output, core_dim, batch_dim)}"
 
     elif backend == "pytensor":
-        zero_profit = f"{output_price} * {output} = ({factor_prices}[:, None] * {factors}).sum(axis=0).ravel()"
+        zero_profit = f"{output} = ({factor_prices}[:, None] * {factors}).sum(axis=0).ravel() / ({output_price})"
         factor_demands = f"{factors} = {factor_shares} * {output}[None]"
 
     else:
@@ -499,6 +509,7 @@ def leontief(
         ["factors", "factor_prices", "factor_shares"], [factors, factor_prices, factor_shares]
     )
 
+    factors = at_least_list(factors)
     if isinstance(dims, str) or len(dims) == 1:
         if len(factors) == 1:
             raise ValueError(
