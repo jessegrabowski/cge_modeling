@@ -1,5 +1,4 @@
 import functools as ft
-import sys
 import warnings
 from copy import deepcopy
 from typing import Callable, Literal, Optional, Sequence, Union
@@ -28,10 +27,10 @@ from cge_modeling.base.utilities import (
     _validate_input,
     ensure_input_is_sequence,
     flat_array_to_variable_dict,
-    flat_mask_from_param_names,
     infer_object_shape_from_coords,
     unpack_equation_strings,
     variable_dict_to_flat_array,
+    wrap_fixed_values,
     wrap_pytensor_func_for_scipy,
 )
 from cge_modeling.pytensorf.compile import (
@@ -68,6 +67,10 @@ ValidGroups = Literal[
     "_unpacked_parameters",
     "_unpacked_equations",
 ]
+
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 class CGEModel:
@@ -207,7 +210,9 @@ class CGEModel:
         self.f_dX: Optional[Callable] = None
 
         if compile:
+            _log.info(f"Beginning compilation in {mode} mode")
             self._compile(backend=backend, mode=mode, inverse_method=inverse_method)
+            self.mode = mode
 
     def check_initialization(self):
         if self.n_variables != self.n_equations:
@@ -599,7 +604,7 @@ class CGEModel:
         # We don't need to save this because it's only used internally by the euler_approx function
         f_dX = numba_linearize_cge_func(equations, variables, parameters)
 
-        def euler_wrapper(*, theta_final, n_steps, **data):
+        def euler_wrapper(*, theta_final, n_steps, mode=None, **data):
             x0 = np.concatenate(
                 [np.atleast_1d(data[x]).ravel() for x in self.variable_names], axis=0
             )
@@ -628,10 +633,16 @@ class CGEModel:
 
     def __pytensor_euler_helper(self, *args, n_steps=100, **kwargs):
         if n_steps == self.__last_n_steps:
+            _log.info("Re-using compiled euler approximation")
             return self.__compiled_f_euler(*args, **kwargs)
         else:
+            _log.info(
+                f"n_steps has changed ({n_steps} != {self.__last_n_steps}). Compiling euler approximation"
+            )
             self.__last_n_steps = n_steps
-            self.__compiled_f_euler = euler_approximation_from_CGEModel(self, n_steps=n_steps)
+            self.__compiled_f_euler = euler_approximation_from_CGEModel(
+                self, n_steps=n_steps, mode=self.mode
+            )
             return self.__compiled_f_euler(*args, **kwargs)
 
     def _compile_pytensor(self, mode, inverse_method="solve"):
@@ -639,15 +650,26 @@ class CGEModel:
             self, inverse_method=inverse_method
         )
         inputs = variables + parameters
+
+        _log.info(f"Compiling CGE equations into {mode} function")
         f_system = pytensor.function(inputs=inputs, outputs=system, mode=mode)
+
+        _log.info(f"Compiling Jacobian equations into {mode} function")
         f_jac = pytensor.function(inputs=inputs, outputs=jac, mode=mode)
+
+        _log.info(f"Computing sum of squared errors")
         resid = (system**2).sum()
+
+        _log.info(f"Computing SSE gradient")
         grad = pytensor.grad(resid, variables)
         grad = pt.specify_shape(
             pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]), self.n_variables
         )
+
+        _log.info(f"Computing SSE Jacobian")
         hess = make_jacobian(grad, variables)
 
+        _log.info(f"Compiling SSE functions (sse, gradient, jacobian) into {mode} function")
         f_root = pytensor.function(inputs=inputs, outputs=[resid, grad, hess], mode=mode)
 
         if mode in ["JAX", "NUMBA"]:
@@ -827,22 +849,33 @@ class CGEModel:
         progressbar=True,
         **optimizer_kwargs,
     ):
-        if self._compile_backend == "numba":
-            f_system = self.f_system
-            f_jac = self.f_jac
-        elif self._compile_backend == "pytensor":
-            variables = self.variables
+        f_system = self.f_system
+        f_jac = self.f_jac
+        free_variables = self.variables
+
+        if fixed_values is not None:
+            if any(x in self.parameter_names for x in fixed_values.keys()):
+                raise ValueError(
+                    "The following parameters were requested to be fixed via the fixed_values argument, "
+                    "but parameters are always fixed and should not be included in the fixed_values dict: "
+                    f"{[x for x in fixed_values.keys() if x in self.parameter_names]}"
+                )
+            free_variables = [x for x in self.variables if x.name not in fixed_values]
+            f_system = wrap_fixed_values(f_system, fixed_values, self.variables, self.coords)
+            f_jac = wrap_fixed_values(f_jac, fixed_values, self.variables, self.coords)
+
+        if self._compile_backend == "pytensor":
             parameters = self.parameters
             coords = self.coords
 
-            f_system = wrap_pytensor_func_for_scipy(self.f_system, variables, parameters, coords)
-            f_jac = wrap_pytensor_func_for_scipy(self.f_jac, variables, parameters, coords)
-        else:
+            f_system = wrap_pytensor_func_for_scipy(f_system, free_variables, parameters, coords)
+            f_jac = wrap_pytensor_func_for_scipy(f_jac, free_variables, parameters, coords)
+        elif self._compile_backend not in ["numba", "pytensor"]:
             raise ValueError(
                 "Model must be compiled to a computational backend before it can be solved."
             )
 
-        x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
+        x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
         objective = CostFuncWrapper(
             maxeval=maxeval, f=f_system, f_jac=f_jac if use_jac else None, progressbar=progressbar
@@ -863,33 +896,46 @@ class CGEModel:
 
     def _solve_with_minimize(
         self,
-        data,
-        theta_final,
-        use_jac=True,
-        use_hess=True,
-        progressbar=True,
-        fixed_values=None,
+        data: dict[str, np.array],
+        theta_final: dict[str, np.array],
+        use_jac: bool = True,
+        use_hess: bool = True,
+        progressbar: bool = True,
+        fixed_values: Optional[dict[str, Union[int, float, np.ndarray]]] = None,
         **optimizer_kwargs,
     ):
-        if self._compile_backend == "numba":
-            f_resid = self.f_resid
-            f_grad = self.f_grad
-            f_hess = self.f_hess
-        elif self._compile_backend == "pytensor":
-            variables = self.variables
+        f_resid = self.f_resid
+        f_grad = self.f_grad
+        f_hess = self.f_hess
+        free_variables = self.variables
+
+        if fixed_values is not None:
+            if any(x in self.parameter_names for x in fixed_values.keys()):
+                raise ValueError(
+                    "The following parameters were requested to be fixed via the fixed_values argument, "
+                    "but parameters are always fixed and should not be included in the fixed_values dict: "
+                    f"{[x for x in fixed_values.keys() if x in self.parameter_names]}"
+                )
+
+            free_variables = [x for x in self.variables if x.name not in fixed_values]
+            f_resid = wrap_fixed_values(f_resid, fixed_values, self.variables, self.coords)
+            f_grad = wrap_fixed_values(f_grad, fixed_values, self.variables, self.coords)
+            f_hess = wrap_fixed_values(f_hess, fixed_values, self.variables, self.coords)
+
+        if self._compile_backend == "pytensor":
             parameters = self.parameters
             coords = self.coords
 
-            f_resid = wrap_pytensor_func_for_scipy(self.f_resid, variables, parameters, coords)
-            f_grad = wrap_pytensor_func_for_scipy(self.f_grad, variables, parameters, coords)
-            f_hess = wrap_pytensor_func_for_scipy(self.f_hess, variables, parameters, coords)
+            f_resid = wrap_pytensor_func_for_scipy(f_resid, free_variables, parameters, coords)
+            f_grad = wrap_pytensor_func_for_scipy(f_grad, free_variables, parameters, coords)
+            f_hess = wrap_pytensor_func_for_scipy(f_hess, free_variables, parameters, coords)
 
-        else:
+        elif self._compile_backend not in ["numba", "pytensor"]:
             raise ValueError(
                 "Model must be compiled to a computational backend before it can be solved."
             )
 
-        x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
+        x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
 
         objective = CostFuncWrapper(
@@ -993,10 +1039,12 @@ class CGEModel:
             )
 
         joint_dict = {**param_dict, **initial_variable_guess}
-        _, flat_params = variable_dict_to_flat_array(joint_dict, self.variables, self.parameters)
+        free_variables = [var for var in self.variables if var.name not in fixed_values]
+        _, flat_params = variable_dict_to_flat_array(joint_dict, free_variables, self.parameters)
 
-        res = SOLVER_FACTORY[solve_method](
-            data=joint_dict, theta_final=flat_params, **solver_kwargs
+        f_solver = SOLVER_FACTORY[solve_method]
+        res = f_solver(
+            data=joint_dict, theta_final=flat_params, fixed_values=fixed_values, **solver_kwargs
         )
 
         if not solve_method == "euler":
@@ -1006,7 +1054,7 @@ class CGEModel:
                     "diagnostic purposes only"
                 )
 
-            result_dict = flat_array_to_variable_dict(res.x, self.variables, self.coords)
+            result_dict = flat_array_to_variable_dict(res.x, free_variables, self.coords)
         else:
             result_dict = res
 
@@ -1136,9 +1184,20 @@ class CGEModel:
 
         if use_optimizer:
             if optimizer_mode == "root":
-                res = self._solve_with_root(x0_var_param, theta_simulation, **optimizer_kwargs)
+                use_jac = optimizer_kwargs.pop("use_jac", True)
+                res = self._solve_with_root(
+                    x0_var_param, theta_simulation, use_jac=use_jac, **optimizer_kwargs
+                )
             elif optimizer_mode == "minimize":
-                res = self._solve_with_minimize(x0_var_param, theta_simulation, **optimizer_kwargs)
+                use_jac = optimizer_kwargs.pop("use_jac", True)
+                use_hess = optimizer_kwargs.pop("use_hess", True)
+                res = self._solve_with_minimize(
+                    x0_var_param,
+                    theta_simulation,
+                    use_jac=use_jac,
+                    use_hess=use_hess,
+                    **optimizer_kwargs,
+                )
             else:
                 raise ValueError(f"Unknown optimizer mode {optimizer_mode}")
 

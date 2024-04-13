@@ -179,7 +179,7 @@ def CES(
     ).safe_substitute(output=output, inner=" + ".join(production_inner), TFP=TFP, epsilon=epsilon)
 
     factor_demand_template = Template(
-        "$factor = $output / $TFP * (($factor_share) * $output_price * $TFP / $factor_price) ** "
+        "$factor = $output / $TFP * (($factor_share) * $output_price * $TFP / ($factor_price)) ** "
         "$epsilon"
     )
     eq_fac_demands = [
@@ -354,6 +354,7 @@ def _2d_leontief(
     factor_shares: Union[str, list[str, ...]],
     dims: str,
     coords: dict[str, list[str, ...]],
+    expand_price_dim: bool = False,
     backend: Literal["numba", "pytensor"] = "numba",
 ) -> tuple[str, ...]:
     r"""
@@ -363,7 +364,9 @@ def _2d_leontief(
     -----
     Sympy is quite restrictive in terms of broadcasting, so there are many hoops to jump through here.
     Assume that X is an N x N matrix of factor demands, phi is an N x N matrix of technological coefficients,
-    Y is an N x 1 vector of outputs and P_Y, P_X are N x 1 vectors of prices for X and Y, respectively.
+    Y is an N x 1 vector of outputs and P_Y is a vectors of prices Y. P_X is either a vector or a matrix of factor
+    prices, depending on the situaiton. If it is a vector, set expand_price_dim to True; if it is a matrix, set it to
+    False.
 
     The important thing about X is that it is indexed by the same labels twice. The columns represent demands by
     the j-th label to the i-th label. The rows, on the other hand, represent supply by the  i-th label to the
@@ -427,7 +430,8 @@ def _2d_leontief(
         factor_demands = f"{factors} = {factor_shares} * {_swapaxes(output, core_dim, batch_dim)}"
 
     elif backend == "pytensor":
-        zero_profit = f"{output} = ({factor_prices}[:, None] * {factors}).sum(axis=0).ravel() / ({output_price})"
+        price_slice = "[:, None]" if expand_price_dim else ""
+        zero_profit = f"{output} = ({factor_prices}{price_slice} * {factors}).sum(axis=0).ravel() / ({output_price})"
         factor_demands = f"{factors} = {factor_shares} * {output}[None]"
 
     else:
@@ -444,6 +448,7 @@ def leontief(
     factor_shares: Union[str, list[str, ...]],
     dims: Union[str, list[str, ...]],
     coords: dict[str, list[str, ...]],
+    expand_price_dim: bool = False,
     backend: Literal["numba", "pytensor"] = "numba",
 ) -> tuple[str, ...]:
     """
@@ -524,5 +529,13 @@ def leontief(
                 f"Leontief production function expects exactly one factor when len(dims) == 2, found {len(factors)}"
             )
         return _2d_leontief(
-            factors, factor_prices, output, output_price, factor_shares, dims, coords, backend
+            factors,
+            factor_prices,
+            output,
+            output_price,
+            factor_shares,
+            dims,
+            coords,
+            expand_price_dim,
+            backend,
         )
