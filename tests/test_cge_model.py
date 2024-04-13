@@ -222,3 +222,29 @@ def test_backends_agree(
         res_pytensor = res_pytensor.parameters.isel(step=-1).to_array().values
 
     solver_agreement_checks([res_numba, res_pytensor], ["Numba", "PyTensor"])
+
+
+def test_generate_SAM():
+    mod = load_model_1(backend="pytensor")
+    param_dict = {
+        "alpha": 0.75,
+        "A": 2.0,
+        "L_s": 1000,
+        "K_s": 5000,
+        "w": 1.0,
+    }
+    initial_guess = {"C": 10000, "Y": 10000, "income": 10000, "K_d": 5000, "L_d": 1000}
+
+    fixed_values = {"r": 1.0, "P": 1.0, "resid": 0.0}
+    data = mod.generate_SAM(
+        param_dict=param_dict,
+        initial_variable_guess=initial_guess,
+        fixed_values=fixed_values,
+        solve_method="minimize",
+        method="nelder-mead",
+        use_jac=False,
+        use_hess=False,
+    )
+
+    print(mod.f_system(**data, **fixed_values, **param_dict))
+    print(data)

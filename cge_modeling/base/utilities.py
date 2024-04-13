@@ -252,6 +252,25 @@ def infer_object_shape_from_coords(
     return shape
 
 
+def make_flat_array_return_mask(
+    x: np.ndarray,
+    all_objects: list[Union[Variable, Parameter]],
+    omit_object_names: list[str],
+    coords: dict[str, list[str, ...]],
+) -> np.ndarray:
+    mask = np.full(x.shape[0], True)
+    cursor = 0
+    for obj in all_objects:
+        shape = infer_object_shape_from_coords(obj, coords)
+        s = int(np.prod(shape))
+
+        if obj.name in omit_object_names:
+            mask[cursor : cursor + s] = False
+        cursor += s
+
+    return mask.astype("bool")
+
+
 def flat_array_to_variable_dict(
     x: np.ndarray, objects: list[Union[Variable, Parameter]], coords: dict[str, list[str, ...]]
 ) -> dict[str, np.ndarray]:
@@ -360,6 +379,64 @@ def variable_dict_to_flat_array(
     parameters = np.concatenate([np.atleast_1d(d[var.name]).ravel() for var in parameter_list])
 
     return variables, parameters
+
+
+def wrap_fixed_values(
+    f: Callable,
+    fixed_values: dict[str, Union[float, int, np.ndarray]],
+    variables: list[Variable],
+    coords: dict[str, list[str, ...]],
+) -> Callable:
+    """
+    Wrap a CGE function to require only a subset of its inputs. Useful when optimizing under a constraint that
+    certain variables are fixed at initial values.
+
+    Parameters
+    ----------
+    f: Callable
+        A compiled CGE function with signature f(**variables, **parameters)
+
+    fixed_values: dict[str, Union[float, int, np.ndarray]]
+        Dictionary mapping variable names to numpy arrays containing the fixed values of those variables. Keys should
+        be a subset of the variable names accepted by the function f.
+
+    variables: list[Variable]
+        List of model variables
+
+    coords: dict[str, list[str, ...]]
+        Dictionary of coordinates mapping dimension names to lists of labels associated with that dimension.
+
+    Returns
+    -------
+    inner: Callable
+        A wrapped version of the input function that accepts only the variables not in fixed_values as keyword arguments.
+    """
+    var_names = [var.name for var in variables]
+    if any(var not in var_names for var in fixed_values.keys()):
+        raise ValueError(
+            "User asked to fix the following variables, but these variables are not in the model: "
+            f"{set(fixed_values.keys()) - set(var_names)}"
+        )
+    fixed_vars = [var.name for var in variables if var.name in fixed_values.keys()]
+
+    @ft.wraps(f)
+    def inner(**data):
+        if any(var in fixed_vars for var in data.keys()):
+            raise ValueError(
+                f"Values for the following variables were passed to a function that expected them to be "
+                f"fixed: {set(fixed_vars) & set(data.keys())}"
+            )
+        data.update(fixed_values)
+        res = f(**data)
+        if res.ndim == 0:
+            return res
+
+        return_mask = make_flat_array_return_mask(res, variables, fixed_vars, coords)
+        if res.ndim == 1:
+            return res[return_mask]
+        return res[return_mask, :][:, return_mask]
+
+    return inner
 
 
 def wrap_pytensor_func_for_scipy(

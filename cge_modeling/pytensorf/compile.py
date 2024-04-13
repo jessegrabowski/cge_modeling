@@ -1,3 +1,4 @@
+import logging
 from typing import Literal, cast
 
 import numpy as np
@@ -24,6 +25,8 @@ from cge_modeling.tools.sympy_tools import (
     replace_indexed_variables,
 )
 
+_log = logging.getLogger(__name__)
+
 
 def pytensor_objects_from_CGEModel(cge_model):
     n_eq = len(cge_model.unpacked_variable_names)
@@ -33,6 +36,7 @@ def pytensor_objects_from_CGEModel(cge_model):
 
     cache = make_printer_cache(variables, parameters)
 
+    _log.info("Converting equations to pytensor graphs")
     if cge_model.parse_equations_to_sympy:
         remove_index_subs = make_dummy_sub_dict(cge_model)
         substituted_equations = replace_indexed_variables(cge_model.equations, remove_index_subs)
@@ -49,6 +53,8 @@ def pytensor_objects_from_CGEModel(cge_model):
     # We shouldn't ever have this case anyway, so we can manually replace all Prod Ops with ones that have the
     # no_zeros_in_input flag set to True.
     # TODO: Fix this upstream in pytensor then remove all this
+    _log.info("Apply product Op rewrite")
+
     default_prod_op = pt.math.Prod(dtype=pytensor.config.floatX, acc_dtype=pytensor.config.floatX)
     new_prod_op = pt.math.Prod(
         dtype=pytensor.config.floatX, acc_dtype=pytensor.config.floatX, no_zeros_in_input=True
@@ -111,12 +117,15 @@ def compile_cge_model_to_pytensor(
     n_eq = flat_equations.type.shape[0]
     inputs = (variables, parameters)
 
+    _log.info("Computing Jacobian")
     jac = make_jacobian(flat_equations, variables)
     jac.name = "jacobian"
 
+    _log.info("Computing B matrix (derivatives w.r.t parameters)")
     B = make_jacobian(flat_equations, parameters)
     B.name = "B"
 
+    _log.info("Inverting jacobian")
     if inverse_method == "pinv":
         jac_inv = pt.linalg.pinv(jac)
     elif inverse_method == "solve":
@@ -300,6 +309,7 @@ def euler_approximation(
 
 
 def compile_euler_approximation_function(equations, variables, parameters, n_steps=100, mode=None):
+
     theta_final, result = euler_approximation(equations, variables, parameters, n_steps=n_steps)
     theta_final.name = "theta_final"
     inputs = variables + parameters + [theta_final]

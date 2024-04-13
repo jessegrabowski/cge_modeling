@@ -1,12 +1,16 @@
 from string import Template
 
 import numpy as np
+import pytest
+import sympy as sp
+from sympy.abc import a, b, x, y
 
 from cge_modeling.base.primitives import Parameter, Variable
 from cge_modeling.base.utilities import (
     _expand_var_by_index,
     flat_array_to_variable_dict,
     variable_dict_to_flat_array,
+    wrap_fixed_values,
     wrap_pytensor_func_for_scipy,
 )
 
@@ -92,3 +96,30 @@ def test_wrap_pytensor_func_for_scipy():
 
     f_mse_wrapped = wrap_pytensor_func_for_scipy(f_mse, variables, parameters, coords)
     assert f_mse_wrapped(np.array([1.0, 2.0, 3.0]), np.array([1.0, 2.0, 3.0])) == 196.0
+
+
+def test_fixed_values_wrapper():
+    variables = [
+        Variable("x", dims=None, description="x"),
+        Variable("y", dims=None, description="y"),
+    ]
+
+    eq = a * x + b * y
+    f = sp.lambdify([x, y, a, b], eq)
+    x_val = np.random.normal(scale=10)
+    f = wrap_fixed_values(f, {"x": x_val}, variables)
+
+    assert f(y=1, a=1, b=1) == (x_val + 1)
+
+
+def test_fixed_values_wrapper_raises_on_unknown_variable():
+    variables = [
+        Variable("x", dims=None, description="x"),
+        Variable("y", dims=None, description="y"),
+    ]
+
+    eq = a * x + b * y
+    f = sp.lambdify([x, y, a, b], eq)
+
+    with pytest.raises(ValueError):
+        f = wrap_fixed_values(f, {"z": 2}, variables)

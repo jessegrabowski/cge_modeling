@@ -81,7 +81,9 @@ class ModelObject(ABC):
         if isinstance(dims, (tuple, list)):
             if len(dims) == 0:
                 return dims
-            elif all([isinstance(x, str) for x in dims]):
+            # Convert to a tuple
+            dims = tuple(dims)
+            if all([isinstance(x, str) for x in dims]):
                 return dims
             else:
                 raise ValueError(f"dims must be a string or a tuple of strings, found {dims}")
