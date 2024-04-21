@@ -1221,7 +1221,10 @@ class CGEModel:
             print(f"{eq:<75}: {val:<10.3f}")
 
     def check_for_equilibrium(
-        self, data: Union[dict[str, Union[float, np.array]], InferenceData, xr.Dataset], tol=1e-6
+        self,
+        data: Union[dict[str, Union[float, np.array]], InferenceData, xr.Dataset],
+        tol=1e-6,
+        print_equations=True,
     ):
         """
         Verify if a given state of the model is an equilibrium.
@@ -1232,6 +1235,9 @@ class CGEModel:
             The state of the model to check. Must contain values for all variables and parameters in the model.
         tol: float
             The tolerance for the squared error of the system of equations. Defaults to 1e-6.
+        print_equations: bool
+            If true, prints the symbolic equation along with the name and residuls for each equations that exceeds
+            the tolerance.
 
         Notes
         -----
@@ -1275,7 +1281,8 @@ class CGEModel:
             for eq_name, resid in zip(self.unpacked_equation_names, errors):
                 is_negative = resid < 0
                 pad = "" if is_negative else " "
-                print(f"{eq_name:<{longest_name + 10}}{pad}{resid:0.6f}")
+                if abs(resid) > tol:
+                    print(f"{eq_name:<{longest_name + 10}}{pad}{resid:0.6f}")
 
 
 def recursive_solve_symbolic(equations, known_values=None, max_iter=100):
