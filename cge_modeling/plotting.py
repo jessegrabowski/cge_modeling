@@ -178,9 +178,9 @@ def plot_kateplot(
     fig, ax = plt.subplots(1, 2, figsize=(14, 4))
 
     if cmap is None:
-        cmap = plt.cm.get_cmap("tab10")
+        cmap = plt.colormaps["tab10"]
     elif isinstance(cmap, str):
-        cmap = plt.cm.get_cmap(cmap)
+        cmap = plt.colormaps[cmap]
 
     dims = [idata["optimizer"].variables[var].dims for var in var_names]
     if not all([dim == dims[0] for dim in dims]):

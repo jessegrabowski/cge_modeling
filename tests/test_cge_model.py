@@ -245,6 +245,3 @@ def test_generate_SAM():
         use_jac=False,
         use_hess=False,
     )
-
-    print(mod.f_system(**data, **fixed_values, **param_dict))
-    print(data)
