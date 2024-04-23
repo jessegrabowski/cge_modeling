@@ -122,4 +122,4 @@ def test_fixed_values_wrapper_raises_on_unknown_variable():
     f = sp.lambdify([x, y, a, b], eq)
 
     with pytest.raises(ValueError):
-        f = wrap_fixed_values(f, {"z": 2}, variables)
+        f = wrap_fixed_values(f, {"z": 2}, variables, coords={})

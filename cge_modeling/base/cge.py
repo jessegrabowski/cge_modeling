@@ -1,7 +1,8 @@
 import functools as ft
+import logging
 import warnings
 from copy import deepcopy
-from typing import Callable, Literal, Optional, Sequence, Union
+from typing import Callable, Literal, Optional, Sequence, Union, cast
 
 import numba as nb
 import numpy as np
@@ -46,7 +47,7 @@ from cge_modeling.tools.output_tools import (
     list_of_array_to_idata,
     optimizer_result_to_idata,
 )
-from cge_modeling.tools.pytensor_tools import make_jacobian
+from cge_modeling.tools.pytensor_tools import get_required_inputs, make_jacobian
 from cge_modeling.tools.sympy_tools import (
     enumerate_indexbase,
     expand_obj_by_indices,
@@ -68,85 +69,12 @@ ValidGroups = Literal[
     "_unpacked_equations",
 ]
 
-import logging
+CompiledFunctions = Literal["root", "mininimze", "euler", "all"]
 
 _log = logging.getLogger(__name__)
 
 
 class CGEModel:
-    """
-    This class represents a CGE model. It is the main interface for interacting with the model.
-
-    Parameters
-    ----------
-    coords: dict[str, Sequence[str]]
-        A dictionary of dimension names and labels associated with each dimension. For example, if certain objects in
-        the model are indexed by "sector", then coords should contain a key "sector" with a list of sector labels as
-        values: {"sector": ["Agriculture", "Industry", "Service"]}.
-
-    variables: list of Variables
-        A list of endogenous variables associated with the model. These will be solved for during simulation.
-
-    parameters: list of Parameters
-        A list of parameters associated with the model. These are fixed during simulation. Note that exogenous variables
-        should be included as parameters.
-
-    equations: list of Equations
-        A list of equations associated with the model. These define relationships between the variables and parameters.
-
-    numeraire: Variable, optional
-        The numéraire variable. If supplied, the numéraire will be removed from the model, and all instances of the
-        numéraire in model equations will be set to 1.
-        NOTE: It is not currently recommended to use this feature. Instead, add an equation to the model
-              fixing the numéraire variable to 1.
-
-    parse_equations_to_sympy: bool, optional
-        If True, the equations will be parsed to sympy expressions. This is required for the model to be compiled to
-        the "numba" backend. If False, the equations will be converted to symbolic pytensor expressions.
-        This is required for the model to be compiled to the "pytensor" backend. Defaults to True.
-
-    backend: str, optional
-        Computational backend to compile the model to. One of "pytensor" or "numba". Defaults to "numba".
-
-    mode: str, optional
-        Compilation mode for the pytensor backend. One of None, "JAX", or "NUMBA". Defaults to None. Note that this
-        argument is ignored if the backend is not "pytensor".
-
-    inverse_method: str, optional
-        Method to use to compute the inverse of the Jacobian matrix. One of "solve", "pinv", or "SGD".
-        Defaults to "solve". Ignored if the backend is not "pytensor".
-
-    compile: bool, optional
-        Whether to compile the model during initialization. Defaults to True.
-
-
-    Notes
-    -----
-    Computable General Equilibrium models are used to study the change in economic equilibria following shifts in model
-    parameters. The purpose of this class is to provide an organized framework for declaring and studying this class
-    of models.
-
-    At it's most basic, a CGE model is comprised of three types of objects: variables, parameters, and equations. Each
-    of these should declared separately using the appropriate object type. For example, to declare a variable, use the
-    Variable class. Distinction between variables and parameters is enforced to check that the model is square (there
-    are as many equations as there are variables), and to determine which objects to solve for during simulation.
-
-    Another important job of a model is to hold information about the dimensions of the model. Variables and parameters
-    are declared with abstract indices, called dims. This is meant to match the notation used in the literature. For
-    example, a variable representing the demand for capital in sector i would be written as ..math :: K_{d,i}. To
-    represent this in a CGE model, we would declare a Variable with name "K_d" and dims "i". The dims on the Variable
-    are arbitrary, but become concrete when placed in the context of a model. Therefore, the model must be supplied with
-    a dictionary of dimension names and labels, called "coordinates" in packages for multi-dimensional array handing
-    (e.g. xArray). For example, if the model will recieve data with dimension i, then the coords dictionary should
-    provide a mapping from "i" to a list of labels for the dimension i. For example, {"i": ["Agriculture", "Industry",
-    "Service"]}.
-
-    When considering the "squareness" of a model, the "unpacked" dimensions of the variables and equations are
-    considered. Therefore, it may not be the case that the number of variables declared is equal to the number of
-    equations declared.
-
-    """
-
     def __init__(
         self,
         coords: Optional[dict[str, list[str, ...]]] = None,
@@ -158,8 +86,83 @@ class CGEModel:
         backend: Optional[Literal["pytensor", "numba"]] = "numba",
         mode: Optional[str] = None,
         inverse_method: str = "solve",
-        compile=True,
+        compile: list[CompiledFunctions] | None = "all",
+        use_scan_euler: bool = True,
     ):
+
+        """
+        This class represents a CGE model. It is the main interface for interacting with the model.
+
+        Parameters
+        ----------
+        coords: dict[str, Sequence[str]]
+            A dictionary of dimension names and labels associated with each dimension. For example, if certain objects in
+            the model are indexed by "sector", then coords should contain a key "sector" with a list of sector labels as
+            values: {"sector": ["Agriculture", "Industry", "Service"]}.
+
+        variables: list of Variables
+            A list of endogenous variables associated with the model. These will be solved for during simulation.
+
+        parameters: list of Parameters
+            A list of parameters associated with the model. These are fixed during simulation. Note that exogenous variables
+            should be included as parameters.
+
+        equations: list of Equations
+            A list of equations associated with the model. These define relationships between the variables and parameters.
+
+        numeraire: Variable, optional
+            The numéraire variable. If supplied, the numéraire will be removed from the model, and all instances of the
+            numéraire in model equations will be set to 1.
+            NOTE: It is not currently recommended to use this feature. Instead, add an equation to the model
+                  fixing the numéraire variable to 1.
+
+        parse_equations_to_sympy: bool, optional
+            If True, the equations will be parsed to sympy expressions. This is required for the model to be compiled to
+            the "numba" backend. If False, the equations will be converted to symbolic pytensor expressions.
+            This is required for the model to be compiled to the "pytensor" backend. Defaults to True.
+
+        backend: str, optional
+            Computational backend to compile the model to. One of "pytensor" or "numba". Defaults to "numba".
+
+        mode: str, optional
+            Compilation mode for the pytensor backend. One of None, "JAX", or "NUMBA". Defaults to None. Note that this
+            argument is ignored if the backend is not "pytensor".
+
+        inverse_method: str, optional
+            Method to use to compute the inverse of the Jacobian matrix. One of "solve", "pinv", or "SGD".
+            Defaults to "solve". Ignored if the backend is not "pytensor".
+
+        compile: bool, optional
+            Whether to compile the model during initialization. Defaults to True.
+
+
+        Notes
+        -----
+        Computable General Equilibrium models are used to study the change in economic equilibria following shifts in model
+        parameters. The purpose of this class is to provide an organized framework for declaring and studying this class
+        of models.
+
+        At it's most basic, a CGE model is comprised of three types of objects: variables, parameters, and equations. Each
+        of these should declared separately using the appropriate object type. For example, to declare a variable, use the
+        Variable class. Distinction between variables and parameters is enforced to check that the model is square (there
+        are as many equations as there are variables), and to determine which objects to solve for during simulation.
+
+        Another important job of a model is to hold information about the dimensions of the model. Variables and parameters
+        are declared with abstract indices, called dims. This is meant to match the notation used in the literature. For
+        example, a variable representing the demand for capital in sector i would be written as ..math :: K_{d,i}. To
+        represent this in a CGE model, we would declare a Variable with name "K_d" and dims "i". The dims on the Variable
+        are arbitrary, but become concrete when placed in the context of a model. Therefore, the model must be supplied with
+        a dictionary of dimension names and labels, called "coordinates" in packages for multi-dimensional array handing
+        (e.g. xArray). For example, if the model will recieve data with dimension i, then the coords dictionary should
+        provide a mapping from "i" to a list of labels for the dimension i. For example, {"i": ["Agriculture", "Industry",
+        "Service"]}.
+
+        When considering the "squareness" of a model, the "unpacked" dimensions of the variables and equations are
+        considered. Therefore, it may not be the case that the number of variables declared is equal to the number of
+        equations declared.
+
+        """
+
         self.numeraire = None
         self.coords: dict[str, list[str, ...]] = {} if coords is None else coords
         self.parse_equations_to_sympy = parse_equations_to_sympy
@@ -199,7 +202,7 @@ class CGEModel:
 
         self.scenarios: dict[str, Result] = {}
 
-        self._compiled: bool = False
+        self._compiled: list[str] = []
         self._compile_backend: Optional[Literal["pytensor", "numba"]] = None
 
         self.f_system: Optional[Callable] = None
@@ -209,10 +212,30 @@ class CGEModel:
         self.f_jac: Optional[Callable] = None
         self.f_dX: Optional[Callable] = None
 
-        if compile:
-            _log.info(f"Beginning compilation in {mode} mode")
-            self._compile(backend=backend, mode=mode, inverse_method=inverse_method)
+        if compile is not None:
+            if compile in ["all", True]:
+                compile = ["root", "minimize", "euler"]
+            else:
+                compile = [compile] if not isinstance(compile, list) else compile
+
+            compile = cast(list[CompiledFunctions], compile)
+            msg = f"Beginning compilation using {backend} backend"
+            if backend == "pytensor":
+                text_mode = "C (FAST_RUN)" if mode is None else mode
+                msg += f" using {text_mode} mode"
+
+            _log.info(msg)
+            self._compile(
+                backend=backend,
+                mode=mode,
+                inverse_method=inverse_method,
+                functions_to_compile=compile,
+                use_scan_euler=use_scan_euler,
+            )
             self.mode = mode
+
+        else:
+            _log.info("Model equations parsed and loaded. Skipping model compilation")
 
     def check_initialization(self):
         if self.n_variables != self.n_equations:
@@ -575,61 +598,71 @@ class CGEModel:
 
         return out
 
-    def _compile_numba(self):
+    def _euler_wrapper(self, f_dX, *, theta_final, n_steps, mode=None, **data):
+        x0 = np.concatenate([np.atleast_1d(data[x]).ravel() for x in self.variable_names], axis=0)
+        theta0 = np.concatenate(
+            [np.atleast_1d(data[x]).ravel() for x in self.parameter_names], axis=0
+        )
+
+        with NumbaProgressBar(total=n_steps) as progress:
+            result = euler_approx(f_dX, x0, theta0, theta_final, n_steps, progress)
+        # Decompose the result back to a list of numpy arrays
+        shapes = [
+            infer_object_shape_from_coords(x, self.coords) for x in self.variables + self.parameters
+        ]
+        out = []
+        cursor = 0
+        for shape in shapes:
+            s = int(np.prod(shape))
+            out.append(result[:, cursor : cursor + s].reshape(-1, *shape))
+            cursor += s
+
+        return out
+
+    def get_unpacked_parent_object(self, name):
+        if name in self.unpacked_variable_names:
+            return self._unpacked_variables[name]["modelobj"]
+        elif name in self.unpacked_parameter_names:
+            return self._unpacked_parameters[name]["modelobj"]
+        else:
+            raise ValueError(f"Object {name} not found in model")
+
+    def _compile_numba(self, functions_to_compile: list[CompiledFunctions]):
         equations = self.unpacked_equation_symbols
         variables = self.unpacked_variable_symbols
         parameters = self.unpacked_parameter_symbols
 
-        # Symbolically compute loss function and derivatives
-        resid = sum(eq**2 for eq in equations)
-        grad = sp.Matrix([resid.diff(x) for x in variables])
-        hess = grad.jacobian(variables)
-
-        # Compute Jacobian of the nonlinear system
-        jac = sp.Matrix(equations).jacobian(variables)
-
-        # Functions used by optimize.root to directly solve the system of equations
-        self.f_system = numba_lambdify(
-            variables, sp.Matrix(equations), parameters, ravel_outputs=True
-        )
-        self.f_jac = numba_lambdify(variables, jac, parameters)
-
-        # Functions used by optimize.minimize to solve the system of equations by minimizing the loss function
-        # Save these as member functions so they can be reused by optimizers
-        self.f_resid = numba_lambdify(variables, resid, parameters)
-        self.f_grad = numba_lambdify(variables, grad, parameters, ravel_outputs=True)
-        self.f_hess = numba_lambdify(variables, hess, parameters)
-
-        # Compile the one-step linear approximation function used by the iterative Euler approximation
-        # We don't need to save this because it's only used internally by the euler_approx function
-        f_dX = numba_linearize_cge_func(equations, variables, parameters)
-
-        def euler_wrapper(*, theta_final, n_steps, mode=None, **data):
-            x0 = np.concatenate(
-                [np.atleast_1d(data[x]).ravel() for x in self.variable_names], axis=0
-            )
-            theta0 = np.concatenate(
-                [np.atleast_1d(data[x]).ravel() for x in self.parameter_names], axis=0
+        if "root" in functions_to_compile:
+            # Functions used by optimize.root to directly solve the system of equations
+            self.f_system = numba_lambdify(
+                variables, sp.Matrix(equations), parameters, ravel_outputs=True
             )
 
-            with NumbaProgressBar(total=n_steps) as progress:
-                result = euler_approx(f_dX, x0, theta0, theta_final, n_steps, progress)
-            # Decompose the result back to a list of numpy arrays
-            shapes = [
-                infer_object_shape_from_coords(x, self.coords)
-                for x in self.variables + self.parameters
-            ]
-            out = []
-            cursor = 0
-            for shape in shapes:
-                s = int(np.prod(shape))
-                out.append(result[:, cursor : cursor + s].reshape(-1, *shape))
-                cursor += s
+            # Compute Jacobian of the nonlinear system
+            jac = sp.Matrix(equations).jacobian(variables)
 
-            return out
+            self.f_jac = numba_lambdify(variables, jac, parameters)
 
-        self.f_euler = euler_wrapper
-        self._compiled = True
+        if "minimize" in functions_to_compile:
+            # Symbolically compute loss function and derivatives
+            resid = sum(eq**2 for eq in equations)
+            grad = sp.Matrix([resid.diff(x) for x in variables])
+            hess = grad.jacobian(variables)
+
+            # Functions used by optimize.minimize to solve the system of equations by minimizing the loss function
+            # Save these as member functions so they can be reused by optimizers
+            self.f_resid = numba_lambdify(variables, resid, parameters)
+            self.f_grad = numba_lambdify(variables, grad, parameters, ravel_outputs=True)
+            self.f_hess = numba_lambdify(variables, hess, parameters)
+
+        if "euler" in functions_to_compile:
+            # Compile the one-step linear approximation function used by the iterative Euler approximation
+            # We don't need to save this because it's only used internally by the euler_approx function
+            f_dX = numba_linearize_cge_func(equations, variables, parameters)
+
+            self.f_euler = ft.partial(self._euler_wrapper, f_dX)
+
+        self._compiled = functions_to_compile
 
     def __pytensor_euler_helper(self, *args, n_steps=100, **kwargs):
         if n_steps == self.__last_n_steps:
@@ -645,65 +678,114 @@ class CGEModel:
             )
             return self.__compiled_f_euler(*args, **kwargs)
 
-    def _compile_pytensor(self, mode, inverse_method="solve"):
+    def _compile_pytensor(
+        self,
+        mode,
+        functions_to_compile: list[CompiledFunctions],
+        inverse_method: Literal["solve", "pinv", "svd"] = "solve",
+        sparse: bool = False,
+        use_scan_euler: bool = True,
+    ):
+
+        _log.info(f"Compiling model equations into pytensor graph")
         (variables, parameters), (system, jac, jac_inv, B) = compile_cge_model_to_pytensor(
-            self, inverse_method=inverse_method
+            self, inverse_method=inverse_method, sparse=sparse
         )
         inputs = variables + parameters
+        text_mode = "C" if mode is None else mode
 
-        _log.info(f"Compiling CGE equations into {mode} function")
-        f_system = pytensor.function(inputs=inputs, outputs=system, mode=mode)
+        jac_inputs = get_required_inputs(jac)
 
-        _log.info(f"Compiling Jacobian equations into {mode} function")
-        f_jac = pytensor.function(inputs=inputs, outputs=jac, mode=mode)
+        if "root" in functions_to_compile:
+            _log.info(f"Compiling CGE equations into {text_mode} function")
+            f_system = pytensor.function(
+                inputs=inputs, outputs=system, mode=mode, on_unused_input="raise"
+            )
+            f_system.trust_inputs = True
 
-        _log.info(f"Computing sum of squared errors")
-        resid = (system**2).sum()
+            _log.info(f"Compiling Jacobian equations into {text_mode} function")
 
-        _log.info(f"Computing SSE gradient")
-        grad = pytensor.grad(resid, variables)
-        grad = pt.specify_shape(
-            pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]), self.n_variables
-        )
+            # It's possible that certain variables/parameters don't influence the jacobian at all (for example if they
+            # enter as additive constants in the equations). In this case, we still want to be able to pass them as
+            # inputs, but they will be unused.
+            f_jac = pytensor.function(
+                inputs=inputs, outputs=jac, mode=mode, on_unused_input="ignore"
+            )
+            f_jac.trust_inputs = True
 
-        _log.info(f"Computing SSE Jacobian")
-        hess = make_jacobian(grad, variables)
+            if mode in ["JAX", "NUMBA"]:
+                _f_system = f_system.copy()
+                _f_jac = f_jac.copy()
 
-        _log.info(f"Compiling SSE functions (sse, gradient, jacobian) into {mode} function")
-        f_root = pytensor.function(inputs=inputs, outputs=[resid, grad, hess], mode=mode)
+                def f_system(*args, **kwargs):
+                    [x] = _f_system.vm.jit_fn(*args, **kwargs)
+                    return np.asarray(x)
 
-        if mode in ["JAX", "NUMBA"]:
-            # In JAX and NUMBA modes, pytensor puts a bunch of extra overhead around the (fast!) jitted functions.
-            # We can strip that all away by using the jit_fn direction.
-            self.f_system = lambda *args, **kwargs: np.array(f_system.vm.jit_fn(*args, **kwargs)[0])
-            self.f_jac = lambda *args, **kwargs: np.array(f_jac.vm.jit_fn(*args, **kwargs)[0])
-            self.f_root = lambda *args, **kwargs: np.array(f_root.vm.jit_fn(*args, **kwargs)[0])
-        else:
-            self.f_system = f_system
-            self.f_jac = f_jac
+                def f_jac(*args, **kwargs):
+                    [x] = _f_jac.vm.jit_fn(*args, **kwargs)
+                    return np.asarray(x)
 
-        def f_resid(**kwargs):
-            return f_root(**kwargs)[0]
+                self.f_system = f_system
+                self.f_jac = f_jac
 
-        def f_grad(**kwargs):
-            return f_root(**kwargs)[1]
+            else:
+                self.f_system = f_system
+                self.f_jac = f_jac
 
-        def f_hess(**kwargs):
-            return f_root(**kwargs)[2]
+        if "minimize" in functions_to_compile:
+            _log.info(f"Computing sum of squared errors")
+            resid = (system**2).sum()
 
-        self.f_resid = f_resid
-        self.f_grad = f_grad
-        self.f_hess = f_hess
+            _log.info(f"Computing SSE gradient")
+            grad = pytensor.grad(resid, variables)
+            grad = pt.specify_shape(
+                pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]), self.n_variables
+            )
 
-        self.__last_n_steps = 0
-        self.f_euler = self.__pytensor_euler_helper
-        self._compiled = True
+            _log.info(f"Computing SSE Jacobian")
+            hess = make_jacobian(grad, variables)
+
+            _log.info(
+                f"Compiling SSE functions (sse, gradient, jacobian) into {text_mode} function"
+            )
+            f_root = pytensor.function(inputs=inputs, outputs=[resid, grad, hess], mode=mode)
+            f_root.trust_inputs = True
+
+            if mode in ["JAX", "NUMBA"]:
+                # In JAX and NUMBA modes, pytensor puts a bunch of extra overhead around the (fast!) jitted functions.
+                # We can strip that all away by using the jit_fn direction.
+                _f_root = f_root.copy()
+
+                def f_root(*args, **kwargs):
+                    [resid, grad, hess] = _f_root.vm.jit_fn(*args, **kwargs)
+                    return np.asarray(resid), np.asarray(grad), np.asarray(hess)
+
+            def f_resid(**kwargs):
+                return f_root(**kwargs)[0]
+
+            def f_grad(**kwargs):
+                return f_root(**kwargs)[1]
+
+            def f_hess(**kwargs):
+                return f_root(**kwargs)[2]
+
+            self.f_resid = f_resid
+            self.f_grad = f_grad
+            self.f_hess = f_hess
+
+        if "euler" in functions_to_compile:
+            self.__last_n_steps = 0
+            self.f_euler = self.__pytensor_euler_helper
+
+        self._compiled = functions_to_compile
 
     def _compile(
         self,
         backend: Optional[Literal["pytensor", "numba"]] = "pytensor",
         mode=None,
         inverse_method="solve",
+        functions_to_compile: list[CompiledFunctions] = "all",
+        use_scan_euler: bool = True,
     ):
         """
         Compile the model to a backend.
@@ -717,15 +799,47 @@ class CGEModel:
         inverse_method: str
             The method to use to compute the inverse of the Jacobian. One of "solve", "pinv", or "svd".
             Defaults to "solve". Ignored if mode is not 'pytensor'
+        functions_to_compile: list of str
+            A list of functions to compile. Valid choices are 'root', 'minimum', 'euler', or 'all'. Defaults to 'all'.
+        use_scan_euler: bool
+            Whether to directly compile the loop over iterations of the euler approximation using pytensor's scan Op.
+            If False, the inner function will be compiled, but the outer loop will be done in Python. Defaults to True.
+            Ignored if backend is not 'pytensor'.
 
         Returns
         -------
         None
         """
+        if functions_to_compile is None or not functions_to_compile:
+            _log.info("Skipping model compilation")
+            return
+
+        if functions_to_compile in ["all", True]:
+            functions_to_compile = ["root", "minimize", "euler"]
+        functions_to_compile = (
+            [functions_to_compile]
+            if not isinstance(functions_to_compile, list)
+            else functions_to_compile
+        )
+        functions_to_compile = cast(list[CompiledFunctions], functions_to_compile)
+
+        if all([fn in self._compiled for fn in functions_to_compile]):
+            _log.info(f"Model already compiled with {functions_to_compile} functions")
+            return
+
+        else:
+            functions_to_compile = [fn for fn in functions_to_compile if fn not in self._compiled]
+            _log.info(f"Compiling model with {functions_to_compile} functions")
+
         if backend == "numba":
-            self._compile_numba()
+            self._compile_numba(functions_to_compile=functions_to_compile)
         elif backend == "pytensor":
-            self._compile_pytensor(mode=mode, inverse_method=inverse_method)
+            self._compile_pytensor(
+                mode=mode,
+                inverse_method=inverse_method,
+                functions_to_compile=functions_to_compile,
+                use_scan_euler=use_scan_euler,
+            )
         else:
             raise NotImplementedError(
                 f'Only "numba" and "pytensor" backends are supported, got {backend}'
@@ -829,7 +943,7 @@ class CGEModel:
         if not self._compile_backend == "pytensor":
             raise ValueError('Can only create an fgraph when mode is "pytensor"')
 
-        flat_equations, variables, parameters = pytensor_objects_from_CGEModel(self)
+        flat_equations, variables, parameters, _ = pytensor_objects_from_CGEModel(self)
         theta_final, result = euler_approximation(
             flat_equations, variables, parameters, n_steps=n_steps
         )
@@ -849,6 +963,9 @@ class CGEModel:
         progressbar=True,
         **optimizer_kwargs,
     ):
+        if "root" not in self._compiled:
+            raise ValueError("Root finding functions have not been compiled.")
+
         f_system = self.f_system
         f_jac = self.f_jac
         free_variables = self.variables
@@ -870,10 +987,6 @@ class CGEModel:
 
             f_system = wrap_pytensor_func_for_scipy(f_system, free_variables, parameters, coords)
             f_jac = wrap_pytensor_func_for_scipy(f_jac, free_variables, parameters, coords)
-        elif self._compile_backend not in ["numba", "pytensor"]:
-            raise ValueError(
-                "Model must be compiled to a computational backend before it can be solved."
-            )
 
         x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
@@ -904,6 +1017,9 @@ class CGEModel:
         fixed_values: Optional[dict[str, Union[int, float, np.ndarray]]] = None,
         **optimizer_kwargs,
     ):
+        if "minimize" not in self._compiled:
+            raise ValueError("Minimization functions have not been compiled.")
+
         f_resid = self.f_resid
         f_grad = self.f_grad
         f_hess = self.f_hess
@@ -929,11 +1045,6 @@ class CGEModel:
             f_resid = wrap_pytensor_func_for_scipy(f_resid, free_variables, parameters, coords)
             f_grad = wrap_pytensor_func_for_scipy(f_grad, free_variables, parameters, coords)
             f_hess = wrap_pytensor_func_for_scipy(f_hess, free_variables, parameters, coords)
-
-        elif self._compile_backend not in ["numba", "pytensor"]:
-            raise ValueError(
-                "Model must be compiled to a computational backend before it can be solved."
-            )
 
         x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
@@ -1142,7 +1253,14 @@ class CGEModel:
         """
         if not self._compiled:
             if compile_kwargs is None:
-                compile_kwargs = {}
+                to_compile = []
+                if use_euler_approximation:
+                    to_compile.append("euler")
+                if use_optimizer:
+                    to_compile.append(optimizer_mode)
+
+                compile_kwargs = {"functions_to_compile": to_compile}
+
             self._compile(**compile_kwargs)
 
         if isinstance(initial_state, Result):

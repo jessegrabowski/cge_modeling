@@ -88,7 +88,7 @@ def make_indexed_name(obj: ModelObject, delimiter="_") -> str:
         The name of the object with the index values appended, separated by the delimiter.
     """
 
-    return "_".join([obj.name] + list(obj.dim_vals.values()))
+    return "_".join([obj.name] + list(map(str, obj.dim_vals.values())))
 
 
 def indexed_variable_to_sympy_symbol(obj: ModelObject) -> sp.Symbol:

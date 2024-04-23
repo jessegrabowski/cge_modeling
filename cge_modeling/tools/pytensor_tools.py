@@ -1,9 +1,13 @@
-from typing import Any, Sequence, Union, cast
+from typing import Any, Literal, Sequence, Union, cast
 
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
 import sympy as sp
+from pytensor.compile.sharedvalue import SharedVariable
+from pytensor.graph.basic import graph_inputs
+from pytensor.tensor.basic import Constant
+from sympytensor import as_tensor
 
 from cge_modeling.base.primitives import Parameter, Variable
 
@@ -60,22 +64,22 @@ def make_printer_cache(variables: list[pt.TensorLike], parameters: list[pt.Tenso
     ----------
     cge_model: CGEModel
         CGEModel object
-    variables: list[pytensor.tensor.TensorVariable]
+    variables: list of TensorVariable
         List of cge_model variables, converted to symbolic pytensor tensors
-    parameters: list[pytensor.tensor.TensorVariable]
+    parameters: list of TensorVariable
         List of cge_model parameters, converted to symbolic pytensor tensors
 
     Returns
     -------
-    cache: dict[tuple[str, sp.Symbol, tuple, str, tuple], pt.TensorLike]
+    cache: dict
         A cache of variables used to print equations to pytensor
     """
 
-    def make_key(name) -> tuple:
-        return name, sp.Symbol, (), "floatX", ()
+    def make_key(var) -> tuple:
+        return var.name, sp.Symbol, (), "floatX", ()
 
-    cache = {make_key(var.name): var for var in variables + parameters}
-    return cast(dict, cache)
+    cache = {make_key(var): var for var in variables + parameters}
+    return cache
 
 
 def flatten_equations(eqs: list[pt.TensorLike]) -> pt.TensorLike:
@@ -113,6 +117,62 @@ def flatten_equations(eqs: list[pt.TensorLike]) -> pt.TensorLike:
     )
     flat_expr = pt.specify_shape(flat_expr, shape=(expr_len,))
     return flat_expr
+
+
+def unpacked_graph_to_packed_graph(unpacked_graph, cge_model, cache, unpacked_cache):
+    pt_vars = list(cache.values())
+    cache_var_names = list(x[0] for x in cache.keys())
+    unpacked_to_indexed_dict = {}
+
+    for info, var in unpacked_cache.items():
+        name, *_ = info  # info is a tuple of (name, sympy_class, broadcastable, dtype, shape)
+        parent_obj = cge_model.get_unpacked_parent_object(name)
+        parent_pt = pt_vars[cache_var_names.index(parent_obj.base_name)]
+
+        # Map named indices to integer indices
+        dims = parent_obj.dims
+        dim_idx = [cge_model.coords[dim].index(parent_obj.dim_vals[dim]) for dim in dims]
+
+        if len(dim_idx) == 0:
+            unpacked_to_indexed_dict[var] = parent_pt
+            continue
+
+        # Index the parent object with the integer indices
+        indexed_parent = parent_pt[tuple(dim_idx)]
+        name = f"{parent_pt.name}"
+        name += f'[{", ".join([str(x) for x in dim_idx])}]' if len(dim_idx) > 0 else ""
+
+        indexed_parent.name = name
+        unpacked_to_indexed_dict[var] = indexed_parent
+
+    # Replace the unpacked variables with the indexed variables
+    packed_graph = pytensor.clone_replace(unpacked_graph, unpacked_to_indexed_dict)
+
+    return packed_graph
+
+
+def make_jacobian_from_sympy(
+    cge_model,
+    cache,
+    unpacked_cache,
+    wrt: Literal["variables", "parameters"] = "variables",
+    sparse=False,
+) -> pt.TensorVariable:
+    if sparse:
+        raise NotImplementedError
+
+    equations = cge_model.unpacked_equation_symbols
+    variables = cge_model.unpacked_variable_symbols
+    parameters = cge_model.unpacked_parameter_symbols
+
+    eq_vec = sp.Matrix(equations)
+
+    jac = eq_vec.jacobian(variables) if wrt == "variables" else eq_vec.jacobian(parameters)
+    unpacked_jac = as_tensor(jac, cache=unpacked_cache)
+
+    packed_jac = unpacked_graph_to_packed_graph(unpacked_jac, cge_model, cache, unpacked_cache)
+
+    return packed_jac
 
 
 def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike]) -> pt.TensorLike:
@@ -189,3 +249,15 @@ def clone_and_rename(x: pt.TensorVariable, suffix: str = "_next") -> pt.TensorVa
     x_new = x.clone()
     x_new.name = f"{x.name}{suffix}"
     return x_new
+
+
+def get_required_inputs(graph):
+    if not isinstance(graph, list):
+        graph = [graph]
+
+    return [
+        v
+        for v in graph_inputs(graph)
+        if isinstance(v, pt.TensorVariable)
+        and not isinstance(v, pt.TensorConstant | SharedVariable)
+    ]

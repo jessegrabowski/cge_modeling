@@ -16,9 +16,12 @@ from cge_modeling.tools.pytensor_tools import (
     at_least_list,
     clone_and_rename,
     flatten_equations,
+    get_required_inputs,
     make_jacobian,
+    make_jacobian_from_sympy,
     make_printer_cache,
     object_to_pytensor,
+    unpacked_graph_to_packed_graph,
 )
 from cge_modeling.tools.sympy_tools import (
     make_dummy_sub_dict,
@@ -30,22 +33,42 @@ _log = logging.getLogger(__name__)
 
 def pytensor_objects_from_CGEModel(cge_model):
     n_eq = len(cge_model.unpacked_variable_names)
-    variables = [object_to_pytensor(var, cge_model.coords) for var in cge_model.variables]
-    parameters = [object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters]
-    n_variables = len(variables)
+    variables = sorted(
+        (object_to_pytensor(var, cge_model.coords) for var in cge_model.variables),
+        key=lambda x: x.name,
+    )
+    parameters = sorted(
+        (object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters),
+        key=lambda x: x.name,
+    )
 
     cache = make_printer_cache(variables, parameters)
-
+    unpacked_cache = {}
     _log.info("Converting equations to pytensor graphs")
+
     if cge_model.parse_equations_to_sympy:
-        remove_index_subs = make_dummy_sub_dict(cge_model)
-        substituted_equations = replace_indexed_variables(cge_model.equations, remove_index_subs)
-        pytensor_equations = [as_tensor(eq, cache=cache) for eq in substituted_equations]
+        # This will be a flat list of equations with a unique variable for each unpacked object
+        # We want to rewrite this graph so that it will accept the packed array inputs (held in the cache dictionary)
+        pytensor_equations = [
+            as_tensor(eq, cache=unpacked_cache) for eq in cge_model.unpacked_equation_symbols
+        ]
+
+        # We need to replace the indexed variables with the unpacked variables
+        pytensor_equations = unpacked_graph_to_packed_graph(
+            pytensor_equations, cge_model, cache, unpacked_cache
+        )
+        flat_equations = pt.stack(pytensor_equations)
+
     else:
         cache = {k[0]: v for k, v in cache.items()}
-        pytensor_equations = [eval(normalize_eq(eq.equation), cache) for eq in cge_model.equations]
 
-    flat_equations = flatten_equations(pytensor_equations)
+        # Copy the cache to call with eval, otherwise python will add a bunch of global environment variables to it
+        eval_cache = cache.copy()
+        pytensor_equations = [
+            eval(normalize_eq(eq.equation), eval_cache) for eq in cge_model.equations
+        ]
+        flat_equations = flatten_equations(pytensor_equations)
+
     flat_equations = pt.specify_shape(flat_equations, (n_eq,))
     flat_equations.name = "equations"
 
@@ -65,14 +88,29 @@ def pytensor_objects_from_CGEModel(cge_model):
     fg = FunctionGraph(variables + parameters, outputs=[flat_equations])
     add_no_zeros.rewrite(fg)
     flat_equations = fg.outputs[0]
-    variables, parameters = fg.inputs[:n_variables], fg.inputs[n_variables:]
 
-    return flat_equations, variables, parameters
+    eq_inputs = get_required_inputs(flat_equations)
+    fg_vars = sorted(
+        (x for x in eq_inputs if x.name in cge_model.variable_names), key=lambda x: x.name
+    )
+    fg_params = sorted(
+        (x for x in eq_inputs if x.name in cge_model.parameter_names), key=lambda x: x.name
+    )
+
+    update_dict = dict(zip(variables, fg_vars)) | dict(zip(parameters, fg_params))
+
+    # The fgraph creates new symbolic variables -- these need to be saved in the cache so all future functions refer
+    # to the correct variables.
+    # The unpacked cache does not need to be updated because its variables haven't been through rewriting yet.
+    cache = {k: update_dict.get(v, None) for k, v in cache.items()}
+
+    return flat_equations, fg_vars, fg_params, (cache, unpacked_cache)
 
 
 def compile_cge_model_to_pytensor(
     cge_model,
     inverse_method: Literal["solve", "pinv", "svd"] = "solve",
+    sparse=False,
 ) -> tuple[tuple[list, list], tuple[pt.TensorLike, pt.TensorLike, pt.TensorLike, pt.TensorLike]]:
     """
     Compile a CGE model to a PyTensor function.
@@ -84,6 +122,8 @@ def compile_cge_model_to_pytensor(
     inverse_method: str, optional
         The method to use to compute the inverse of the Jacobian. One of "solve", "pinv", or "svd". Defaults to "solve".
         Note that if svd is chosen, gradients for autodiff will not be available.
+    sparse: bool, optional
+        Whether to use sparse matrices for the Jacobian and its inverse. Defaults to False.
 
     Returns
     -------
@@ -113,16 +153,54 @@ def compile_cge_model_to_pytensor(
             The shape of the matrix is (n_eq, n_params), where n_eq is the number of *unrolled* equations in the system
             of equations and n_params is the number of *unrolled* parameters in the system of equations.
     """
-    flat_equations, variables, parameters = pytensor_objects_from_CGEModel(cge_model)
+    (
+        flat_equations,
+        variables,
+        parameters,
+        sympy_to_pytensor_caches,
+    ) = pytensor_objects_from_CGEModel(cge_model)
+    cache, unpacked_cache = sympy_to_pytensor_caches
+
     n_eq = flat_equations.type.shape[0]
     inputs = (variables, parameters)
 
-    _log.info("Computing Jacobian")
-    jac = make_jacobian(flat_equations, variables)
-    jac.name = "jacobian"
+    assert all([x in cache.values() for x in inputs[0] + inputs[1]])
 
-    _log.info("Computing B matrix (derivatives w.r.t parameters)")
-    B = make_jacobian(flat_equations, parameters)
+    required_inputs = get_required_inputs(flat_equations)
+    missing_inputs = set(required_inputs) - set(variables + parameters)
+    extra_inputs = set(variables + parameters) - set(required_inputs)
+
+    if missing_inputs:
+        raise ValueError(
+            f"Cannot compile pytensor graph because the following inputs are missing: {missing_inputs}"
+        )
+    if extra_inputs:
+        raise ValueError(
+            f"Cannot compile pytensor graph because the following inputs are extraneous: {extra_inputs}"
+        )
+
+    if cge_model.parse_equations_to_sympy:
+        _log.info("Computing Jacobian")
+        jac = make_jacobian_from_sympy(
+            cge_model, wrt="variables", sparse=sparse, cache=cache, unpacked_cache=unpacked_cache
+        )
+
+        jac_inputs = get_required_inputs(jac)
+        assert all([x in cache.values() for x in jac_inputs])
+
+        _log.info("Computing B matrix (derivatives w.r.t parameters)")
+        B = make_jacobian_from_sympy(
+            cge_model, wrt="parameters", sparse=sparse, cache=cache, unpacked_cache=unpacked_cache
+        )
+
+    else:
+        _log.info("Computing Jacobian")
+        jac = make_jacobian(flat_equations, variables)
+
+        _log.info("Computing B matrix (derivatives w.r.t parameters)")
+        B = make_jacobian(flat_equations, parameters)
+
+    jac.name = "jacobian"
     B.name = "B"
 
     _log.info("Inverting jacobian")
@@ -308,6 +386,10 @@ def euler_approximation(
     return theta_final, final_result
 
 
+def compile_inner_euler_approximation_function(equations, variables, parameters, mode=None):
+    pass
+
+
 def compile_euler_approximation_function(equations, variables, parameters, n_steps=100, mode=None):
 
     theta_final, result = euler_approximation(equations, variables, parameters, n_steps=n_steps)
@@ -315,11 +397,22 @@ def compile_euler_approximation_function(equations, variables, parameters, n_ste
     inputs = variables + parameters + [theta_final]
 
     f_euler = pytensor.function(inputs, result, mode=mode)
+    f_euler.trust_inputs = True
+
+    if mode in ["NUMBA", "JAX"]:
+        _f_euler = f_euler.copy()
+
+        def f_euler(*args, **kwargs):
+            x = _f_euler.vm.jit_fn(*args, **kwargs)
+            return list(map(np.asarray, x))
+
     return f_euler
 
 
 def euler_approximation_from_CGEModel(cge_model, n_steps=100, mode=None):
-    flat_equations, variables, parameters = pytensor_objects_from_CGEModel(cge_model)
+    flat_equations, variables, parameters, sympy_to_pytensor_dicts = pytensor_objects_from_CGEModel(
+        cge_model
+    )
     return compile_euler_approximation_function(
         flat_equations, variables, parameters, n_steps=n_steps, mode=mode
     )
