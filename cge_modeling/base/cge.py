@@ -853,6 +853,12 @@ class CGEModel:
         f_jac = self.f_jac
         free_variables = self.variables
 
+        use_hess = optimizer_kwargs.pop("use_hess", None)
+        if use_hess is not None:
+            _log.warning(
+                'The "use_hess" argument is not used by the root optimizer and will be ignored.'
+            )
+
         if fixed_values is not None:
             if any(x in self.parameter_names for x in fixed_values.keys()):
                 raise ValueError(
@@ -908,6 +914,10 @@ class CGEModel:
         f_grad = self.f_grad
         f_hess = self.f_hess
         free_variables = self.variables
+
+        if not use_jac and use_hess:
+            use_hess = False
+            _log.warning("use_hess is ignored when use_jac=False. Setting use_hess=False.")
 
         if fixed_values is not None:
             if any(x in self.parameter_names for x in fixed_values.keys()):
