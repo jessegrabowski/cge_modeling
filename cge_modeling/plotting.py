@@ -1,10 +1,13 @@
-from typing import Optional, Union
+from itertools import product
+from typing import Literal, Optional, Union, cast
 
 import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib.colors import Colormap
 from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import PercentFormatter
 
 from cge_modeling import CGEModel
 
@@ -59,6 +62,9 @@ def plot_lines(
     initial_values: Optional[dict[str, np.ndarray]] = None,
     plot_euler: bool = True,
     plot_optimizer: bool = True,
+    rename_dict: dict[str, str] | None = None,
+    legends: bool | list | None = None,
+    cmap: str | None = None,
     **figure_kwargs,
 ) -> plt.Figure:
     """
@@ -81,6 +87,14 @@ def plot_lines(
         Whether to trace the shape of the function in the shock direction using steps from the Euler approximation.
     plot_optimizer: bool, default True
         Whether to plot the final values of each variable found by the optimizer.
+    legends: bool or list, optional
+        Whether to add a legend to the plot. If a list is passed, legends will be added to the variable names in the list.
+        By default, no legends is added.
+    rename_dict : dict[str, str], optional
+        A dictionary mapping the variable names to more descriptive (or human readable) names for the plot.
+    cmap: str, optional
+        Matplotlib colormap, used to color the lines in plots with multiple variables. If None, the default colormap
+        will be used.
     figure_kwargs: dict
         Additional keyword arguments to pass to plt.figure.
 
@@ -91,6 +105,19 @@ def plot_lines(
     """
     if var_names is None:
         var_names = mod.variable_names
+
+    if rename_dict is None:
+        rename_dict = {}
+
+    if legends is None or legends is False:
+        legends = dict.fromkeys(var_names, False)
+    elif legends is True:
+        legends = dict.fromkeys(var_names, True)
+    else:
+        no_legend = set(var_names) - set(legends)
+        legends = dict.fromkeys(legends, True)
+        legends.update(dict.fromkeys(no_legend, False))
+
     n_vars = len(var_names)
     gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_vars)
 
@@ -99,13 +126,26 @@ def plot_lines(
 
     fig = plt.figure(figsize=figsize, dpi=dpi)
 
+    cmap = "tab10" if cmap is None else cmap
+    if cmap in plt.colormaps:
+        f_cmap = lambda n: plt.colormaps[cmap](np.linspace(0, 1, n))
+    elif cmap in plt.color_sequences:
+        f_cmap = lambda n: plt.color_sequences[cmap]
+    else:
+        raise ValueError(f"Colormap {cmap} not found in matplotlib.")
+
     for idx, var in enumerate(var_names):
-        axis = fig.add_subplot(gs[plot_locs[idx]])
         data = idata["euler"].variables[var]
+
+        n_lines = int(np.prod(data.values.shape[1:]))
+        cycler = plt.cycler(color=f_cmap(n_lines))
+        axis = fig.add_subplot(gs[plot_locs[idx]])
+        axis.set_prop_cycle(cycler)
+
         if data.ndim > 2:
             data = data.stack(pair=data.dims[1:])
-        data.plot.line(x="step", ax=axis, add_legend=False)
-        axis.set(title=var, xlabel=None)
+        data.plot.line(x="step", ax=axis, add_legend=legends[var])
+        axis.set(title=rename_dict.get(var, var), xlabel=None)
 
         scatter_grid = np.full(
             int(np.prod(idata["optimizer"].variables[var].shape)),
@@ -211,5 +251,155 @@ def plot_kateplot(
         axis.grid(ls="--", lw=0.5)
         axis.set(title=title)
         squarify.plot(sizes=data, label=pretty_labels, alpha=0.8, ax=axis, color=colors)
+
+    return fig
+
+
+def _compute_bar_data(data, initial_data, metric):
+    if metric == "pct_change":
+        return (data - initial_data) / initial_data
+    elif metric == "change":
+        return data - initial_data
+    elif metric == "abs_change":
+        return np.abs(data - initial_data)
+    elif metric == "final":
+        return data
+    elif metric == "initial":
+        return initial_data
+    elif metric == "final_initial":
+        return data.join(initial_data, lsuffix="_final", rsuffix="_initial")
+    else:
+        raise ValueError(f"Invalid value type: {metric}")
+
+
+def _plot_one_bar(
+    data,
+    initial_data,
+    ax,
+    drop_vars,
+    orientation="v",
+    metric: Literal[
+        "pct_change", "change", "abs_change", "final", "initial", "final_initial"
+    ] = "pct_change",
+    legend=True,
+):
+    try:
+        data = data.to_dataframe().droplevel(level=drop_vars, axis=0)
+        initial_data = initial_data.to_dataframe().droplevel(level=drop_vars, axis=0)
+    except ValueError:
+
+        data = pd.DataFrame([data.to_dict()]).loc[:, ["data", "name"]].set_index("name")
+        initial_data = (
+            pd.DataFrame([initial_data.to_dict()]).loc[:, ["data", "name"]].set_index("name")
+        )
+
+    to_plot = _compute_bar_data(data, initial_data, metric)
+
+    if "step" in to_plot.columns:
+        to_plot = to_plot.drop(columns=["step"])
+
+    if orientation == "v":
+        to_plot.plot.bar(ax=ax, legend=legend)
+    else:
+        to_plot.plot.barh(ax=ax, legend=legend)
+
+    ax.axvline(0, color="black", lw=0.5)
+    if metric == "pct_change":
+        ticker = PercentFormatter(xmax=1.0)
+        if orientation == "v":
+            ax.yaxis.set_major_formatter(ticker)
+        elif orientation == "h":
+            ax.xaxis.set_major_formatter(ticker)
+    ax.tick_params(which="both", labelsize=6)
+    return ax
+
+
+def plot_bar(
+    idata,
+    mod,
+    var_names,
+    initial_values=None,
+    plot_together=False,
+    orientation="v",
+    n_cols=3,
+    coords=None,
+    metric: Literal[
+        "pct_change", "change", "abs_change", "final", "initial", "final_initial"
+    ] = "pct_change",
+    **figure_kwargs,
+):
+    data = None
+    coords = coords if coords is not None else {}
+    coords = {key: value if isinstance(value, list) else [value] for key, value in coords.items()}
+    drop_vars = [var for var in coords.keys() if len(coords[var]) == 1]
+
+    if "optimizer" in idata:
+        data = idata["optimizer"]["variables"][var_names].sel(**coords).drop_vars(drop_vars)
+
+    if "euler" in idata:
+        if data is None:
+            data = (
+                idata["euler"]
+                .isel(step=-1)["variables"][var_names]
+                .sel(**coords)
+                .drop_vars(drop_vars)
+            )
+        if initial_values is None:
+            initial_values = (
+                idata["euler"]
+                .isel(step=0)["variables"][var_names]
+                .sel(**coords)
+                .drop_vars(drop_vars)
+            )
+
+    if data is None:
+        raise ValueError("No data found in InferenceData object.")
+
+    dpi = figure_kwargs.pop("dpi", 144)
+    figsize = figure_kwargs.pop("figsize", (15, 9))
+
+    if var_names is None:
+        var_names = mod.variable_names
+
+    n_vars = len(var_names)
+    if not plot_together:
+        gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_vars)
+        fig = plt.figure(dpi=dpi, figsize=figsize, **figure_kwargs)
+        for idx, var in enumerate(var_names):
+            axis = fig.add_subplot(gs[plot_locs[idx]])
+            axis = _plot_one_bar(
+                data[var],
+                initial_values[var],
+                cast(plt.axis, axis),
+                drop_vars=drop_vars,
+                orientation=orientation,
+                metric=metric,
+            )
+            axis.set(title=var)
+            if metric == "final_initial":
+                l = axis.legend()
+                for text in l.get_texts():
+                    new_text = text.get_text().split("_")[-1].capitalize()
+                    text.set_text(new_text)
+
+    else:
+        var_dims = [
+            [dim for dim in mod.get(var_name).dims if dim not in drop_vars]
+            for var_name in var_names
+        ]
+        if not all([dim == var_dims[0] for dim in var_dims]):
+            msg = "All variables must have the same dimensions to plot together. Found the following: \n"
+            msg += "\n".join(f"{var_name}: {dim}" for var_name, dim in zip(var_names, var_dims))
+            msg += (
+                "\nUse the `coords` argument to select values for dimensions that are not shared across variables, "
+                "or set plot_together=False to plot separately."
+            )
+            raise ValueError(msg)
+        fig, ax = plt.subplots(dpi=dpi, figsize=figsize, **figure_kwargs)
+
+        # labels = [label for label in [make_labels(var_name, mod) for var_name in var_names]]
+        _ = _plot_one_bar(
+            data, initial_values, ax, drop_vars=drop_vars, orientation=orientation, metric=metric
+        )
 
     return fig
