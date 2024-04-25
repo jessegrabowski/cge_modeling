@@ -10,6 +10,7 @@ from pytensor.tensor.basic import Constant
 from sympytensor import as_tensor
 
 from cge_modeling.base.primitives import Parameter, Variable
+from cge_modeling.tools.sympy_tools import sparse_jacobian
 
 
 def object_to_pytensor(obj: Union[Parameter, Variable], coords: dict[str, list[str, ...]]):
@@ -119,7 +120,9 @@ def flatten_equations(eqs: list[pt.TensorLike]) -> pt.TensorLike:
     return flat_expr
 
 
-def unpacked_graph_to_packed_graph(unpacked_graph, cge_model, cache, unpacked_cache):
+def unpacked_graph_to_packed_graph(
+    unpacked_graph: pt.TensorVariable | list[pt.TensorVariable], cge_model, cache, unpacked_cache
+) -> pt.TensorVariable | list[pt.TensorVariable]:
     pt_vars = list(cache.values())
     cache_var_names = list(x[0] for x in cache.keys())
     unpacked_to_indexed_dict = {}
@@ -158,18 +161,23 @@ def make_jacobian_from_sympy(
     wrt: Literal["variables", "parameters"] = "variables",
     sparse=False,
 ) -> pt.TensorVariable:
-    if sparse:
-        raise NotImplementedError
 
     equations = cge_model.unpacked_equation_symbols
     variables = cge_model.unpacked_variable_symbols
     parameters = cge_model.unpacked_parameter_symbols
 
-    eq_vec = sp.Matrix(equations)
+    wrt_symbols = variables if wrt == "variables" else parameters
+    if sparse:
+        jac = sparse_jacobian(equations, wrt_symbols)
+    else:
+        jac = sp.Matrix(equations).jacobian(wrt_symbols)
 
-    jac = eq_vec.jacobian(variables) if wrt == "variables" else eq_vec.jacobian(parameters)
+    if wrt == "variables":
+        cge_model.symbolic_solution_matrices["Jacobian"] = jac
+    else:
+        cge_model.symbolic_solution_matrices["B_matrix"] = jac
+
     unpacked_jac = as_tensor(jac, cache=unpacked_cache)
-
     packed_jac = unpacked_graph_to_packed_graph(unpacked_jac, cge_model, cache, unpacked_cache)
 
     return packed_jac
