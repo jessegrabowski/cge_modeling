@@ -86,6 +86,7 @@ class CGEModel:
         backend: Optional[Literal["pytensor", "numba"]] = "numba",
         mode: Optional[str] = None,
         inverse_method: str = "solve",
+        use_sparse_matrices: bool = False,
         compile: list[CompiledFunctions] | None = "all",
         use_scan_euler: bool = True,
     ):
@@ -132,6 +133,10 @@ class CGEModel:
             Method to use to compute the inverse of the Jacobian matrix. One of "solve", "pinv", or "SGD".
             Defaults to "solve". Ignored if the backend is not "pytensor".
 
+        use_sparse_matrices: bool, optional
+            Whether to use sparse matrices to represent matrices associated with the system (e.g. the Jacobian matrix).
+            Defaults to False. Ignored if the backend is not "pytensor".
+
         compile: bool, optional
             Whether to compile the model during initialization. Defaults to True.
 
@@ -166,6 +171,7 @@ class CGEModel:
         self.numeraire = None
         self.coords: dict[str, list[str, ...]] = {} if coords is None else coords
         self.parse_equations_to_sympy = parse_equations_to_sympy
+        self.sparse = use_sparse_matrices
 
         self._sympy_cache = {}
         self._pytensor_cache = {}
@@ -211,6 +217,8 @@ class CGEModel:
         self.f_hess: Optional[Callable] = None
         self.f_jac: Optional[Callable] = None
         self.f_dX: Optional[Callable] = None
+
+        self.symbolic_solution_matrices = {}
 
         if compile is not None:
             if compile in ["all", True]:
@@ -640,6 +648,7 @@ class CGEModel:
 
             # Compute Jacobian of the nonlinear system
             jac = sp.Matrix(equations).jacobian(variables)
+            self.symbolic_solution_matrices["jacobian"] = jac
 
             self.f_jac = numba_lambdify(variables, jac, parameters)
 
@@ -648,6 +657,10 @@ class CGEModel:
             resid = sum(eq**2 for eq in equations)
             grad = sp.Matrix([resid.diff(x) for x in variables])
             hess = grad.jacobian(variables)
+
+            self.symbolic_solution_matrices["loss_function"] = resid
+            self.symbolic_solution_matrices["gradient"] = grad
+            self.symbolic_solution_matrices["hessian"] = hess
 
             # Functions used by optimize.minimize to solve the system of equations by minimizing the loss function
             # Save these as member functions so they can be reused by optimizers
@@ -658,7 +671,7 @@ class CGEModel:
         if "euler" in functions_to_compile:
             # Compile the one-step linear approximation function used by the iterative Euler approximation
             # We don't need to save this because it's only used internally by the euler_approx function
-            f_dX = numba_linearize_cge_func(equations, variables, parameters)
+            f_dX = numba_linearize_cge_func(self)
 
             self.f_euler = ft.partial(self._euler_wrapper, f_dX)
 
@@ -693,8 +706,6 @@ class CGEModel:
         )
         inputs = variables + parameters
         text_mode = "C" if mode is None else mode
-
-        jac_inputs = get_required_inputs(jac)
 
         if "root" in functions_to_compile:
             _log.info(f"Compiling CGE equations into {text_mode} function")
@@ -781,9 +792,9 @@ class CGEModel:
 
     def _compile(
         self,
-        backend: Optional[Literal["pytensor", "numba"]] = "pytensor",
+        backend: Literal["pytensor", "numba"] | None = "pytensor",
         mode=None,
-        inverse_method="solve",
+        inverse_method: Literal["solve", "pinv", "svd"] = "solve",
         functions_to_compile: list[CompiledFunctions] = "all",
         use_scan_euler: bool = True,
     ):
@@ -839,6 +850,7 @@ class CGEModel:
                 inverse_method=inverse_method,
                 functions_to_compile=functions_to_compile,
                 use_scan_euler=use_scan_euler,
+                sparse=self.sparse,
             )
         else:
             raise NotImplementedError(
@@ -1573,13 +1585,22 @@ def compile_cge_to_numba(
     return (f_resid, f_grad, f_hess), (f_system, f_jac), (variables, parameters)
 
 
-def numba_linearize_cge_func(equations, variables, parameters):
+def numba_linearize_cge_func(model: CGEModel):
     # equations, variables, parameters = expand_compact_system(
     #     compact_equations, compact_variables, compact_params, index_dict
     # )
 
-    A_mat = sp.Matrix([[eq.diff(x) for x in variables] for eq in equations])
+    variables = model.unpacked_variable_symbols
+    parameters = model.unpacked_parameter_symbols
+    equations = model.unpacked_equation_symbols
+
+    if "Jacobian" in model.symbolic_solution_matrices:
+        A_mat = model.symbolic_solution_matrices["Jacobian"].copy()
+    else:
+        A_mat = sp.Matrix([[eq.diff(x) for x in variables] for eq in equations])
+
     B_mat = sp.Matrix([[eq.diff(x) for x in parameters] for eq in equations])
+    model.symbolic_solution_matrices["B_matirx"] = B_mat
 
     sub_dict = {x: sp.Symbol(f"{x.name}_0", **x.assumptions0) for x in variables + parameters}
 

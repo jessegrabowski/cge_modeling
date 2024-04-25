@@ -228,7 +228,7 @@ class _SympyEquation(Equation):
     symbolic_eq: sp.Eq
     _eq: sp.Expr
     _fancy_eq: sp.Eq
-    dims: tuple[str]
+    dims: tuple[str, ...]
     dim_vals: dict[str, str] = field(default_factory=dict)
 
     def __repr__(self):

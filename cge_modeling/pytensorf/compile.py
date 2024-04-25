@@ -33,14 +33,8 @@ _log = logging.getLogger(__name__)
 
 def pytensor_objects_from_CGEModel(cge_model):
     n_eq = len(cge_model.unpacked_variable_names)
-    variables = sorted(
-        (object_to_pytensor(var, cge_model.coords) for var in cge_model.variables),
-        key=lambda x: x.name,
-    )
-    parameters = sorted(
-        (object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters),
-        key=lambda x: x.name,
-    )
+    variables = [object_to_pytensor(var, cge_model.coords) for var in cge_model.variables]
+    parameters = [object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters]
 
     cache = make_printer_cache(variables, parameters)
     unpacked_cache = {}
@@ -85,26 +79,11 @@ def pytensor_objects_from_CGEModel(cge_model):
 
     local_add_no_zeros = SubstitutionNodeRewriter(default_prod_op, new_prod_op)
     add_no_zeros = WalkingGraphRewriter(local_add_no_zeros)
-    fg = FunctionGraph(variables + parameters, outputs=[flat_equations])
+    fg = FunctionGraph(variables + parameters, outputs=[flat_equations], clone=False)
     add_no_zeros.rewrite(fg)
     flat_equations = fg.outputs[0]
 
-    eq_inputs = get_required_inputs(flat_equations)
-    fg_vars = sorted(
-        (x for x in eq_inputs if x.name in cge_model.variable_names), key=lambda x: x.name
-    )
-    fg_params = sorted(
-        (x for x in eq_inputs if x.name in cge_model.parameter_names), key=lambda x: x.name
-    )
-
-    update_dict = dict(zip(variables, fg_vars)) | dict(zip(parameters, fg_params))
-
-    # The fgraph creates new symbolic variables -- these need to be saved in the cache so all future functions refer
-    # to the correct variables.
-    # The unpacked cache does not need to be updated because its variables haven't been through rewriting yet.
-    cache = {k: update_dict.get(v, None) for k, v in cache.items()}
-
-    return flat_equations, fg_vars, fg_params, (cache, unpacked_cache)
+    return flat_equations, variables, parameters, (cache, unpacked_cache)
 
 
 def compile_cge_model_to_pytensor(
