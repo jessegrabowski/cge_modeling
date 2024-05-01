@@ -428,7 +428,7 @@ def wrap_fixed_values(
             )
         data.update(fixed_values)
         res = f(**data)
-        if res.ndim == 0:
+        if isinstance(res, (float, int)) or res.ndim == 0:
             return res
 
         return_mask = make_flat_array_return_mask(res, variables, fixed_vars, coords)

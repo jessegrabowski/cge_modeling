@@ -147,6 +147,35 @@ def test_model_gradients(model_function, jac_function, backend):
 
 
 @pytest.mark.parametrize(
+    "model_function, calibrate_model, f_expected_jac, data",
+    [
+        (load_model_1, calibrate_model_1, expected_model_1_jacobian, model_1_data),
+        (load_model_2, calibrate_model_2, expected_model_2_jacobian, model_2_data),
+    ],
+    ids=["simple_model", "3-goods simple"],
+)
+@pytest.mark.parametrize("sparse", [False, True], ids=["dense", "sparse"])
+def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, data, sparse):
+    mod = model_function(
+        equation_mode="numba",
+        backend="pytensor",
+        parse_equations_to_sympy=True,
+        mode="FAST_COMPILE",
+        use_sparse_matrices=sparse,
+    )
+
+    calibated_data = calibrate_model(**data)
+    resid = mod.f_system(**calibated_data)
+    np.testing.assert_allclose(resid, 0, atol=1e-8)
+
+    jac = mod.f_jac(**calibated_data)
+    if sparse:
+        jac = jac.todense()
+    expected_jac = f_expected_jac(**calibated_data)
+    np.testing.assert_allclose(jac, expected_jac, atol=1e-8)
+
+
+@pytest.mark.parametrize(
     "model_function, calibrate_model, data",
     [
         (load_model_1, calibrate_model_1, model_1_data),
@@ -245,6 +274,3 @@ def test_generate_SAM():
         use_jac=False,
         use_hess=False,
     )
-
-    print(mod.f_system(**data, **fixed_values, **param_dict))
-    print(data)

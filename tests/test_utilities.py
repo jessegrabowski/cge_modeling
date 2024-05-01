@@ -107,7 +107,7 @@ def test_fixed_values_wrapper():
     eq = a * x + b * y
     f = sp.lambdify([x, y, a, b], eq)
     x_val = np.random.normal(scale=10)
-    f = wrap_fixed_values(f, {"x": x_val}, variables)
+    f = wrap_fixed_values(f, {"x": x_val}, variables, coords={})
 
     assert f(y=1, a=1, b=1) == (x_val + 1)
 
@@ -122,4 +122,4 @@ def test_fixed_values_wrapper_raises_on_unknown_variable():
     f = sp.lambdify([x, y, a, b], eq)
 
     with pytest.raises(ValueError):
-        f = wrap_fixed_values(f, {"z": 2}, variables)
+        f = wrap_fixed_values(f, {"z": 2}, variables, coords={})

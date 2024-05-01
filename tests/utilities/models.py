@@ -1,9 +1,11 @@
+from typing import Literal
+
 import numpy as np
 
 from cge_modeling import CGEModel, Equation, Parameter, Variable
 
 
-def load_model_1(**kwargs):
+def load_model_1(equation_mode: Literal["numba", "pytensor"] | None = None, **kwargs):
     variable_info = [
         # Firm Variables
         Variable(name="Y", description="Total output of goods"),
@@ -104,8 +106,11 @@ def expected_model_1_jacobian(Y, L_d, K_d, C, income, r, P, resid, alpha, A, L_s
     # @formatter:on
 
 
-def load_model_2(**kwargs):
+def load_model_2(equation_mode: Literal["numba", "pytensor"] | None = None, **kwargs):
     backend = kwargs.get("backend", "numba")
+    if equation_mode is None:
+        equation_mode = backend
+
     sectors = ["0", "1", "2"]
     coords = {"i": sectors, "j": sectors}
     n_sectors = len(sectors)
@@ -218,13 +223,13 @@ def load_model_2(**kwargs):
         Equation(
             "Sector <dim:i> production of intermediate goods bundle",
             "VC * P_VC = (P[:, None] * X).sum(axis=0).ravel()"
-            if backend == "pytensor"
+            if equation_mode == "pytensor"
             else "VC * P_VC = Sum(P.subs({i:j}) * X.subs([(i,k), (j,i), (k,j)]), "
             + f"(j, 0, {n_sectors - 1}))",
         ),
         Equation(
             "Sector <dim:i> demand for sector <dim:j> intermediate input",
-            "X = psi_X * VC[None]" if backend == "pytensor" else "X = psi_X * VC.subs({i:j})",
+            "X = psi_X * VC[None]" if equation_mode == "pytensor" else "X = psi_X * VC.subs({i:j})",
         ),
         # Value add bundle
         Equation(
@@ -244,7 +249,7 @@ def load_model_2(**kwargs):
         Equation(
             "Household utility",
             "U = (C**gamma).prod()"
-            if backend == "pytensor"
+            if equation_mode == "pytensor"
             else "U = Product(C**gamma, " + f"(i, 0, {n_sectors - 1}))",
         ),
         Equation("Household demand for good <dim:i>", "C = gamma * income / P"),
@@ -252,23 +257,24 @@ def load_model_2(**kwargs):
         Equation(
             "Labor market clearing",
             "L_s = L_d.sum() + resid"
-            if backend == "pytensor"
+            if equation_mode == "pytensor"
             else "L_s = resid + Sum(L_d, " + f"(i, 0, {n_sectors - 1}))",
         ),
         Equation(
             "Capital market clearing",
             "K_s = K_d.sum()"
-            if backend == "pytensor"
+            if equation_mode == "pytensor"
             else f"K_s = Sum(K_d, (i, 0, {n_sectors - 1}))",
         ),
         Equation(
             "Sector <dim:i> goods market clearing",
             "Y = C + X.sum(axis=1)"
-            if backend == "pytensor"
+            if equation_mode == "pytensor"
             else f"Y = C + Sum(X, (j, 0, {n_sectors - 1}))",
         ),
         Equation(
-            "Numeraire", "P[0] = P_Ag_bar" if backend == "pytensor" else "P.subs({i:0}) = P_Ag_bar"
+            "Numeraire",
+            "P[0] = P_Ag_bar" if equation_mode == "pytensor" else "P.subs({i:0}) = P_Ag_bar",
         ),
     ]
 

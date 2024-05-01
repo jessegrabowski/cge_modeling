@@ -23,8 +23,8 @@ def _pretty_print_dim_flags(s, dims, dim_vals):
         dim_val = dim_vals.get(dim, None)
         if dim_val is None:
             continue
-        pattern = f"<dim:{dim}>"
-        s = re.sub(pattern, dim_val, s)
+        pattern = f"<dim:{str(dim)}>"
+        s = re.sub(pattern, str(dim_val), s)
     return s
 
 
@@ -62,7 +62,7 @@ class ModelObject(ABC):
         idx_strs = []
         for dim in self.dims:
             dim_val = self.dim_vals.get(dim, None)
-            dim_val_text = "" if dim_val is None else "=\\text{" + dim_val + "}"
+            dim_val_text = "" if dim_val is None else "=\\text{" + str(dim_val) + "}"
             idx_strs.append(f"{dim}{dim_val_text}")
 
         if len(idx_strs) == 0:
@@ -228,7 +228,7 @@ class _SympyEquation(Equation):
     symbolic_eq: sp.Eq
     _eq: sp.Expr
     _fancy_eq: sp.Eq
-    dims: tuple[str]
+    dims: tuple[str, ...]
     dim_vals: dict[str, str] = field(default_factory=dict)
 
     def __repr__(self):
