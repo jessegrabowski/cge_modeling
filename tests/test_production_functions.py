@@ -1,5 +1,5 @@
-from itertools import chain
-from typing import Literal, cast
+from functools import reduce
+from typing import cast
 
 import numpy as np
 import pytensor
@@ -7,6 +7,8 @@ import pytensor.tensor as pt
 import pytest
 import sympy as sp
 
+from cge_modeling import Equation
+from cge_modeling.base.primitives import Variable, _SympyEquation
 from cge_modeling.production_functions import (
     BACKEND_TYPE,
     CES,
@@ -15,6 +17,11 @@ from cge_modeling.production_functions import (
     dixit_stiglitz,
     leontief,
     unpack_string_inputs,
+)
+from cge_modeling.tools.sympy_tools import (
+    expand_obj_by_indices,
+    find_equation_dims,
+    substitute_reduce_ops,
 )
 
 
@@ -93,8 +100,8 @@ def test_CES(alpha):
         "Y = A * ((alpha) * L ** ((epsilon - 1) / epsilon) + (1 - alpha) * K ** ((epsilon - 1) / "
         "epsilon)) ** (epsilon / (epsilon - 1))"
     )
-    assert L_demand == "L = Y / A * ((alpha) * P * A / w) ** epsilon"
-    assert K_demand == "K = Y / A * ((1 - alpha) * P * A / r) ** epsilon"
+    assert L_demand == "L = Y / A * ((alpha) * P * A / (w)) ** epsilon"
+    assert K_demand == "K = Y / A * ((1 - alpha) * P * A / (r)) ** epsilon"
 
 
 def test_computation_of_CES():
@@ -294,15 +301,19 @@ def test_dixit_stiglitz_computation(backend):
 
 
 @pytest.mark.parametrize("backend", ["numba", "pytensor"], ids=["numba", "pytensor"])
-def test_2d_leontief(backend: BACKEND_TYPE):
+@pytest.mark.parametrize(
+    "coords",
+    [{"i": ["A", "B", "C"], "j": ["A", "B", "C"]}, {"i": ["A", "B", "C"], "j": ["E", "F"]}],
+    ids=["square", "rectangular"],
+)
+def test_2d_leontief(backend: BACKEND_TYPE, coords: dict):
     factors = ["X"]
     factor_prices = ["P_X"]
     output = "Y"
     output_price = "P_Y"
     factor_shares = ["phi_X"]
 
-    coords = {"i": ["A", "B", "C"], "j": ["A", "B", "C"]}
-    dims = ["i", "j"]
+    dims = list(coords.keys())
 
     zero_profit, *factor_demands = leontief(
         factors=factors,
@@ -313,23 +324,55 @@ def test_2d_leontief(backend: BACKEND_TYPE):
         dims=dims,
         coords=coords,
         backend=backend,
+        sum_dim="i",
     )
 
     if backend == "numba":
-        assert zero_profit == (
-            f"{output_price} * {output} = Sum({factor_prices[0]}.subs("
-            + "{"
-            + f"{dims[0]}:{dims[1]}"
-            + "}) "
-            f"* {factors[0]}"
-            f".subs([({dims[0]}, a), ({dims[1]}, {dims[0]}), (a, {dims[1]})]), "
-            f"({dims[1]}, 0, {len(coords[dims[1]]) - 1}))"
+        variables = [
+            Variable("X", dims=("i", "j"), description="Demand for good <dim:i> by sector <dim:j>"),
+            Variable("P_Y", dims=("i",), description="Price of sector <dim:i> output"),
+            Variable("P_X", dims=("i",), description="Price of good <dim:j>"),
+            Variable("Y", dims="i", description="Output of sector <dim:i>"),
+        ]
+        str_dim_to_symbol = {dim: sp.Idx(dim) for dim in coords.keys()}
+        local_dict = {x.name: x.to_sympy() for x in variables} | str_dim_to_symbol
+
+        eq = Equation("Zero profit condition for <dim:j>", zero_profit)
+        sympy_eq = sp.parse_expr(eq.equation, local_dict=local_dict, transformations="all")
+        norm_eq = substitute_reduce_ops(sympy_eq.lhs - sympy_eq.rhs, coords)
+        eq = _SympyEquation(
+            name=eq.name,
+            equation=eq.equation,
+            symbolic_eq=sympy_eq,
+            _eq=norm_eq,
+            _fancy_eq=sympy_eq,
+            dims="j",
+            eq_id=0,
         )
+
+        eqs = expand_obj_by_indices(eq, coords=coords, dims=None, on_unused_dim="ignore")
+
+        all_atoms = reduce(lambda l, r: l.union(r), [eq._eq.atoms() for eq in eqs], set())
+        ex_dict = {atom.name: atom for atom in all_atoms if not atom.is_number}
+        ex_dict.update({x: sp.IndexedBase(x) for x in ["X", "P_X", "Y", "P_Y"]})
+
+        expected_outputs = [
+            f"Y[{dim_2}] - ("
+            + " + ".join([f"P_X[{dim_1}] * X[{dim_1}, {dim_2}]" for dim_1 in coords["i"]])
+            + f")/P_Y[{dim_2}]"
+            for dim_2 in coords["j"]
+        ]
+
+        assert len(eqs) == len(coords["j"])
+
+        for eq, ex_eq in zip(eqs, expected_outputs):
+            ex_sympy = sp.parse_expr(ex_eq, local_dict=ex_dict, transformations="all")
+            assert str(eq._eq) == str(ex_sympy)
 
     elif backend == "pytensor":
         assert (
             zero_profit
-            == f"{output_price} * {output} = ({factor_prices[0]}[:, None] * {factors[0]}).sum(axis=0).ravel()"
+            == f"{output} = ({factor_prices[0]}[:, None] * {factors[0]}).sum(axis=0).ravel() / ({output_price})"
         )
         assert factor_demands[0] == f"{factors[0]} = {factor_shares[0]} * {output}[None]"
     else:
@@ -357,7 +400,7 @@ def test_1d_leontief():
         backend="numba",
     )
 
-    assert zero_profit == "P_Y * Y = P_VA * VA + P_VC * VC"
+    assert zero_profit == "Y = (P_VA * VA + P_VC * VC) / (P_Y)"
     for i, demand in enumerate(factor_demands):
         assert demand == f"{factors[i]} = {output} * {factor_shares[i]}"
 
@@ -394,7 +437,6 @@ def test_leonteif_1d_computation(backend):
     )
 
     inputs = ["VA", "VC", "P_VA", "P_VC", "Y", "P_Y", "phi_VA", "phi_VC"]
-    i = sp.Idx("i")
     local_dict = {
         "VA": sp.IndexedBase("VA"),
         "VC": sp.IndexedBase("VC"),
@@ -502,7 +544,7 @@ def test_2d_leontief_computation(backend, dims, coords):
     def leontief_Y(X, P_X, P_Y):
         return (P_X[:, None] * X).sum(axis=0) / P_Y
 
-    def leontief_X(Y, phi_X, *args, **kwargs):
+    def leontief_X(Y, phi_X):
         return Y * phi_X
 
     factors = ["X"]
@@ -520,6 +562,7 @@ def test_2d_leontief_computation(backend, dims, coords):
         dims=dims,
         coords=coords,
         backend=backend,
+        sum_dim="i",
     )
 
     inputs = ["X", "P_X", "Y", "P_Y", "phi_X"]
@@ -536,24 +579,55 @@ def test_2d_leontief_computation(backend, dims, coords):
         "j": j,
     }
 
+    i_len = len(coords["i"])
+    j_len = len(coords["j"])
+
+    X_prices = np.random.normal(size=i_len) ** 2
+    phi_X_vals = np.random.dirichlet(np.ones(i_len), size=(j_len,)).T
+    X_val = np.random.normal(size=(i_len, j_len))
+    Y = np.random.normal(size=j_len) ** 2
+    P_Y = np.random.normal(size=j_len) ** 2
+
     if backend == "numba":
-        print(zero_profit)
         eq = sp.parse_expr(zero_profit, transformations="all", local_dict=local_dict)
-        print(eq)
-        f_eq = sp.lambdify(inputs + ["i"], eq.rhs)
-        k = len(coords["i"])
-        l = len(coords["j"])
+        f_eq = sp.lambdify(inputs + ["j"], eq.rhs)
 
-        X_prices = np.random.normal(size=k) ** 2
-        phi_X_vals = np.random.dirichlet(np.ones(l), size=(k,)).T
-        X_val = np.arange(k * l).reshape((k, l))
-
-        sympy_out = f_eq(X=X_val, P_X=X_prices, Y=1, P_Y=1, phi_X=phi_X_vals, i=np.arange(k))
-
-        exact = leontief_Y(X=X_val, P_X=X_prices, P_Y=1)
+        sympy_out = f_eq(X=X_val, P_X=X_prices, Y=Y, P_Y=P_Y, phi_X=phi_X_vals, j=np.arange(j_len))
+        exact = leontief_Y(X=X_val, P_X=X_prices, P_Y=P_Y)
         np.testing.assert_allclose(sympy_out, exact)
 
-    #     for factor_demand, f_expected in zip(factor_demands, [leontief_X]):
-    #         eq = sp.parse_expr(factor_demand, transformations="all", local_dict=local_dict)
-    #         f_eq = sp.lambdify(inputs, eq
-    #
+        eq = sp.parse_expr(factor_demands[0], transformations="all", local_dict=local_dict)
+        f_eq = sp.lambdify(inputs + ["i", "j"], eq.rhs)
+        exact = leontief_X(Y=Y, phi_X=phi_X_vals)
+        sympy_out = f_eq(
+            X=X_val,
+            P_X=X_prices,
+            Y=Y,
+            P_Y=P_Y,
+            phi_X=phi_X_vals,
+            i=np.arange(i_len)[:, None],
+            j=np.arange(j_len)[None],
+        )
+        np.testing.assert_allclose(sympy_out, exact)
+
+    elif backend == "pytensor":
+
+        def compile_Y():
+            P_Y = pt.dvector("P_Y")
+            X = pt.dmatrix("X")
+            P_X = pt.dvector("P_X")
+
+            exec(zero_profit)
+            return locals()["Y"], [P_Y, X, P_X]
+
+        def compile_X():
+            Y = pt.dvector("Y")
+            phi_X = pt.dmatrix("phi_X")
+
+            exec(factor_demands[0])
+            return locals()["X"], [Y, phi_X]
+
+        Y, inputs = compile_Y()
+        f_Y = pytensor.function(inputs, Y, on_unused_input="ignore", mode="FAST_COMPILE")
+        expected = leontief_Y(X=X_val, P_X=X_prices, P_Y=P_Y)
+        np.testing.assert_allclose(f_Y(P_Y, X_val, X_prices), expected)
