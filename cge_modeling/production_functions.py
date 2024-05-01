@@ -354,7 +354,8 @@ def _2d_leontief(
     factor_shares: Union[str, list[str, ...]],
     dims: str,
     coords: dict[str, list[str, ...]],
-    expand_price_dim: bool = False,
+    sum_dim: str | None = None,
+    expand_price_dim: bool = True,
     backend: Literal["numba", "pytensor"] = "numba",
 ) -> tuple[str, ...]:
     r"""
@@ -393,9 +394,13 @@ def _2d_leontief(
 
     This is all necessary because from the supply perspective, the 2nd dimension of X is the core dimension.
     """
+    dims = list(dims)
+    if sum_dim is None:
+        sum_dim = dims[-1]
+    sum_axis = dims.index(sum_dim)
 
     def _swapaxes(x, i, j):
-        sub_template = Template("$x.subs({$j:$i})")
+        sub_template = Template("$x.subs({$i:$j})")
         return sub_template.safe_substitute(x=x, i=i, j=j)
 
     def _T(x, i, j, coords):
@@ -410,28 +415,30 @@ def _2d_leontief(
     )
 
     if backend == "numba":
-        core_dim, batch_dim = dims
-        n_core, n_batch = (len(coords[x]) for x in dims)
+        batch_dim = dims.pop(sum_axis)
+        core_dim = dims[0]
+        n_core, n_batch = (len(coords[x]) for x in [core_dim, batch_dim])
+        zero_profit = f"{_swapaxes(output, batch_dim, core_dim)} = Sum({factor_prices} * {factors}, ({batch_dim}, 0, {n_batch - 1})) / {_swapaxes(output_price, batch_dim, core_dim)}"
 
-        if n_core == n_batch:
-            rhs = (
-                f"Sum({_swapaxes(factor_prices, core_dim, batch_dim)} * {_T(factors, core_dim, batch_dim, coords)}, "
-                + f"({batch_dim}, 0, {len(coords[batch_dim]) - 1}))"
-            )
-        elif n_core > n_batch:
-            rhs = (
-                f"Sum({factor_prices} * {factors}, ({batch_dim}, 0, {len(coords[batch_dim]) - 1}))"
-            )
-        elif n_core < n_batch:
-            raise NotImplementedError
-
-        zero_profit = f"{output} = {rhs} / ({output_price})"
+        # if n_core == n_batch:
+        #     rhs = (
+        #         f"Sum({_swapaxes(factor_prices, core_dim, batch_dim)} * {_T(factors, core_dim, batch_dim, coords)}, "
+        #         + f"({sum_dim}, 0, {len(coords[sum_dim]) - 1}))"
+        #     )
+        # elif n_core > n_batch:
+        #     rhs = (
+        #         f"Sum({factor_prices} * {factors}, ({batch_dim}, 0, {len(coords[batch_dim]) - 1}))"
+        #     )
+        # elif n_core < n_batch:
+        #     raise NotImplementedError
+        #
+        # zero_profit = f"{_swapaxes(output, core_dim, batch_dim)} = {rhs} / ({_swapaxes(output_price, core_dim, batch_dim)})"
 
         factor_demands = f"{factors} = {factor_shares} * {_swapaxes(output, core_dim, batch_dim)}"
 
     elif backend == "pytensor":
         price_slice = "[:, None]" if expand_price_dim else ""
-        zero_profit = f"{output} = ({factor_prices}{price_slice} * {factors}).sum(axis=0).ravel() / ({output_price})"
+        zero_profit = f"{output} = ({factor_prices}{price_slice} * {factors}).sum(axis={sum_axis}).ravel() / ({output_price})"
         factor_demands = f"{factors} = {factor_shares} * {output}[None]"
 
     else:
@@ -448,7 +455,8 @@ def leontief(
     factor_shares: Union[str, list[str, ...]],
     dims: Union[str, list[str, ...]],
     coords: dict[str, list[str, ...]],
-    expand_price_dim: bool = False,
+    sum_dim: str | None = None,
+    expand_price_dim: bool = True,
     backend: Literal["numba", "pytensor"] = "numba",
 ) -> tuple[str, ...]:
     """
@@ -497,6 +505,9 @@ def leontief(
         value chain process are represented by an N x N matrix, with sectoral supply on the first dimension and sectoral
         demand on the second dimension.
 
+    sum_dim: str, optional
+        Dimension to reduce via summation. Default is the last dimension -- dims[-1]. Ignored if len(dims) == 1
+
     coords: dict of str: list of str
         Dictionary of coordinates for the model, mapping dimension names to lists of labels.
 
@@ -536,6 +547,7 @@ def leontief(
             factor_shares,
             dims,
             coords,
+            sum_dim,
             expand_price_dim,
             backend,
         )
