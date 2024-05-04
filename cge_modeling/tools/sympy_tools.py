@@ -256,7 +256,7 @@ def find_equation_dims(eq: sp.Expr, index_symbols: list[sp.Idx]) -> tuple[str]:
     return cast(tuple[str], tuple(x.name for x in sorted_ids))
 
 
-def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, list[str, ...]]) -> sp.Expr:
+def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, list[str | int]]) -> sp.Expr:
     """
     Substitute a sum or product operation with a sum or product of expanded expressions.
 
@@ -275,16 +275,27 @@ def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, list[str, ...]]) -> sp.
 
     for op_to_find in OPS_TO_FIND:
         found_ops = list(eq.find(op_to_find))
-        for op in found_ops:
-            expr, index_info = op.args
+        if len(found_ops) == 0:
+            continue
+        elif len(found_ops) > 1:
+            raise NotImplementedError()
+        [op] = found_ops
+        op_doit = op.doit()
+
+        expr, *index_infos = op.args
+        used_indices = [info[0] for info in index_infos]
+        labels = product(*[coords[idx.name] for idx in used_indices])
+        indexed_exprs = [x for x in sp.preorder_traversal(op_doit) if isinstance(x, sp.Indexed)]
+        sub_dict = {x[0][*x.args[1:]]: x[0][*label] for x, label in zip(indexed_exprs, labels)}
+        op_subbed = op_doit.subs(sub_dict)
+
+        for index_info in index_infos:
             idx, start, stop = index_info
 
             assert idx.name in coords.keys()
             assert len(coords[idx.name]) == stop - start + 1
-
-            expanded_expr = OP_TO_PY[op_to_find](
-                [expr.subs({idx: val}) for val in coords[idx.name]]
-            )
+            exprs = [expr.subs({idx: val}) for val in coords[idx.name]]
+            expanded_expr = OP_TO_PY[op_to_find](exprs)
             sub_dict = {op: expanded_expr}
             eq = eq.subs(sub_dict)
     return eq

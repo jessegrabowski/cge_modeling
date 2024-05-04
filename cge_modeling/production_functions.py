@@ -103,6 +103,7 @@ def CES(
     TFP: str,
     factor_shares: Union[str, list[str, ...]],
     epsilon: str,
+    expand_price_dim: Literal["input", "output", "both", None] = None,
     *args,
     **kwargs,
 ) -> tuple[str, ...]:
@@ -149,6 +150,9 @@ def CES(
     epsilon:
         elasticity parameter
 
+    expand_price_dim: str, one of 'input', 'output', 'both', or None
+        Price dimension to expand. If expanded, a price P will be printed as P[:, None].
+
     args, kwargs:
         Ignored; included for signature compatibility with other production functions
 
@@ -182,6 +186,12 @@ def CES(
         "$factor = $output / $TFP * (($factor_share) * $output_price * $TFP / ($factor_price)) ** "
         "$epsilon"
     )
+
+    if expand_price_dim in ["output", "both"]:
+        output_price = f"{output_price}[:, None]"
+    if expand_price_dim in ["input", "both"]:
+        factor_prices = [f"{factor_price}[:, None]" for factor_price in factor_prices]
+
     eq_fac_demands = [
         factor_demand_template.safe_substitute(
             factor=factor,
@@ -419,20 +429,6 @@ def _2d_leontief(
         core_dim = dims[0]
         n_core, n_batch = (len(coords[x]) for x in [core_dim, batch_dim])
         zero_profit = f"{_swapaxes(output, batch_dim, core_dim)} = Sum({factor_prices} * {factors}, ({batch_dim}, 0, {n_batch - 1})) / {_swapaxes(output_price, batch_dim, core_dim)}"
-
-        # if n_core == n_batch:
-        #     rhs = (
-        #         f"Sum({_swapaxes(factor_prices, core_dim, batch_dim)} * {_T(factors, core_dim, batch_dim, coords)}, "
-        #         + f"({sum_dim}, 0, {len(coords[sum_dim]) - 1}))"
-        #     )
-        # elif n_core > n_batch:
-        #     rhs = (
-        #         f"Sum({factor_prices} * {factors}, ({batch_dim}, 0, {len(coords[batch_dim]) - 1}))"
-        #     )
-        # elif n_core < n_batch:
-        #     raise NotImplementedError
-        #
-        # zero_profit = f"{_swapaxes(output, core_dim, batch_dim)} = {rhs} / ({_swapaxes(output_price, core_dim, batch_dim)})"
 
         factor_demands = f"{factors} = {factor_shares} * {_swapaxes(output, core_dim, batch_dim)}"
 
