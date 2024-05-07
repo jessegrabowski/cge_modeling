@@ -366,6 +366,7 @@ def _2d_leontief(
     coords: dict[str, list[str, ...]],
     sum_dim: str | None = None,
     expand_price_dim: bool = True,
+    transpose_output: bool = True,
     backend: Literal["numba", "pytensor"] = "numba",
 ) -> tuple[str, ...]:
     r"""
@@ -428,9 +429,16 @@ def _2d_leontief(
         batch_dim = dims.pop(sum_axis)
         core_dim = dims[0]
         n_core, n_batch = (len(coords[x]) for x in [core_dim, batch_dim])
-        zero_profit = f"{_swapaxes(output, batch_dim, core_dim)} = Sum({factor_prices} * {factors}, ({batch_dim}, 0, {n_batch - 1})) / {_swapaxes(output_price, batch_dim, core_dim)}"
+        profit_output = output
+        profit_price = output_price
 
-        factor_demands = f"{factors} = {factor_shares} * {_swapaxes(output, core_dim, batch_dim)}"
+        if transpose_output:
+            profit_output = _swapaxes(output, batch_dim, core_dim)
+            profit_price = _swapaxes(output_price, batch_dim, core_dim)
+
+        zero_profit = f"{profit_output} = Sum({factor_prices} * {factors}, ({batch_dim}, 0, {n_batch - 1})) / {profit_price}"
+        # zero_profit = f"{_swapaxes(output, batch_dim, core_dim)} = Sum({factor_prices} * {factors}, ({batch_dim}, 0, {n_batch - 1})) / {_swapaxes(output_price, batch_dim, core_dim)}"
+        factor_demands = f"{factors} = {factor_shares} * {output}"
 
     elif backend == "pytensor":
         price_slice = "[:, None]" if expand_price_dim else ""
@@ -453,6 +461,7 @@ def leontief(
     coords: dict[str, list[str, ...]],
     sum_dim: str | None = None,
     expand_price_dim: bool = True,
+    transpose_output: bool = True,
     backend: Literal["numba", "pytensor"] = "numba",
 ) -> tuple[str, ...]:
     """
@@ -536,14 +545,15 @@ def leontief(
                 f"Leontief production function expects exactly one factor when len(dims) == 2, found {len(factors)}"
             )
         return _2d_leontief(
-            factors,
-            factor_prices,
-            output,
-            output_price,
-            factor_shares,
-            dims,
-            coords,
-            sum_dim,
-            expand_price_dim,
-            backend,
+            factors=factors,
+            factor_shares=factor_shares,
+            output=output,
+            output_price=output_price,
+            factor_prices=factor_prices,
+            dims=dims,
+            coords=coords,
+            sum_dim=sum_dim,
+            expand_price_dim=expand_price_dim,
+            transpose_output=transpose_output,
+            backend=backend,
         )

@@ -185,16 +185,21 @@ class CGEModel:
         self._unpacked_parameters = {}
         self._unpacked_equations = {}
 
+        _log.info("Initializing variables")
         self._initialize_group(variables, "variables")
         if numeraire is not None:
             if numeraire not in self.variable_names:
                 raise ValueError("Requested numeraire not found among supplied variables")
             self.numeraire = self._variables[numeraire]
 
+        _log.info("Initializing parameters")
         self._initialize_group(parameters, "parameters")
+
+        _log.info("Initializing equations")
         self._initialize_group(equations, "equations")
 
         if self.parse_equations_to_sympy:
+            _log.info("Expanding reduction Ops (Sum, Prod)")
             self._simplify_unpacked_sympy_representation()
 
         if numeraire:
@@ -205,6 +210,10 @@ class CGEModel:
         self.n_parameters = len(self.unpacked_parameter_names)
 
         self.check_initialization()
+        _log.info(
+            f"Initial pre-processing complete, found {self.n_equations} equations, {self.n_variables} variables, "
+            f"{self.n_parameters} parameters"
+        )
 
         self.scenarios: dict[str, Result] = {}
 
@@ -262,7 +271,7 @@ class CGEModel:
         add_func(objects)
         unpack_func(objects)
 
-    def _simplify_unpacked_sympy_representation(self):
+    def _simplify_unpacked_sympy_representation(self, n_jobs=-1):
         equations = [eq._eq for eq in self.unpacked_equations]
         variables = [x.to_sympy() for x in self.unpacked_variables]
         parameters = [x.to_sympy() for x in self.unpacked_parameters]
@@ -271,9 +280,15 @@ class CGEModel:
         remove_indices_subdict = indexed_variables_to_sub_dict(
             self.unpacked_variables + self.unpacked_parameters
         )
-        equations = sub_all_eqs(equations, remove_indices_subdict)
-        variables = sub_all_eqs(variables, remove_indices_subdict)
-        parameters = sub_all_eqs(parameters, remove_indices_subdict)
+
+        _log.info("Post-processing sympy equations")
+        equations = sub_all_eqs(equations, remove_indices_subdict, n_jobs)
+
+        _log.info("Post-processing sympy variables")
+        variables = sub_all_eqs(variables, remove_indices_subdict, n_jobs)
+
+        _log.info("Post-processing sympy parameters")
+        parameters = sub_all_eqs(parameters, remove_indices_subdict, n_jobs)
 
         for group, simplified_symbols in zip(
             ["parameters", "variables", "equations"], [parameters, variables, equations]
