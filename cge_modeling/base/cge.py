@@ -37,8 +37,9 @@ from cge_modeling.base.utilities import (
 from cge_modeling.pytensorf.compile import (
     compile_cge_model_to_pytensor,
     compile_cge_model_to_pytensor_Op,
+    compile_euler_approximation_function,
     euler_approximation,
-    euler_approximation_from_CGEModel,
+    pytensor_euler_step,
     pytensor_objects_from_CGEModel,
 )
 from cge_modeling.tools.numba_tools import euler_approx, numba_lambdify
@@ -47,7 +48,11 @@ from cge_modeling.tools.output_tools import (
     list_of_array_to_idata,
     optimizer_result_to_idata,
 )
-from cge_modeling.tools.pytensor_tools import get_required_inputs, make_jacobian
+from cge_modeling.tools.pytensor_tools import (
+    get_required_inputs,
+    make_jacobian,
+    rewrite_pregrad,
+)
 from cge_modeling.tools.sympy_tools import (
     enumerate_indexbase,
     expand_obj_by_indices,
@@ -655,12 +660,13 @@ class CGEModel:
         variables = self.unpacked_variable_symbols
         parameters = self.unpacked_parameter_symbols
 
+        # Always compile the system -- used to check residuals
+        self.f_system = numba_lambdify(
+            variables, sp.Matrix(equations), parameters, ravel_outputs=True
+        )
+
         if "root" in functions_to_compile:
             # Functions used by optimize.root to directly solve the system of equations
-            self.f_system = numba_lambdify(
-                variables, sp.Matrix(equations), parameters, ravel_outputs=True
-            )
-
             # Compute Jacobian of the nonlinear system
             jac = sp.Matrix(equations).jacobian(variables)
             self.symbolic_solution_matrices["jacobian"] = jac
@@ -692,20 +698,6 @@ class CGEModel:
 
         self._compiled = functions_to_compile
 
-    def __pytensor_euler_helper(self, *args, n_steps=100, **kwargs):
-        if n_steps == self.__last_n_steps:
-            _log.info("Re-using compiled euler approximation")
-            return self.__compiled_f_euler(*args, **kwargs)
-        else:
-            _log.info(
-                f"n_steps has changed ({n_steps} != {self.__last_n_steps}). Compiling euler approximation"
-            )
-            self.__last_n_steps = n_steps
-            self.__compiled_f_euler = euler_approximation_from_CGEModel(
-                self, n_steps=n_steps, mode=self.mode
-            )
-            return self.__compiled_f_euler(*args, **kwargs)
-
     def _compile_pytensor(
         self,
         mode,
@@ -721,14 +713,15 @@ class CGEModel:
         )
         inputs = variables + parameters
         text_mode = "C" if mode is None else mode
+        _log.info(f"Compiling CGE equations into {text_mode} function")
+
+        # Always compile the system function, so we can compute residuals from calibration
+        f_system = pytensor.function(
+            inputs=inputs, outputs=system, mode=mode, on_unused_input="raise"
+        )
+        f_system.trust_inputs = True
 
         if "root" in functions_to_compile:
-            _log.info(f"Compiling CGE equations into {text_mode} function")
-            f_system = pytensor.function(
-                inputs=inputs, outputs=system, mode=mode, on_unused_input="raise"
-            )
-            f_system.trust_inputs = True
-
             _log.info(f"Compiling Jacobian equations into {text_mode} function")
 
             # It's possible that certain variables/parameters don't influence the jacobian at all (for example if they
@@ -761,6 +754,7 @@ class CGEModel:
         if "minimize" in functions_to_compile:
             _log.info(f"Computing sum of squared errors")
             resid = (system**2).sum()
+            rewrite_pregrad(resid)
 
             _log.info(f"Computing SSE gradient")
             grad = pytensor.grad(resid, variables)
@@ -774,34 +768,51 @@ class CGEModel:
             _log.info(
                 f"Compiling SSE functions (sse, gradient, jacobian) into {text_mode} function"
             )
-            f_root = pytensor.function(inputs=inputs, outputs=[resid, grad, hess], mode=mode)
-            f_root.trust_inputs = True
+            f_resid = pytensor.function(inputs=inputs, outputs=resid, mode=mode)
+            f_resid.trust_inputs = True
 
-            if mode in ["JAX", "NUMBA"]:
-                # In JAX and NUMBA modes, pytensor puts a bunch of extra overhead around the (fast!) jitted functions.
-                # We can strip that all away by using the jit_fn direction.
-                _f_root = f_root.copy()
+            f_grad = pytensor.function(inputs=inputs, outputs=grad, mode=mode)
+            f_grad.true_inputs = True
 
-                def f_root(*args, **kwargs):
-                    [resid, grad, hess] = _f_root.vm.jit_fn(*args, **kwargs)
-                    return np.asarray(resid), np.asarray(grad), np.asarray(hess)
+            f_hess = pytensor.function(inputs=inputs, outputs=hess, mode=mode)
+            f_hess.trust_inputs = True
 
-            def f_resid(**kwargs):
-                return f_root(**kwargs)[0]
-
-            def f_grad(**kwargs):
-                return f_root(**kwargs)[1]
-
-            def f_hess(**kwargs):
-                return f_root(**kwargs)[2]
+            f_resid_grad = pytensor.function(inputs=inputs, outputs=[resid, grad], mode=mode)
+            f_resid_grad.trust_inputs = True
 
             self.f_resid = f_resid
             self.f_grad = f_grad
             self.f_hess = f_hess
+            self.f_resid_grad = f_resid_grad
 
         if "euler" in functions_to_compile:
-            self.__last_n_steps = 0
-            self.f_euler = self.__pytensor_euler_helper
+            if use_scan_euler:
+
+                def __pytensor_euler_helper(*args, n_steps=100, **kwargs):
+                    if n_steps == self.__last_n_steps:
+                        _log.info("Re-using compiled euler approximation")
+                        return self.__compiled_f_euler(*args, **kwargs)
+                    else:
+                        _log.info(
+                            f"n_steps has changed ({n_steps} != {self.__last_n_steps}). Compiling euler approximation"
+                        )
+                        self.__last_n_steps = n_steps
+                        self.__compiled_f_euler = compile_euler_approximation_function(
+                            jac_inv, B, variables, parameters, n_steps=n_steps, mode=self.mode
+                        )
+
+                        return self.__compiled_f_euler(*args, **kwargs)
+
+                self.__last_n_steps = 0
+                self.f_euler = __pytensor_euler_helper
+
+            else:
+                outputs = pytensor_euler_step(jac_inv, B, variables, parameters)
+                inputs = get_required_inputs(outputs)
+
+                f_step = pytensor.function(inputs, outputs, mode=mode)
+                f_step.trust_inputs = True
+                self.f_euler = None
 
         self._compiled = functions_to_compile
 

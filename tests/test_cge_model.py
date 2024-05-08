@@ -176,9 +176,7 @@ def test_unpack_equation_with_sum():
     assert len(model.unpacked_equation_symbols) == 3
 
     for i, eq in zip(["A", "B", "C"], model.unpacked_equation_symbols):
-        print(eq)
         inputs = list(set(get_inputs(eq)))
-        print(inputs)
         f = sp.lambdify(inputs, eq)
         kwargs = {arg.name: np.random.normal() for arg in inputs}
         np.testing.assert_allclose(
@@ -325,7 +323,6 @@ def test_long_unpack():
 
     [eq] = model.unpacked_equation_symbols
     str_eq = str(eq)
-    print(eq)
     assert "[" not in str_eq
 
 
@@ -337,10 +334,19 @@ def test_long_unpack():
     ],
     ids=["simple_model", "3-goods simple"],
 )
-@pytest.mark.parametrize("backend", ["numba", "pytensor"], ids=["numba", "pytensor"])
-def test_model_gradients(model_function, jac_function, backend):
+@pytest.mark.parametrize(
+    "backend, parse_to_sympy",
+    [("numba", True), ("pytensor", True), ("pytensor", False)],
+    ids=["numba", "pytensor-from-sympy", "pytensor"],
+)
+def test_model_gradients(model_function, jac_function, backend, parse_to_sympy):
     mode = "FAST_COMPILE" if backend == "pytensor" else None
-    mod = model_function(backend=backend, parse_equations_to_sympy=backend == "numba", mode=mode)
+    mod = model_function(
+        backend=backend,
+        parse_equations_to_sympy=parse_to_sympy,
+        equation_mode=backend if not parse_to_sympy else "numba",
+        mode=mode,
+    )
 
     data = generate_data(mod.variables + mod.parameters, mod.coords)
 

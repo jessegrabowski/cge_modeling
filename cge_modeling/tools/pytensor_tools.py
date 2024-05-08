@@ -1,12 +1,12 @@
-from typing import Any, Literal, Sequence, Union, cast
+from typing import Any, Literal, Sequence, Union
 
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
 import sympy as sp
 from pytensor.compile.sharedvalue import SharedVariable
+from pytensor.graph import rewrite_graph
 from pytensor.graph.basic import graph_inputs
-from pytensor.tensor.basic import Constant
 from sympytensor import as_tensor
 
 from cge_modeling.base.primitives import Parameter, Variable
@@ -269,3 +269,10 @@ def get_required_inputs(graph):
         if isinstance(v, pt.TensorVariable)
         and not isinstance(v, pt.TensorConstant | SharedVariable)
     ]
+
+
+def rewrite_pregrad(graph):
+    """Apply simplifying or stabilizing rewrites to graph that are safe to use
+    pre-grad.
+    """
+    return rewrite_graph(graph, include=("canonicalize", "stabilize"))
