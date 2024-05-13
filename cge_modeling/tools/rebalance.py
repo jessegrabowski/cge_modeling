@@ -21,7 +21,7 @@ class SAMTransformer:
         self.negative_mask: np.ndarray | None = None
 
     def fit(self, df):
-        self.scale = df.sum().sum()
+        self.scale = df.abs().sum().sum()
         self.negative_mask = df < 0
         self._fit = True
 
