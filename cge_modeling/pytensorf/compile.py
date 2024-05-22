@@ -26,8 +26,12 @@ _log = logging.getLogger(__name__)
 
 def pytensor_objects_from_CGEModel(cge_model):
     n_eq = len(cge_model.unpacked_variable_names)
-    variables = [object_to_pytensor(var, cge_model.coords) for var in cge_model.variables]
-    parameters = [object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters]
+    variables = [
+        object_to_pytensor(var, cge_model.coords) for var in cge_model.variables
+    ]
+    parameters = [
+        object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters
+    ]
 
     cache = make_printer_cache(variables, parameters)
     unpacked_cache = {}
@@ -37,7 +41,8 @@ def pytensor_objects_from_CGEModel(cge_model):
         # This will be a flat list of equations with a unique variable for each unpacked object
         # We want to rewrite this graph so that it will accept the packed array inputs (held in the cache dictionary)
         pytensor_equations = [
-            as_tensor(eq, cache=unpacked_cache) for eq in cge_model.unpacked_equation_symbols
+            as_tensor(eq, cache=unpacked_cache)
+            for eq in cge_model.unpacked_equation_symbols
         ]
 
         # We need to replace the indexed variables with the unpacked variables
@@ -48,6 +53,7 @@ def pytensor_objects_from_CGEModel(cge_model):
 
     else:
         cache = {k[0]: v for k, v in cache.items()}
+        cache.update({"pt": pt})
 
         # Copy the cache to call with eval, otherwise python will add a bunch of global environment variables to it
         eval_cache = cache.copy()
@@ -69,7 +75,9 @@ def compile_cge_model_to_pytensor(
     cge_model,
     inverse_method: Literal["solve", "pinv", "svd"] = "solve",
     sparse=False,
-) -> tuple[tuple[list, list], tuple[pt.TensorLike, pt.TensorLike, pt.TensorLike, pt.TensorLike]]:
+) -> tuple[
+    tuple[list, list], tuple[pt.TensorLike, pt.TensorLike, pt.TensorLike, pt.TensorLike]
+]:
     """
     Compile a CGE model to a PyTensor function.
 
@@ -140,7 +148,11 @@ def compile_cge_model_to_pytensor(
     if cge_model.parse_equations_to_sympy:
         _log.info("Computing Jacobian")
         jac = make_jacobian_from_sympy(
-            cge_model, wrt="variables", sparse=sparse, cache=cache, unpacked_cache=unpacked_cache
+            cge_model,
+            wrt="variables",
+            sparse=sparse,
+            cache=cache,
+            unpacked_cache=unpacked_cache,
         )
 
         jac_inputs = get_required_inputs(jac)
@@ -148,7 +160,11 @@ def compile_cge_model_to_pytensor(
 
         _log.info("Computing B matrix (derivatives w.r.t parameters)")
         B = make_jacobian_from_sympy(
-            cge_model, wrt="parameters", sparse=sparse, cache=cache, unpacked_cache=unpacked_cache
+            cge_model,
+            wrt="parameters",
+            sparse=sparse,
+            cache=cache,
+            unpacked_cache=unpacked_cache,
         )
 
     else:
@@ -333,21 +349,25 @@ def euler_approximation(
 
     final_result = []
     for i, x in enumerate(x_list + theta_list):
-        x_with_initial = pt.concatenate([pt.atleast_Nd(x, n=result[i].ndim), result[i]], axis=0)
+        x_with_initial = pt.concatenate(
+            [pt.atleast_Nd(x, n=result[i].ndim), result[i]], axis=0
+        )
         final_result.append(x_with_initial)
 
     return theta_final, final_result
 
 
-def pytensor_euler_step(A_inv, B, variables, parameters):
+def pytensor_euler_step(system, A_inv, B, variables, parameters):
     x_list = at_least_list(variables)
     theta_list = at_least_list(parameters)
 
     theta_final = pt.concatenate(
-        [pt.atleast_1d(clone_and_rename(x, "_final")).flatten() for x in theta_list], axis=-1
+        [pt.atleast_1d(clone_and_rename(x, "_final")).flatten() for x in theta_list],
+        axis=-1,
     )
     theta0 = pt.concatenate(
-        [pt.atleast_1d(clone_and_rename(x, "_initial")).flatten() for x in theta_list], axis=-1
+        [pt.atleast_1d(clone_and_rename(x, "_initial")).flatten() for x in theta_list],
+        axis=-1,
     )
     n_steps = pt.iscalar("n_steps")
 
@@ -359,6 +379,10 @@ def pytensor_euler_step(A_inv, B, variables, parameters):
 
     Bv = B @ pt.atleast_1d(step_size)
     Bv.name = "Bv"
+    # Bv = pytensor.gradient.Rop(system,
+    #                            pt.concatenate([x.flatten() for x in parameters], axis=-1),
+    #                            pt.atleast_1d(step_size))
+    #
 
     step = -A_inv @ Bv
     step.name = "euler_step"
@@ -372,8 +396,12 @@ def pytensor_euler_step(A_inv, B, variables, parameters):
     return x_next + theta_next
 
 
-def compile_euler_approximation_function(A_inv, B, variables, parameters, n_steps=100, mode=None):
-    theta_final, result = euler_approximation(A_inv, B, variables, parameters, n_steps=n_steps)
+def compile_euler_approximation_function(
+    A_inv, B, variables, parameters, n_steps=100, mode=None
+):
+    theta_final, result = euler_approximation(
+        A_inv, B, variables, parameters, n_steps=n_steps
+    )
     theta_final.name = "theta_final"
     inputs = variables + parameters + [theta_final]
 
