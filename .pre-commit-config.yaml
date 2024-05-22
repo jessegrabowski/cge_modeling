@@ -7,34 +7,19 @@ repos:
     -   id: check-yaml
     -   id: debug-statements
     -   id: end-of-file-fixer
+    -   id: no-commit-to-branch
+        args: [--branch, main]
     -   id: trailing-whitespace
-- repo: https://github.com/PyCQA/isort
-  rev: 5.12.0
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.4.1
   hooks:
-    - id: isort
-      name: isort
-- repo: https://github.com/asottile/pyupgrade
-  rev: v2.37.1
-  hooks:
-    - id: pyupgrade
-      args: [--py37-plus]
-- repo: https://github.com/psf/black
-  rev: 22.6.0
-  hooks:
-    - id: black
-    - id: black-jupyter
-- repo: https://github.com/PyCQA/pylint
-  rev: v2.14.5
-  hooks:
-    - id: pylint
-      args: [--rcfile=.pylintrc]
-      files: ^pymc_experimental/
+    - id: ruff
+      args: ["--fix", "--output-format=full"]
+    - id: ruff-format
 - repo: https://github.com/MarcoGorelli/madforhooks
   rev: 0.3.0
   hooks:
     - id: no-print-statements
-      exclude: _version.py
-      files: ^pymc_experimental/
 - repo: local
   hooks:
     - id: no-relative-imports
