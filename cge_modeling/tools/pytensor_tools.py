@@ -1,4 +1,4 @@
-from typing import Any, Literal, Sequence, Union
+from typing import Any, Literal, Union
 
 import numpy as np
 import pytensor
@@ -13,7 +13,9 @@ from cge_modeling.base.primitives import Parameter, Variable
 from cge_modeling.tools.sympy_tools import sparse_jacobian
 
 
-def object_to_pytensor(obj: Union[Parameter, Variable], coords: dict[str, list[str, ...]]):
+def object_to_pytensor(
+    obj: Union[Parameter, Variable], coords: dict[str, list[str, ...]]
+):
     """
     Convert a CGE model object to a PyTensor object.
 
@@ -57,7 +59,9 @@ def object_to_pytensor(obj: Union[Parameter, Variable], coords: dict[str, list[s
     return pt.tensor(name, shape=shape)
 
 
-def make_printer_cache(variables: list[pt.TensorLike], parameters: list[pt.TensorLike]) -> dict:
+def make_printer_cache(
+    variables: list[pt.TensorLike], parameters: list[pt.TensorLike]
+) -> dict:
     """
     Create a cache of PyTensor functions for printing sympy equations to pytensor.
 
@@ -114,27 +118,35 @@ def flatten_equations(eqs: list[pt.TensorLike]) -> pt.TensorLike:
 
     # expr_len = int(np.sum([np.prod(eq.type.shape) for eq in eqs]))
     flat_expr = pt.concatenate(
-        [pt.atleast_1d(pt.cast(eq, pytensor.config.floatX)).ravel() for eq in eqs], axis=-1
+        [pt.atleast_1d(pt.cast(eq, pytensor.config.floatX)).ravel() for eq in eqs],
+        axis=-1,
     )
     flat_expr = pt.specify_shape(flat_expr, shape=(expr_len,))
     return flat_expr
 
 
 def unpacked_graph_to_packed_graph(
-    unpacked_graph: pt.TensorVariable | list[pt.TensorVariable], cge_model, cache, unpacked_cache
+    unpacked_graph: pt.TensorVariable | list[pt.TensorVariable],
+    cge_model,
+    cache,
+    unpacked_cache,
 ) -> pt.TensorVariable | list[pt.TensorVariable]:
     pt_vars = list(cache.values())
     cache_var_names = list(x[0] for x in cache.keys())
     unpacked_to_indexed_dict = {}
 
     for info, var in unpacked_cache.items():
-        name, *_ = info  # info is a tuple of (name, sympy_class, broadcastable, dtype, shape)
+        name, *_ = (
+            info  # info is a tuple of (name, sympy_class, broadcastable, dtype, shape)
+        )
         parent_obj = cge_model.get_unpacked_parent_object(name)
         parent_pt = pt_vars[cache_var_names.index(parent_obj.base_name)]
 
         # Map named indices to integer indices
         dims = parent_obj.dims
-        dim_idx = [cge_model.coords[dim].index(parent_obj.dim_vals[dim]) for dim in dims]
+        dim_idx = [
+            cge_model.coords[dim].index(parent_obj.dim_vals[dim]) for dim in dims
+        ]
 
         if len(dim_idx) == 0:
             unpacked_to_indexed_dict[var] = parent_pt
@@ -161,7 +173,6 @@ def make_jacobian_from_sympy(
     wrt: Literal["variables", "parameters"] = "variables",
     sparse=False,
 ) -> pt.TensorVariable:
-
     equations = cge_model.unpacked_equation_symbols
     variables = cge_model.unpacked_variable_symbols
     parameters = cge_model.unpacked_parameter_symbols
@@ -178,12 +189,19 @@ def make_jacobian_from_sympy(
         cge_model.symbolic_solution_matrices["B_matrix"] = jac
 
     unpacked_jac = as_tensor(jac, cache=unpacked_cache)
-    packed_jac = unpacked_graph_to_packed_graph(unpacked_jac, cge_model, cache, unpacked_cache)
+    packed_jac = unpacked_graph_to_packed_graph(
+        unpacked_jac, cge_model, cache, unpacked_cache
+    )
 
     return packed_jac
 
 
-def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike]) -> pt.TensorLike:
+def make_jacobian(
+    system: pt.TensorLike,
+    x: list[pt.TensorLike],
+    return_jvp: bool = True,
+    p: None | pt.TensorVariable = None,
+) -> pt.TensorVariable | tuple[pt.TensorVariable, pt.TensorVariable]:
     """
     Make a Jacobian matrix from a system of equations and a list of variables.
 
@@ -193,11 +211,18 @@ def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike]) -> pt.TensorLik
         A vector of equations
     x: list[pytensor.tensor.TensorVariable]
         A list of variables
+    return_jvp: bool
+        If true, compute only a jacobian-vector product with respect to an arbitray vectory p
+    p: TensorVariable, optional
+        Symbolic variable used in the computation of the JVP. Ignored if return_jvp is False. If None, a variable will
+        be created.
 
     Returns
     -------
     jac: pytensor.tensor.TensorVariable
         The Jacobian matrix of the system of equations with respect to the variables
+    p: pytensor.tensor.TensorVariable
+        The symbolic variable used in the computation of the JVP. Only returned if return_jvp is True.
 
     Notes
     -----
@@ -208,8 +233,18 @@ def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike]) -> pt.TensorLik
     n_eq = system.type.shape[0]
     n_vars = int(np.sum([np.prod(var.type.shape) for var in x]))
 
+    rewrite_pregrad(system)
+    if return_jvp:
+        pass
+        # if p is None:
+        #     p = pt.tensor('p', shape=(n_vars,))
+        # jvp = pytensor.gradient.Rop(system, x, p)
+        # return jvp, p
+
     column_list = pytensor.gradient.jacobian(system, x)
-    jac = pt.concatenate([pt.atleast_2d(x).reshape((n_eq, -1)) for x in column_list], axis=-1)
+    jac = pt.concatenate(
+        [pt.atleast_2d(x).reshape((n_eq, -1)) for x in column_list], axis=-1
+    )
     jac = pt.specify_shape(jac, shape=(n_eq, n_vars))
 
     return jac
