@@ -1,7 +1,6 @@
 import functools as ft
 import re
 import sys
-import warnings
 from itertools import product
 from typing import Any, Callable, Optional, Sequence, Union, cast
 
@@ -15,11 +14,11 @@ from cge_modeling.base.primitives import (
     _pretty_print_dim_flags,
 )
 
-CGETypes = Union[Variable, Parameter, Equation]
+CGETypes = Variable | Parameter | Equation
 
 
 def unpack_equation_strings(
-    equations: list[Equation, ...], coords: dict[str, list[str]]
+    equations: list[Equation, ...], coords: dict[str, list[str | int, ...]]
 ) -> list[str, ...]:
     """
     Helper function to unpack equations names with <dim:i> tags to a long list of equations.
@@ -72,7 +71,9 @@ def _validate_input(obj: Any, cls: CGETypes):
     """
 
     if not isinstance(obj, cast(type, cls)):
-        raise ValueError(f"Expected instance of type {cls.__name__}, found {type(obj).__name__}")
+        raise ValueError(
+            f"Expected instance of type {cls.__name__}, found {type(obj).__name__}"
+        )
 
 
 def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
@@ -95,7 +96,7 @@ def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
 
 
 def _expand_var_by_index(
-    obj: Union[Variable, Parameter], coords: dict[str, list[str, ...]]
+    obj: Union[Variable, Parameter], coords: dict[str, list[str | int, ...]]
 ) -> list[Union[Variable, Parameter]]:
     """
     Create a set of CGE Model objects from a single object using the cartesian product of the object's dimensions
@@ -204,7 +205,7 @@ def _replace_dim_marker_with_dim_name(s: str) -> str:
 
 
 def infer_object_shape_from_coords(
-    obj: Union[Variable, Parameter], coords: dict[str, list[str, ...]]
+    obj: Union[Variable, Parameter], coords: dict[str, list[str | int, ...]]
 ) -> tuple[int]:
     """
     Infer the shape of a CGE Model object from a provided coordinate dictionary.
@@ -256,7 +257,7 @@ def make_flat_array_return_mask(
     x: np.ndarray,
     all_objects: list[Union[Variable, Parameter]],
     omit_object_names: list[str],
-    coords: dict[str, list[str, ...]],
+    coords: dict[str, list[str | int, ...]],
 ) -> np.ndarray:
     mask = np.full(x.shape[0], True)
     cursor = 0
@@ -272,7 +273,9 @@ def make_flat_array_return_mask(
 
 
 def flat_array_to_variable_dict(
-    x: np.ndarray, objects: list[Union[Variable, Parameter]], coords: dict[str, list[str, ...]]
+    x: np.ndarray,
+    objects: list[Union[Variable, Parameter]],
+    coords: dict[str, list[str | int, ...]],
 ) -> dict[str, np.ndarray]:
     """
     Convert a flat array to a dictionary of variables and parameters.
@@ -336,7 +339,9 @@ def flat_array_to_variable_dict(
 
 
 def variable_dict_to_flat_array(
-    d: dict[str, np.ndarray], variable_list: [list[Variable]], parameter_list: list[Parameter]
+    d: dict[str, np.ndarray],
+    variable_list: [list[Variable]],
+    parameter_list: list[Parameter],
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Convert a dictionary of variables and parameters to a single long vector.
@@ -375,8 +380,12 @@ def variable_dict_to_flat_array(
     # TODO: This function cannot currently handle batch dimensions, but it should be able to.
     """
 
-    variables = np.concatenate([np.atleast_1d(d[var.name]).ravel() for var in variable_list])
-    parameters = np.concatenate([np.atleast_1d(d[var.name]).ravel() for var in parameter_list])
+    variables = np.concatenate(
+        [np.atleast_1d(d[var.name]).ravel() for var in variable_list]
+    )
+    parameters = np.concatenate(
+        [np.atleast_1d(d[var.name]).ravel() for var in parameter_list]
+    )
 
     return variables, parameters
 
@@ -385,7 +394,7 @@ def wrap_fixed_values(
     f: Callable,
     fixed_values: dict[str, Union[float, int, np.ndarray]],
     variables: list[Variable],
-    coords: dict[str, list[str, ...]],
+    coords: dict[str, list[str | int, ...]],
 ) -> Callable:
     """
     Wrap a CGE function to require only a subset of its inputs. Useful when optimizing under a constraint that
@@ -443,7 +452,7 @@ def wrap_pytensor_func_for_scipy(
     f: Callable,
     variable_list: list[Variable],
     parameter_list: list[Parameter],
-    coords: dict[str, list[str, ...]],
+    coords: dict[str, list[str | int, ...]],
 ) -> Callable:
     """
     Wrap a PyTensor function for use with scipy.optimize.root or scipy.optimize.minimize.
@@ -473,7 +482,9 @@ def wrap_pytensor_func_for_scipy(
     def inner_f(x0, theta):
         # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
         inputs = np.r_[x0, theta]
-        data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
+        data = flat_array_to_variable_dict(
+            inputs, variable_list + parameter_list, coords
+        )
         return f(**data)
 
     return inner_f
@@ -503,15 +514,25 @@ def flat_mask_from_param_names(param_dict, names):
 
 
 def _optimzer_early_stopping_wrapper(f_optim):
-    objective = f_optim.args[0]
+    objective: CostFuncWrapper = f_optim.args[0]
     progressbar = objective.progressbar
 
     res = f_optim()
-
+    res.args = objective.args
     total_iters = objective.n_eval
+
     if progressbar:
+        out = objective.step(res.x)
+
+        if not isinstance(out, tuple):
+            out = (out,)
+        if objective.use_hess:
+            out += (objective.f_hess(res.x),)
+
+        objective.update_progress_desc(*out)
         objective.progress.total = total_iters
         objective.progress.update(total_iters)
+
         print(file=sys.stdout)
 
     return res
@@ -521,6 +542,7 @@ class CostFuncWrapper:
     def __init__(
         self,
         f: Callable,
+        args: tuple | None,
         f_jac: Optional[Callable] = None,
         f_hess: Optional[Callable] = None,
         maxeval: int = 5000,
@@ -529,7 +551,9 @@ class CostFuncWrapper:
     ):
         self.n_eval = 0
         self.maxeval = maxeval
-        self.f = f
+        self.f = f if args is None else ft.partial(f, theta=args)
+        self.args = args
+
         self.use_jac = False
         self.use_hess = False
         self.update_every = update_every
@@ -539,30 +563,32 @@ class CostFuncWrapper:
         if f_jac is not None:
             self.desc += ", ||grad|| = {:,.5g}"
             self.use_jac = True
-            self.f_jac = f_jac
+            self.f_jac = f_jac if args is None else ft.partial(f_jac, theta=args)
 
         if f_hess is not None:
             self.desc += ", ||hess|| = {:,.5g}"
             self.use_hess = True
-            self.f_hess = f_hess
+            self.f_hess = f_hess if args is None else ft.partial(f_hess, theta=args)
 
         self.previous_x = None
         self.progressbar = progressbar
-        if progressbar:
-            self.progress = progress_bar(range(maxeval), total=maxeval, display=progressbar)
-            self.progress.update(0)
-        else:
-            self.progress = range(maxeval)
+        self.progress = None
 
-    def step(self, x, params):
+        if progressbar:
+            self.progress = progress_bar(
+                range(maxeval), total=maxeval, display=progressbar
+            )
+            self.progress.update(0)
+
+    def step(self, x):
         grad = None
         hess = None
-        value = self.f(x, params)
+        value = self.f(x)
 
         if self.use_jac:
-            grad = self.f_jac(x, params)
+            grad = self.f_jac(x)
             if self.use_hess:
-                hess = self.f_hess(x, params)
+                hess = self.f_hess(x)
             if np.all(np.isfinite(x)):
                 self.previous_x = x
         else:
@@ -574,7 +600,9 @@ class CostFuncWrapper:
         if self.n_eval > self.maxeval:
             self.update_progress_desc(value, grad, hess)
             self.interrupted = True
-            return value, grad
+            if self.use_jac:
+                return value, grad
+            return np.array(value)
 
         self.n_eval += 1
         if self.progressbar:
@@ -587,33 +615,39 @@ class CostFuncWrapper:
             else:
                 return value, grad
         else:
-            return value
+            return np.array(value)
 
-    def __call__(self, x, params):
+    def __call__(self, x):
         try:
-            return self.step(x, params)
+            return self.step(x)
         except (KeyboardInterrupt, StopIteration):
             self.interrupted = True
-            return self.step(self.x, params)
+            # Call step again so there's a change for the callback to trigger before we just raise StopIteration
+            # In optimize.minimize, this lets us break out and keep the optimizer state
+            return self.step(x)
 
-    def callback(self, xk):
-        if self.interrupted:
-            raise StopIteration
+    def callback(self, *args):
+        return not self.interrupted
 
     def update_progress_desc(
-        self, value: float, grad: np.float64 = None, hess: np.float64 = None
+        self,
+        value: float,
+        grad: np.ndarray | None = None,
+        hess: np.ndarray | None = None,
     ) -> None:
-        if isinstance(value, np.ndarray):
-            value = (value**2).sum()
+        if not self.progressbar:
+            return
 
-        if self.progressbar:
-            if grad is None:
-                self.progress.comment = self.desc.format(value)
+        if isinstance(value, np.ndarray):
+            value = (value**2).sum() / min(1, int(np.prod(value.shape)))
+
+        if grad is None:
+            self.progress.comment = self.desc.format(value)
+        else:
+            if hess is None:
+                norm_grad = np.linalg.norm(grad)
+                self.progress.comment = self.desc.format(value, norm_grad)
             else:
-                if hess is None:
-                    norm_grad = np.linalg.norm(grad)
-                    self.progress.comment = self.desc.format(value, norm_grad)
-                else:
-                    norm_grad = np.linalg.norm(grad)
-                    norm_hess = np.linalg.norm(hess)
-                    self.progress.comment = self.desc.format(value, norm_grad, norm_hess)
+                norm_grad = np.linalg.norm(grad)
+                norm_hess = np.linalg.norm(hess)
+                self.progress.comment = self.desc.format(value, norm_grad, norm_hess)
