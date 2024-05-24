@@ -42,6 +42,147 @@ def initialize_parameter(name, mod, value=5.0):
     return np.full(size, value)
 
 
+TO_ESTIMATE = [
+    "Theta",
+    "sigma_C",
+    "epsilon_VA",
+    "epsilon_KE",
+    "epsilon_KE_E",
+    "epsilon_VA_E",
+    "epsilon_G_R",
+    "epsilon_G_U",
+    "epsilon_C",
+    "epsilon_CE",
+    "epsilon_C_G",
+    "epsilon_C_M",
+    "epsilon_G_R_M",
+    "epsilon_G_U_M",
+    "epsilon_I_E_M",
+    "epsilon_I_M",
+    "epsilon_X",
+    "epsilon_X_E",
+]
+
+
+def initialize_econometric_estimates(mod, init_vals=None, default_value=0.5):
+    econometric_estimates = {}
+    init_vals = init_vals if init_vals is not None else {}
+    for name, value in init_vals.items():
+        econometric_estimates[name] = initialize_parameter(name, mod, value=value)
+
+    for name in [x for x in TO_ESTIMATE if x not in econometric_estimates]:
+        econometric_estimates[name] = initialize_parameter(
+            name, mod, value=default_value
+        )
+
+    return econometric_estimates
+
+
+def compute_initial_values(df, mod, init_vals=None, default_value=0.5):
+    sector_codes = mod.coords["i"]
+    energy_codes = mod.coords["k"]
+
+    initial_data = {
+        "income_tax_revenue": df.loc[("Tax", "Income"), "Factors"],
+        "production_tax_revenue": df.loc[("Tax", "Production"), "Activities"].loc[
+            sector_codes
+        ],
+        "factor_tax_revenue": df.loc["Factor Tax", "Activities"].loc[:, sector_codes],
+        "domestic_sales_tax_revenue": df.loc["Domestic Sales Tax", "Institution"].loc[
+            sector_codes
+        ],
+        "domestic_VAT_tax_revenue": df.loc["Domestic Sales Tax", "Activities"].loc[
+            sector_codes, sector_codes
+        ],
+        "import_sales_tax_revenue": df.loc["Import Sales Tax", "Institution"].loc[
+            sector_codes
+        ],
+        "import_VAT_tax_revenue": df.loc["Import Sales Tax", "Activities"].loc[
+            sector_codes, sector_codes
+        ],
+        "import_duty_revenue": df.loc[
+            ("Tax", "Import Duty"), "Imported Commodities"
+        ].loc[sector_codes],
+        "export_duty_revenue": df.loc[
+            ("Tax", "Export Duty"), "Domestic Commodities"
+        ].loc[sector_codes],
+        "energy_production_tax_revenue": df.loc[
+            ("Tax", "Production"), "Activities"
+        ].loc[energy_codes],
+        "energy_domestic_VAT_tax_revenue": df.loc[
+            "Domestic Sales Tax", "Activities"
+        ].loc[sector_codes, energy_codes],
+        "energy_domestic_sales_tax_revenue": df.loc[
+            "Domestic Sales Tax", "Institution"
+        ].loc[energy_codes],
+        "energy_import_VAT_tax_revenue": df.loc["Import Sales Tax", "Activities"].loc[
+            sector_codes, energy_codes
+        ],
+        "energy_import_sales_tax_revenue": df.loc[
+            "Import Sales Tax", "Institution"
+        ].loc[energy_codes],
+        "energy_import_duty_revenue": df.loc[
+            ("Tax", "Import Duty"), "Imported Commodities"
+        ].loc[energy_codes],
+        "energy_export_duty_revenue": df.loc[
+            ("Tax", "Import Duty"), "Domestic Commodities"
+        ].loc[energy_codes],
+        "energy_factor_tax_revenue": df.loc["Factor Tax", "Activities"].loc[
+            :, energy_codes
+        ],
+        "factor_demand": df.loc["Factors", "Activities"].loc[:, sector_codes],
+        "X": df.loc["Domestic Commodities", "Activities"].loc[
+            sector_codes, sector_codes
+        ],
+        "X_M": df.loc["Imported Commodities", "Activities"].loc[
+            sector_codes, sector_codes
+        ],
+        "Y": df["Activities"].loc[:, sector_codes].sum(axis=0),
+        "M": df.loc[:, "Imported Commodities"].loc[:, sector_codes].sum(axis=0),
+        "energy_factor_demand": df.loc["Factors", "Activities"].loc[:, energy_codes],
+        "X_E": df.loc["Domestic Commodities", "Activities"].loc[
+            sector_codes, energy_codes
+        ],
+        "X_E_M": df.loc["Imported Commodities", "Activities"].loc[
+            sector_codes, energy_codes
+        ],
+        "Y_E": df["Activities"].loc[:, energy_codes].sum(axis=0),
+        "M_E": df.loc[:, "Imported Commodities"].loc[:, energy_codes].sum(axis=0),
+        "Ex": df.loc["Domestic Commodities", ("Trade", "Rest of World")].loc[
+            sector_codes
+        ],
+        "Ex_E": df.loc["Domestic Commodities", ("Trade", "Rest of World")].loc[
+            energy_codes
+        ],
+        "household_electricity_demand": df.loc[
+            ("Factors", "Regulated Electricity"), ("Institution", "Household")
+        ],
+        "household_electricity_tax_revenue": df.loc[
+            ("Factor Tax", "Regulated Electricity"), ("Institution", "Household")
+        ],
+        "domestic_institution_demand": df.loc[
+            "Domestic Commodities", "Institution"
+        ].loc[sector_codes],
+        "import_institution_demand": df.loc["Imported Commodities", "Institution"].loc[
+            sector_codes
+        ],
+        "energy_domestic_institution_demand": df.loc[
+            "Domestic Commodities", "Institution"
+        ].loc[energy_codes],
+        "energy_import_institution_demand": df.loc[
+            "Imported Commodities", "Institution"
+        ].loc[energy_codes],
+        "supply_of_savings": df.loc[("Institution", "Investment")],
+        "T": df.loc[("Factors", "Labor"), ("Activities")].sum() / 0.6,
+    }
+
+    econometric_estimates = initialize_econometric_estimates(
+        mod, init_vals, default_value
+    )
+
+    return initial_data | econometric_estimates
+
+
 def make_and_check_solution(mod, **calibrated_variables):
     d = {}
     for obj in sorted(mod.variables) + sorted(mod.parameters):

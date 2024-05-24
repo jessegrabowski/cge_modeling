@@ -71,8 +71,9 @@ def plot_lines(
 
     Parameters
     ----------
-    idata: az.InferenceData
-        The InferenceData object returned by the model's simulate method.
+    result: az.InferenceData or dict of az.InferenceData
+        The value returned by the model's simulate method. This should be an InferenceData object or a dictionary of
+        idata with keys "euler" and "optimizer"
     mod: CGEModel
         The model object.
     n_cols: int, default 5
@@ -117,15 +118,25 @@ def plot_lines(
         legends = dict.fromkeys(legends, True)
         legends.update(dict.fromkeys(no_legend, False))
 
+    if "euler" not in idata and plot_euler:
+        raise ValueError(
+            'Cannot plot results of euler approximation, provided results has no "euler" group'
+        )
+    if "optimizer" not in idata and plot_optimizer:
+        raise ValueError(
+            'Cannot plot results of optimizer, provided results has no "optimizer" group'
+        )
+
     n_vars = len(var_names)
+    n_cols = min(n_cols, n_vars)
     gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_vars)
 
     figsize = figure_kwargs.get("figsize", (15, 9))
     dpi = figure_kwargs.get("dpi", 144)
 
     fig = plt.figure(figsize=figsize, dpi=dpi)
-
     cmap = "tab10" if cmap is None else cmap
+
     if cmap in plt.colormaps:
 
         def f_cmap(n):
@@ -138,30 +149,51 @@ def plot_lines(
         raise ValueError(f"Colormap {cmap} not found in matplotlib.")
 
     for idx, var in enumerate(var_names):
-        data = idata["euler"].variables[var]
-
-        n_lines = int(np.prod(data.values.shape[1:]))
-        cycler = plt.cycler(color=f_cmap(n_lines))
         axis = fig.add_subplot(gs[plot_locs[idx]])
-        axis.set_prop_cycle(cycler)
-
-        if data.ndim > 2:
-            data = data.stack(pair=data.dims[1:])
-        data.plot.line(x="step", ax=axis, add_legend=legends[var])
         axis.set(title=rename_dict.get(var, var), xlabel=None)
 
-        scatter_grid = np.full(
-            int(np.prod(idata["optimizer"].variables[var].shape)),
-            idata["euler"].variables.coords["step"].max(),
-        )
-        axis.scatter(
-            scatter_grid,
-            idata["optimizer"].variables[var].data.ravel(),
-            marker="*",
-            color="tab:red",
-            zorder=10,
-            s=100,
-        )
+        if plot_euler:
+            data = idata["euler"].variables[var]
+
+            n_lines = int(np.prod(data.values.shape[1:]))
+            cycler = plt.cycler(color=f_cmap(n_lines))
+            axis.set_prop_cycle(cycler)
+
+            if data.ndim > 2:
+                data = data.stack(pair=data.dims[1:])
+            data.plot.line(x="step", ax=axis, add_legend=legends[var])
+
+        if plot_optimizer:
+            final_value = (
+                1 if not plot_euler else idata["euler"].variables.coords["step"].max()
+            )
+            scatter_shape = np.prod(
+                idata["optimizer"].variables[var].shape, dtype="int"
+            )
+
+            initial_scatter = np.full(scatter_shape, 0)
+            final_scatter = np.full(scatter_shape, final_value)
+
+            if initial_values is None and plot_euler:
+                initial_values = idata["euler"].variables.sel(step=0).data
+
+            axis.scatter(
+                initial_scatter,
+                initial_values[var].ravel(),
+                marker="*",
+                color="tab:green",
+                zorder=10,
+                s=100,
+            )
+            axis.scatter(
+                final_scatter,
+                idata["optimizer"].variables[var].data.ravel(),
+                marker="*",
+                color="tab:red",
+                zorder=10,
+                s=100,
+            )
+
         [spine.set_visible(False) for spine in axis.spines.values()]
         axis.grid(ls="--", lw=0.5)
 
