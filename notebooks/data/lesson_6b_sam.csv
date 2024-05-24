@@ -1,18 +1,25 @@
-,,Factor,Factor,Institution,Institution,Institution,Domestic Commodity,Domestic Commodity,Domestic Commodity,Imported Commodity,Imported Commodity,Imported Commodity,Activity,Activity,Activity,Other,Other
-,,Capital,Labor,Household,Firm,Government,Agriculture,Industry,Services,Agriculture,Industry,Services,Agriculture,Industry,Services,Capital Investment,Rest of World
-Factor,Capital,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1008.9581648976248,1679.42929796632,3743.625546844228,0.0,0.0
-Factor,Labor,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,225.6023489682813,1749.506518239653,488.1398186704393,0.0,0.0
-Institution,Household,6432.013009708467,0.0,0.0,2463.2486858854304,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-Institution,Firm,0.0,2463.248685880296,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-Institution,Government,0.0,0.0,1308.6678406659046,0.0,0.0,134.66290287057083,947.9712495484898,250.2621049181411,0.0,286.13223317927395,0.0,0.0,0.0,0.0,0.0,0.0
-Domestic Commodity,Agriculture,0.0,0.0,1192.328959514397,0.0,355.0010969323083,0.0,0.0,0.0,0.0,0.0,0.0,1037.5009689579551,927.883030486014,1002.1606122614386,248.7015361895537,383.8635731589799
-Domestic Commodity,Industry,0.0,0.0,959.7216058455616,0.0,734.7678413758185,0.0,0.0,0.0,0.0,0.0,0.0,1968.4709509543843,3006.7038103152927,2903.896850802979,960.8715685348312,31.780591891986216
-Domestic Commodity,Services,0.0,0.0,3293.3164995480797,0.0,1782.797318000614,0.0,0.0,0.0,0.0,0.0,0.0,772.2444408556918,2254.7193131674417,1006.552475354445,174.85316348096637,110.15419845087813
-Imported Commodity,Agriculture,0.0,0.0,453.6868904762128,0.0,46.314312788328806,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-Imported Commodity,Industry,0.0,0.0,187.03955914416125,0.0,143.2016386587071,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-Imported Commodity,Services,0.0,0.0,89.98017581692996,0.0,918.4793856649436,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-Activity,Agriculture,0.0,0.0,0.0,0.0,0.0,5012.776874633769,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-Activity,Industry,0.0,0.0,0.0,0.0,0.0,0.0,9618.241970174717,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-Activity,Services,0.0,0.0,0.0,0.0,0.0,0.0,0.0,9144.375303943636,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-Other,Capital Investment,0.0,0.0,1410.520164583637,0.0,-1052.865262239405,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1026.7713658654234
-Other,Rest of World,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,500.0012032607827,44.108964625438205,1008.4595614816734,0.0,0.0,0.0,0.0,0.0
+﻿,,Factor,Factor,Institution,Institution,Institution,Domestic Commodity,Domestic Commodity,Domestic Commodity,Imported Commodity,Imported Commodity,Imported Commodity,Activity,Activity,Activity,Domestic Sales Tax,Domestic Sales Tax,Domestic Sales Tax,Import Sales Tax,Import Sales Tax,Import Sales Tax,Trade,
+,,Capital,Labor,Household,Investment,Government,Agriculture,Industry,Services,Agriculture,Industry,Services,Agriculture,Industry,Services,Agriculture,Industry,Services,Agriculture,Industry,Services,Rest of World,
+Factor,Capital,,,,,,,,,,,,1100,1700,4150,,,,,,,,6950
+Factor,Labor,,,,,,,,,,,,250,1800,550,,,,,,,,2600
+Institution,Household,6950,2600,,,,,,,,,,,,,,,,,,,,9550
+Institution,Investment,,,1850,,-900,,,,,,,,,,,,,,,,,950
+Institution,Government,,,,,,,,,,,,,,,150,1320,280,,,,,1750
+Domestic Commodity,Agriculture,,,1700,200,400,,,,,,,1120,930,1100,,,,,,,,5450
+Domestic Commodity,Industry,,,1200,800,900,,,,,,,2200,3120,3300,,,,,,,,11520
+Domestic Commodity,Services,,,3400,140,2750,,,,,,,830,2250,1100,,,,,,,,10470
+Imported Commodity,Agriculture,,,350,,,,,,,,,,,,,,,,,,,350
+Imported Commodity,Industry,,,30,,,,,,,,,,,,,,,,,,,30
+Imported Commodity,Services,,,100,,,,,,,,,,,,,,,,,,,100
+Activity,Agriculture,,,,,,5500,,,,,,,,,,,,,,,350,5850
+Activity,Industry,,,,,,,9800,,,,,,,,,,,,,,30,9830
+Activity,Services,,,,,,,,10200,,,,,,,,,,,,,100,10300
+Domestic Sales Tax,Agriculture,,,120,,,,,,,,,,,,,,,,,,,120
+Domestic Sales Tax,Industry,,,500,,,,,,,,,,,,,,,,,,,500
+Domestic Sales Tax,Services,,,200,,,,,,,,,,,,,,,,,,,200
+Import Sales Tax,Agriculture,,,0,,,,,,,,,,,,,,,,,,,0
+Import Sales Tax,Industry,,,100,,,,,,,,,,,,,,,,,,,100
+Import Sales Tax,Services,,,0,,,,,,,,,,,,,,,,,,,0
+Trade,Rest of World,,,,190,,150,430,90,,,,,,,,,,,,,,860
+,,6950,2600,9550,1330,3150,5650,10230,10290,0,0,0,5500,9800,10200,150,1320,280,0,0,0,480,
+,,0,0,0,380,1400,200,-1290,-180,-350,-30,-100,-350,-30,-100,,,,,,,-380,
