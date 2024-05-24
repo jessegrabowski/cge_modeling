@@ -1,0 +1,15 @@
+﻿,,Factor,Factor,Institution,Institution,Institution,Commodity,Commodity,Commodity,Activity,Activity,Activity,Other,Other
+,,Capital,Labor,Household,Firm,Government,Agriculture,Industry,Services,Agriculture,Industry,Services,Capital Investment,Rest of World
+Factor,Capital,,,,,,,,,1100,1700,4150,,
+Factor,Labor,,,,,,,,,250,1800,550,,
+Institution,Household,6950,,,2600,,,,,,,,,
+Institution,Firm,,2600,,,,,,,,,,,
+Institution,Government,,,1400,,,150,1320,280,,,,,
+Commodity,Agriculture,,,1700,,400,,,,1120,930,1100,200,350
+Commodity,Industry,,,1200,,900,,,,2200,3120,3300,800,30
+Commodity,Services,,,3400,,2750,,,,830,2250,1100,140,100
+Activity,Agriculture,,,,,,5500,,,,,,,
+Activity,Industry,,,,,,,9800,,,,,,
+Activity,Services,,,,,,,,10200,,,,,
+Other,Capital Investment,,,1850,,-900,,,,,,,,190
+Other,Rest of World,,,,,,150,430,90,,,,,
