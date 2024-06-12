@@ -546,11 +546,13 @@ class CostFuncWrapper:
         f_jac: Optional[Callable] = None,
         f_hess: Optional[Callable] = None,
         maxeval: int = 5000,
+        tol: float = 1e-6,
         progressbar: bool = True,
         update_every: int = 10,
     ):
         self.n_eval = 0
         self.maxeval = maxeval
+        self.tol = tol
         self.f = f if args is None else ft.partial(f, theta=args)
         self.args = args
 
@@ -619,15 +621,20 @@ class CostFuncWrapper:
 
     def __call__(self, x):
         try:
-            return self.step(x)
+            new_x = self.step(x)
+            value = np.array(new_x[0]) if isinstance(new_x, tuple) else np.array(new_x)
+            self.interrupted = (self.n_eval > self.maxeval) or (value < self.tol)
+            return new_x
+
         except (KeyboardInterrupt, StopIteration):
             self.interrupted = True
-            # Call step again so there's a change for the callback to trigger before we just raise StopIteration
+            # Call step again so there's a chance for the callback to trigger before we just raise StopIteration
             # In optimize.minimize, this lets us break out and keep the optimizer state
             return self.step(x)
 
-    def callback(self, *args):
-        return not self.interrupted
+    def callback(self, x):
+        if self.interrupted:
+            raise StopIteration
 
     def update_progress_desc(
         self,
@@ -638,7 +645,8 @@ class CostFuncWrapper:
         if not self.progressbar:
             return
 
-        if isinstance(value, np.ndarray):
+        value = np.array(value)
+        if value.shape != ():
             value = (value**2).sum() / min(1, int(np.prod(value.shape)))
 
         if grad is None:
