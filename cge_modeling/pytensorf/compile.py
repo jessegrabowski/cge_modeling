@@ -4,7 +4,9 @@ from typing import Literal, cast
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
+from pytensor.compile import Supervisor, mode
 from pytensor.compile.builders import OpFromGraph
+from pytensor.graph import FunctionGraph
 from sympytensor import as_tensor
 
 from cge_modeling.tools.parsing import normalize_eq
@@ -130,7 +132,11 @@ def compile_cge_model_to_pytensor(
     n_eq = flat_equations.type.shape[0]
     inputs = (variables, parameters)
 
-    assert all([x in cache.values() for x in inputs[0] + inputs[1]])
+    if not all([x in cache.values() for x in inputs[0] + inputs[1]]):
+        missing_inputs = set(inputs[0] + inputs[1]) - set(cache.values())
+        raise ValueError(
+            f"Cannot compile pytensor graph because the following inputs are missing: {missing_inputs}"
+        )
 
     required_inputs = get_required_inputs(flat_equations)
     missing_inputs = set(required_inputs) - set(variables + parameters)
@@ -142,7 +148,7 @@ def compile_cge_model_to_pytensor(
         )
     if extra_inputs:
         raise ValueError(
-            f"Cannot compile pytensor graph because the following inputs are extraneous: {extra_inputs}"
+            f"Cannot compile pytensor graph because the following inputs were provided but are not required: {extra_inputs}"
         )
 
     if cge_model.parse_equations_to_sympy:
@@ -181,7 +187,7 @@ def compile_cge_model_to_pytensor(
     if inverse_method == "pinv":
         jac_inv = pt.linalg.pinv(jac)
     elif inverse_method == "solve":
-        jac_inv = pt.linalg.solve(jac, pt.identity_like(jac), check_finite=False)
+        jac_inv = pt.linalg.solve(jac, pt.eye(jac.shape[0]), check_finite=False)
     elif inverse_method == "svd":
         U, S, V = pt.linalg.svd(jac)
         S_inv = pt.where(pt.gt(S, 1e-8), 1 / S, 0)
@@ -359,30 +365,26 @@ def euler_approximation(
 
 def pytensor_euler_step(system, A_inv, B, variables, parameters):
     x_list = at_least_list(variables)
+    x_shapes = [x.type.shape for x in x_list]
+
     theta_list = at_least_list(parameters)
 
-    theta_final = pt.concatenate(
-        [pt.atleast_1d(clone_and_rename(x, "_final")).flatten() for x in theta_list],
-        axis=-1,
-    )
-    theta0 = pt.concatenate(
-        [pt.atleast_1d(clone_and_rename(x, "_initial")).flatten() for x in theta_list],
-        axis=-1,
-    )
     n_steps = pt.iscalar("n_steps")
+    theta_final = [x.clone(name=f"{x.name}_final") for x in theta_list]
+    theta0 = [x.clone(name=f"{x.name}_initial") for x in theta_list]
 
-    x_shapes = [x.type.shape for x in x_list]
-    theta_shapes = [theta.type.shape for theta in theta_list]
+    step_size = [(x - y) / n_steps for x, y in zip(theta_final, theta0)]
 
-    dtheta = theta_final - theta0
-    step_size = dtheta / n_steps
-
-    Bv = B @ pt.atleast_1d(step_size)
-    Bv.name = "Bv"
-    # Bv = pytensor.gradient.Rop(system,
-    #                            pt.concatenate([x.flatten() for x in parameters], axis=-1),
-    #                            pt.atleast_1d(step_size))
-    #
+    try:
+        Bv = pytensor.gradient.Rop(system, parameters, step_size)
+    except NotImplementedError:
+        _log.warning(
+            "Tried to compute jvp of model with respect to parameters but failed; an Op in your model does not "
+            "have an implemented Rop method. Falling back to direct computation via jacobian. This is slow and "
+            "memory intensive for large models."
+        )
+        v = flatten_equations(step_size)
+        Bv = B @ v
 
     step = -A_inv @ Bv
     step.name = "euler_step"
@@ -390,10 +392,118 @@ def pytensor_euler_step(system, A_inv, B, variables, parameters):
     delta_x = flat_tensor_to_ragged_list(step, x_shapes)
     x_next = [x + dx for x, dx in zip(x_list, delta_x)]
 
-    delta_theta = flat_tensor_to_ragged_list(step_size, theta_shapes)
-    theta_next = [theta + dtheta for theta, dtheta in zip(theta_list, delta_theta)]
+    theta_next = [theta + dtheta for theta, dtheta in zip(theta_list, step_size)]
 
-    return x_next + theta_next
+    inputs = x_list + theta_list + theta0 + theta_final + [n_steps]
+    outputs = [x_next, theta_next]
+    return inputs, outputs
+
+
+def jax_loss_grad_hessp(system, variables, parameters):
+    import jax
+    import jax.numpy as jnp
+    from pytensor.link.jax.dispatch import jax_funcify
+
+    loss = (system**2).sum()
+    fgraph = FunctionGraph(inputs=variables + parameters, outputs=[loss], clone=True)
+    fgraph.attach_feature(
+        Supervisor(
+            input
+            for input in fgraph.inputs
+            if not (hasattr(fgraph, "destroyers") and fgraph.has_destroyers([input]))
+        )
+    )
+    mode.JAX.optimizer.rewrite(fgraph)
+    f_loss_jax = jax_funcify(fgraph)
+
+    x_shapes = [x.type.shape for x in variables]
+    theta_shapes = [x.type.shape for x in parameters]
+
+    def f_loss_wrapped(x, theta):
+        xs = flat_tensor_to_ragged_list(x, x_shapes)
+        thetas = flat_tensor_to_ragged_list(theta, theta_shapes)
+
+        return f_loss_jax(*xs, *thetas)[0]
+
+    f_loss = jax.jit(f_loss_wrapped)
+
+    grad = jax.grad(f_loss, 0)
+
+    def f_grad_jax(x, theta):
+        return jnp.stack(grad(x, theta))
+
+    f_grad = jax.jit(f_grad_jax)
+
+    def f_hessp_jax(x, p, theta):
+        _, u = jax.jvp(lambda x: f_grad_jax(x, theta), (x,), (p,))
+        return jnp.stack(u)
+
+    f_hessp = jax.jit(f_hessp_jax)
+
+    return f_loss, f_grad, f_hessp
+
+
+def jax_euler_step(system, variables, parameters):
+    import jax
+    import jax.numpy as jnp
+    from pytensor.link.jax.dispatch import jax_funcify
+
+    fgraph = FunctionGraph(inputs=variables + parameters, outputs=[system], clone=True)
+    fgraph.attach_feature(
+        Supervisor(
+            input
+            for input in fgraph.inputs
+            if not (hasattr(fgraph, "destroyers") and fgraph.has_destroyers([input]))
+        )
+    )
+    mode.JAX.optimizer.rewrite(fgraph)
+    f_system_jax = jax_funcify(fgraph)
+
+    x_shapes = [x.type.shape for x in variables]
+    theta_shapes = [x.type.shape for x in parameters]
+
+    variable_names = [x.name for x in variables]
+    parameter_names = [x.name for x in parameters]
+
+    def f_sys_wrapped(x, theta):
+        xs = flat_tensor_to_ragged_list(x, x_shapes)
+        thetas = flat_tensor_to_ragged_list(theta, theta_shapes)
+
+        return f_system_jax(*xs, *thetas)[0]
+
+    f_sys = jax.jit(f_sys_wrapped)
+
+    def step(**kwargs):
+        n_steps = kwargs.pop("n_steps")
+        x_list = [kwargs.pop(x) for x in variable_names]
+
+        theta_list = [kwargs.pop(x) for x in parameter_names]
+        theta0 = [kwargs.pop(f"{x}_initial") for x in parameter_names]
+        theta_final = [kwargs.pop(f"{x}_final") for x in parameter_names]
+
+        x_vec = jnp.concatenate([jnp.ravel(x) for x in x_list])
+        theta_vec = jnp.concatenate([jnp.ravel(x) for x in theta_list])
+        theta0_vec = jnp.concatenate([jnp.ravel(x) for x in theta0])
+        theta_final_vec = jnp.concatenate([jnp.ravel(x) for x in theta_final])
+
+        step_size = (theta_final_vec - theta0_vec) / n_steps
+
+        A = jax.jacobian(f_sys, 0)(x_vec, theta_vec)
+        A_inv = jax.scipy.linalg.solve(A, jnp.eye(A.shape[0]))
+
+        _, Bv = jax.jvp(lambda theta: f_sys(x_vec, theta), (theta_vec,), (step_size,))
+        step = -A_inv @ Bv
+
+        x_next_vec = x_vec + step
+        theta_next_vec = theta_vec + step_size
+
+        x_next = flat_tensor_to_ragged_list(x_next_vec, x_shapes)
+        theta_next = flat_tensor_to_ragged_list(theta_next_vec, theta_shapes)
+
+        return x_next, theta_next
+
+    f_step = jax.jit(step)
+    return f_step
 
 
 def compile_euler_approximation_function(
