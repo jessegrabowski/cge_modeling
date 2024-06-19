@@ -1,8 +1,11 @@
 import functools as ft
 import logging
+import os.path
+import re
 import warnings
 from copy import deepcopy
 import time
+from datetime import datetime
 from typing import Callable, Literal, Optional, Union, cast
 
 import numba as nb
@@ -12,6 +15,7 @@ import pytensor.tensor as pt
 import sympy as sp
 import xarray as xr
 from arviz import InferenceData
+from cloudpickle import cloudpickle
 from fastprogress import progress_bar
 from numba_progress import ProgressBar as NumbaProgressBar
 from scipy import optimize
@@ -43,6 +47,8 @@ from cge_modeling.pytensorf.compile import (
     euler_approximation,
     pytensor_euler_step,
     pytensor_objects_from_CGEModel,
+    jax_euler_step,
+    jax_loss_grad_hessp,
 )
 from cge_modeling.tools.numba_tools import euler_approx, numba_lambdify
 from cge_modeling.tools.output_tools import (
@@ -51,7 +57,6 @@ from cge_modeling.tools.output_tools import (
     optimizer_result_to_idata,
 )
 from cge_modeling.tools.pytensor_tools import (
-    get_required_inputs,
     make_jacobian,
     rewrite_pregrad,
 )
@@ -781,56 +786,63 @@ class CGEModel:
                 self.f_jac = f_jac
 
         if "minimize" in functions_to_compile:
-            _log.info("Computing sum of squared errors")
-            resid = (system**2).sum()
-            rewrite_pregrad(resid)
+            f_resid, f_grad, f_hess, f_hessp = None, None, None, None
 
-            _log.info("Computing SSE gradient")
-            grad = pytensor.grad(resid, variables)
-            grad = pt.specify_shape(
-                pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]),
-                self.n_variables,
-            )
-            # View grad as the function, compute jvp instead  (hessp)
-            _log.info("Computing SSE Jacobian")
-            # hessp, p = make_jacobian(grad, variables, return_jvp=True)
-            hess = make_jacobian(grad, variables)
+            if mode == "JAX":
+                f_resid, f_grad, f_hessp = jax_loss_grad_hessp(
+                    system, variables, parameters
+                )
+            else:
+                _log.info("Computing sum of squared errors")
+                resid = (system**2).mean()
+                rewrite_pregrad(resid)
 
-            _log.info(
-                f"Compiling SSE functions (sse, gradient, jacobian) into {text_mode} function"
-            )
+                _log.info("Computing SSE gradient")
+                grad = pytensor.grad(resid, variables)
+                grad = pt.specify_shape(
+                    pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]),
+                    self.n_variables,
+                )
+                # View grad as the function, compute jvp instead  (hessp)
+                # _log.info("Computing SSE Jacobian")
+                # hessp, p = make_jacobian(grad, variables, return_jvp=True)
+                hess = make_jacobian(grad, variables)
 
-            # f_resid_grad_hess = pytensor.function(inputs=inputs, outputs=[resid, grad, hess], mode=mode)
-            # f_resid_grad_hess.trust_inputs = True
-            #
-            # def f_resid(*args, **kwargs):
-            #     return f_resid_grad_hess(*args, **kwargs)[0]
-            #
-            # def f_grad(*args, **kwargs):
-            #     return f_resid_grad_hess(*args, **kwargs)[1]
-            #
-            # def f_hess(*args, **kwargs):
-            #     return f_resid_grad_hess(*args, **kwargs)[2]
+                _log.info(
+                    f"Compiling SSE functions (sse, gradient, jacobian) into {text_mode} function"
+                )
 
-            f_resid = pytensor.function(inputs=inputs, outputs=resid, mode=mode)
-            f_resid.trust_inputs = True
+                # f_resid_grad_hess = pytensor.function(inputs=inputs, outputs=[resid, grad, hess], mode=mode)
+                # f_resid_grad_hess.trust_inputs = True
+                #
+                # def f_resid(*args, **kwargs):
+                #     return f_resid_grad_hess(*args, **kwargs)[0]
+                #
+                # def f_grad(*args, **kwargs):
+                #     return f_resid_grad_hess(*args, **kwargs)[1]
+                #
+                # def f_hess(*args, **kwargs):
+                #     return f_resid_grad_hess(*args, **kwargs)[2]
 
-            f_grad = pytensor.function(inputs=inputs, outputs=grad, mode=mode)
-            f_grad.trust_inputs = True
+                f_resid = pytensor.function(inputs=inputs, outputs=resid, mode=mode)
+                f_resid.trust_inputs = True
 
-            # f_hessp = pytensor.function(inputs=inputs, outputs=hessp, mode=mode)
-            # f_hessp.trust_inputs = True
+                f_grad = pytensor.function(inputs=inputs, outputs=grad, mode=mode)
+                f_grad.trust_inputs = True
 
-            f_hess = pytensor.function(inputs=inputs, outputs=hess, mode=mode)
-            f_hess.trust_inputs = True
+                # f_hessp = pytensor.function(inputs=inputs, outputs=hessp, mode=mode)
+                # f_hessp.trust_inputs = True
 
-            # f_resid_grad = pytensor.function(inputs=inputs, outputs=[resid, grad], mode=mode)
-            # f_resid_grad.trust_inputs = True
+                f_hess = pytensor.function(inputs=inputs, outputs=hess, mode=mode)
+                f_hess.trust_inputs = True
+
+                # f_resid_grad = pytensor.function(inputs=inputs, outputs=[resid, grad], mode=mode)
+                # f_resid_grad.trust_inputs = True
 
             self.f_resid = f_resid
             self.f_grad = f_grad
             self.f_hess = f_hess
-            # self.f_hessp = f_hessp
+            self.f_hessp = f_hessp
             # self.f_resid_grad = f_resid_grad
 
         if "euler" in functions_to_compile:
@@ -861,10 +873,16 @@ class CGEModel:
                 self.f_euler = __pytensor_euler_helper
 
             else:
-                outputs = pytensor_euler_step(system, jac_inv, B, variables, parameters)
-                inputs = get_required_inputs(outputs)
-                f_step = pytensor.function(inputs, outputs, mode=mode)
-                f_step.trust_inputs = True
+                if mode == "JAX":
+                    f_step = jax_euler_step(system, variables, parameters)
+                else:
+                    inputs, outputs = pytensor_euler_step(
+                        system, jac_inv, B, variables, parameters
+                    )
+                    # inputs = get_required_inputs(outputs)
+                    f_step = pytensor.function(inputs, outputs, mode=mode)
+                    f_step.trust_inputs = True
+                    self.f_step = f_step
 
                 def f_euler(
                     theta_final, n_steps, progressbar=True, update_freq=1, **data
@@ -897,19 +915,22 @@ class CGEModel:
 
                     for t in progress:
                         start = time.time()
-                        flat_current_step = f_step(
+                        current_step = f_step(
                             **current_params,
                             **current_variables,
                             **theta_final,
                             **theta_initial,
                             n_steps=n_steps,
                         )
-                        current_variable_vals = flat_current_step[
-                            : len(self.variable_names)
-                        ]
-                        current_parameter_vals = flat_current_step[
-                            len(self.variable_names) :
-                        ]
+
+                        current_variable_vals, current_parameter_vals = current_step
+
+                        # current_variable_vals = flat_current_step[
+                        #     : len(self.variable_names)
+                        # ]
+                        # current_parameter_vals = flat_current_step[
+                        #     len(self.variable_names) :
+                        # ]
 
                         current_variables = {
                             k: current_variable_vals[i]
@@ -921,6 +942,7 @@ class CGEModel:
                         }
 
                         errors = self.f_system(**current_variables, **current_params)
+
                         rmse = (errors**2).sum() / min(1, int(np.prod(errors.shape)))
                         end = time.time()
                         elapsed = end - start
@@ -1147,6 +1169,8 @@ class CGEModel:
 
         use_hess = optimizer_kwargs.pop("use_hess", None)
         method = optimizer_kwargs.pop("method", "hybr")
+        tol = optimizer_kwargs.pop("tol", 1e-6)
+        _ = optimizer_kwargs.pop("use_hessp")
 
         if use_hess:
             _log.warning(
@@ -1187,6 +1211,7 @@ class CGEModel:
             args=theta_final,
             f_jac=f_jac if use_jac else None,
             progressbar=progressbar,
+            tol=tol,
         )
 
         f_optim = ft.partial(
@@ -1218,6 +1243,7 @@ class CGEModel:
         f_resid = self.f_resid
         f_grad = self.f_grad
         f_hess = self.f_hess
+        f_hessp = self.f_hessp
         free_variables = self.variables
 
         if not use_jac and use_hess:
@@ -1245,7 +1271,7 @@ class CGEModel:
                 f_hess, fixed_values, self.variables, self.coords
             )
 
-        if self._compile_backend == "pytensor":
+        if self._compile_backend == "pytensor" and self.mode != "JAX":
             parameters = self.parameters
             coords = self.coords
 
@@ -1261,6 +1287,7 @@ class CGEModel:
 
         x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
+        tol = optimizer_kwargs.pop("tol", 1e-6)
 
         objective = CostFuncWrapper(
             maxeval=maxeval,
@@ -1269,6 +1296,7 @@ class CGEModel:
             f_jac=f_grad if use_jac else None,
             f_hess=f_hess if use_hess else None,
             progressbar=progressbar,
+            tol=tol,
         )
 
         f_optim = ft.partial(
@@ -1277,6 +1305,7 @@ class CGEModel:
             x0,
             jac=use_jac or None,
             hess=objective.f_hess if use_hess else None,
+            hessp=lambda x, p: f_hessp(x, p, theta_final) if use_hessp else None,
             callback=objective.callback,
             **optimizer_kwargs,
         )
@@ -1404,6 +1433,10 @@ class CGEModel:
         optimizer_mode: Literal["root", "minimize"] = "root",
         n_iter_euler=10_000,
         compile_kwargs=None,
+        save_results: bool = False,
+        overwrite: bool = False,
+        output_path: str = "results/",
+        simulation_name: str | None = None,
         **optimizer_kwargs,
     ):
         """
@@ -1466,6 +1499,15 @@ class CGEModel:
             Additional keyword arguments to pass to the optimizer. See the docstring for scipy.optimize.root or
             scipy.optimize.minimize for details.
 
+        save_results: bool, optional
+            If True, result object will be pickled and saved. Defaults to True.
+
+        output_path: str, optional
+            The path to save the result object. Defaults to 'results'.
+
+        simulation_name: str, optional
+            The name of the simulation. Defaults to '{date}-{time}'. Used to name the saved result object.
+
         Returns
         -------
         result: Result or InferenceData
@@ -1473,6 +1515,19 @@ class CGEModel:
             use_euler_approximation is True, an InferenceData object containing the Euler approximation will be returned
             instead.
         """
+        if simulation_name is None:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            simulation_name = f"Simulation_{today_str}"
+            if use_euler_approximation:
+                simulation_name += f"_Euler[steps={n_iter_euler}]"
+            if use_optimizer:
+                simulation_name += f'_{optimizer_mode}[{",".join([f"{k}={v}" for k, v in optimizer_kwargs.items()])}]'
+        if not overwrite and os.path.exists(
+            os.path.join(output_path, simulation_name + ".pkl")
+        ):
+            res = read_results(output_path, simulation_name)
+            return res
+
         if not self._compiled:
             if compile_kwargs is None:
                 to_compile = []
@@ -1489,9 +1544,26 @@ class CGEModel:
             x0_var_param = deepcopy(initial_state.to_dict()["fitted"])
         elif isinstance(initial_state, dict):
             x0_var_param = deepcopy(initial_state)
+        elif isinstance(initial_state, xr.Dataset):
+            x0_var_param = {
+                x.name: initial_state.variables[x.name].values for x in self.variables
+            }
+            x0_var_param.update(
+                {
+                    x.name: initial_state.parameters[x.name].values
+                    for x in self.parameters
+                }
+            )
         else:
             raise ValueError(
                 f"initial_state must be a Result or a dict of initial values, found {type(initial_state)}"
+            )
+
+        if not all(
+            x in x0_var_param for x in self.variable_names + self.parameter_names
+        ):
+            raise ValueError(
+                f"initial_state must contain values for all variables and parameters in the model. Found {initial_state.keys()}"
             )
 
         final_param_dict = deepcopy(x0_var_param)
@@ -1547,9 +1619,19 @@ class CGEModel:
                     "returned for diagnostic purposes only"
                 )
 
-            idata_optim = optimizer_result_to_idata(res, theta_simulation, self)
+            idata_optim = optimizer_result_to_idata(
+                res, theta_simulation, initial_state, self
+            )
             return_values["optimizer"] = idata_optim
             return_values["optim_res"] = res
+
+        if save_results:
+            write_results(
+                return_values,
+                output_path=output_path,
+                filename=simulation_name,
+                overwrite=overwrite,
+            )
 
         return return_values
 
@@ -1629,7 +1711,7 @@ class CGEModel:
             longest_name = max(len(x) for x in self.unpacked_equation_names)
 
             _log.info("\n")
-            _log.info(f'{"Equation":<{longest_name + 10}}', "Residual")
+            _log.info(f'{"Equation":<{longest_name + 10}}' + "Residual")
             _log.info("=" * 100)
 
             for eq_name, resid in zip(self.unpacked_equation_names, errors):
@@ -1637,6 +1719,65 @@ class CGEModel:
                 pad = "" if is_negative else " "
                 if abs(resid) > tol:
                     _log.info(f"{eq_name:<{longest_name + 10}}{pad}{resid:0.6f}")
+
+
+def write_results(results, output_path, filename=None, overwrite=False):
+    # Check if the output path exists, create it if it doesn't
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+
+    # Use today's date as the filename if filename is None
+    if filename is None:
+        filename = datetime.today().strftime("%Y-%m-%d") + ".pkl"
+    if not filename.endswith(".pkl"):
+        filename = filename + ".pkl"
+
+    base_filename, ext = os.path.splitext(filename)
+    new_filename = base_filename + ext
+    counter = 1
+
+    if not overwrite:
+        while os.path.exists(os.path.join(output_path, new_filename)):
+            new_filename = f"{base_filename}({counter}){ext}"
+            counter += 1
+    else:
+        if os.path.exists(os.path.join(output_path, new_filename)):
+            _log.warning(
+                f"Overwriting existing file found at {os.path.join(output_path, new_filename)}"
+            )
+
+    with open(os.path.join(output_path, new_filename), "wb") as f:
+        cloudpickle.dump(results, f)
+
+    _log.info(f"Results saved to {os.path.join(output_path, new_filename)}")
+
+
+def read_results(output_path, filename):
+    ext = "pkl"
+    if not filename.endswith(ext):
+        base_filename = filename
+        filename += f".{ext}"
+    else:
+        base_filename = filename.replace(ext, "")
+
+    max_suffix = 0
+    pattern = re.compile(rf"^{re.escape(base_filename)}\((\d+)\)\.{ext}$")
+
+    for fname in os.listdir(output_path):
+        match = pattern.match(fname)
+        if match:
+            suffix = int(match.group(1))
+            if suffix > max_suffix:
+                max_suffix = suffix
+
+    if max_suffix > 0:
+        filename = f"{base_filename}({max_suffix}).{ext}"
+
+    with open(os.path.join(output_path, filename), "rb") as f:
+        results = cloudpickle.load(f)
+
+    _log.info(f"Results loaded from {os.path.join(output_path, filename)}")
+    return results
 
 
 def recursive_solve_symbolic(equations, known_values=None, max_iter=100):
