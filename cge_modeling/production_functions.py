@@ -104,6 +104,7 @@ def cobb_douglass(
     output_price: str,
     factor_shares: str,
     TFP: str = "1",
+    use_value_definition: bool = False,
 ) -> tuple[str, ...]:
     """
     Generate string equations representing a Cobb-Douglas production process.
@@ -165,17 +166,32 @@ def cobb_douglass(
         [factors, factor_prices, factor_shares],
     )
 
-    production_inner_template = Template("$factor ** ($factor_share)")
-    production_inner = [
-        production_inner_template.safe_substitute(
-            factor=factor, factor_share=factor_share
-        )
-        for factor, factor_share in zip(factors, factor_shares)
-    ]
+    if not use_value_definition:
+        production_inner_template = Template("$factor ** ($factor_share)")
+        production_inner = [
+            production_inner_template.safe_substitute(
+                factor=factor, factor_share=factor_share
+            )
+            for factor, factor_share in zip(factors, factor_shares)
+        ]
 
-    eq_production = Template(
-        "$output = $TFP * " + " * ".join(production_inner)
-    ).safe_substitute(output=output, TFP=TFP)
+        eq_production = Template(
+            "$output = $TFP * " + " * ".join(production_inner)
+        ).safe_substitute(output=output, TFP=TFP)
+    else:
+        total_factor_value = " + ".join(
+            [
+                f"{factor_price} * {factor}"
+                for factor_price, factor in zip(factor_prices, factors)
+            ]
+        )
+        eq_production = Template(
+            "$output * $output_price = $total_factor_value",
+        ).safe_substitute(
+            output=output,
+            output_price=output_price,
+            total_factor_value=total_factor_value,
+        )
 
     factor_demand_template = Template(
         "$factor = ($factor_share) * $output * ($output_price) / ($factor_price)"
@@ -207,6 +223,7 @@ def CES(
     factor_shares: Union[str, list[str, ...]],
     epsilon: str,
     expand_price_dim: Literal["input", "output", "both", None] = None,
+    use_value_definition=False,
     *args,
     **kwargs,
 ) -> tuple[str, ...]:
@@ -271,22 +288,37 @@ def CES(
         [factors, factor_prices, factor_shares],
     )
 
-    production_inner_template = Template(
-        "($factor_shares) * $factor ** (($epsilon - 1) / $epsilon)"
-    )
-
-    production_inner = [
-        production_inner_template.safe_substitute(
-            factor=factor, factor_shares=factor_share, epsilon=epsilon
+    if not use_value_definition:
+        production_inner_template = Template(
+            "($factor_shares) * $factor ** (($epsilon - 1) / $epsilon)"
         )
-        for factor, factor_share in zip(factors, factor_shares)
-    ]
 
-    eq_production = Template(
-        "$output = $TFP * ($inner) ** ($epsilon / ($epsilon - 1))"
-    ).safe_substitute(
-        output=output, inner=" + ".join(production_inner), TFP=TFP, epsilon=epsilon
-    )
+        production_inner = [
+            production_inner_template.safe_substitute(
+                factor=factor, factor_shares=factor_share, epsilon=epsilon
+            )
+            for factor, factor_share in zip(factors, factor_shares)
+        ]
+
+        eq_production = Template(
+            "$output = $TFP * ($inner) ** ($epsilon / ($epsilon - 1))"
+        ).safe_substitute(
+            output=output, inner=" + ".join(production_inner), TFP=TFP, epsilon=epsilon
+        )
+    else:
+        total_factor_value = " + ".join(
+            [
+                f"{factor_price} * {factor}"
+                for factor_price, factor in zip(factor_prices, factors)
+            ]
+        )
+        eq_production = Template(
+            "$output * $output_price = $total_factor_value",
+        ).safe_substitute(
+            output=output,
+            output_price=output_price,
+            total_factor_value=total_factor_value,
+        )
 
     factor_demand_template = Template(
         "$factor = $output / $TFP * (($factor_share) * $output_price * $TFP / ($factor_price)) ** "
@@ -327,6 +359,7 @@ def dixit_stiglitz(
     backend: BACKEND_TYPE = "numba",
     TFP: Optional[str] = None,
     factor_shares: Optional[str] = None,
+    use_value_definition=True,
 ) -> tuple[str, str]:
     """
     Generate string equations representing a Dixit-Stiglitz production process.
@@ -425,14 +458,24 @@ def dixit_stiglitz(
             f"backend must be one of 'numba' or 'pytensor', found {backend}"
         )
 
-    production_function = Template(f"$output = {TFP_str}{rhs_str}").safe_substitute(
-        output=output,
-        TFP=TFP,
-        kernel=kernel,
-        epsilon=epsilon,
-        dims=dims,
-        dim_len=dim_len,
-    )
+    if not use_value_definition:
+        production_function = Template(f"$output = {TFP_str}{rhs_str}").safe_substitute(
+            output=output,
+            TFP=TFP,
+            kernel=kernel,
+            epsilon=epsilon,
+            dims=dims,
+            dim_len=dim_len,
+        )
+    else:
+        production_function = Template(
+            "$output * $output_price = ($factor_prices * $factors).sum()",
+        ).safe_substitute(
+            output=output,
+            output_price=output_price,
+            factor_prices=factor_prices,
+            factors=factors,
+        )
 
     demand_template = f"$factor = $output / {TFP_str}({TFP_str}{share_str}$output_price / $factor_price) ** $epsilon"
 
