@@ -6,7 +6,12 @@ from cge_modeling.tools.output_tools import display_info_as_table, latex_print_e
 import logging
 
 _log = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+
+if not logging.root.handlers:
+    _log.setLevel(logging.INFO)
+    if len(_log.handlers) == 0:
+        handler = logging.StreamHandler()
+        _log.addHandler(handler)
 
 
 __all__ = [
