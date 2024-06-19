@@ -280,7 +280,10 @@ def plot_kateplot(
     )
     if "optimizer" in idata:
         post_data = np.concatenate(
-            [idata["optimizer"].variables[var].data.ravel() for var in var_names]
+            [
+                idata["optimizer"].isel(step=-1).variables[var].data.ravel()
+                for var in var_names
+            ]
         )
     else:
         post_data = np.concatenate(
@@ -314,9 +317,15 @@ def plot_kateplot(
     return fig
 
 
-def _compute_bar_data(data, initial_data, metric):
+def _compute_bar_data(data, initial_data, metric, threshold=1e-6):
     if metric == "pct_change":
-        return (data - initial_data) / initial_data
+        pct_change = np.divide(
+            data - initial_data,
+            initial_data,
+            where=initial_data > threshold,
+            out=np.zeros_like(data),
+        )
+        return pct_change
     elif metric == "change":
         return data - initial_data
     elif metric == "abs_change":
@@ -336,11 +345,13 @@ def _plot_one_bar(
     initial_data,
     ax,
     drop_vars,
+    group_dict=None,
     orientation="v",
     metric: Literal[
         "pct_change", "change", "abs_change", "final", "initial", "both"
     ] = "pct_change",
     legend=True,
+    threshhold=1e-6,
 ):
     try:
         data = data.to_dataframe().droplevel(level=drop_vars, axis=0)
@@ -352,18 +363,29 @@ def _plot_one_bar(
             .loc[:, ["data", "name"]]
             .set_index("name")
         )
+    if "step" in data.columns:
+        data = data.drop(columns=["step"])
+    if "step" in initial_data.columns:
+        initial_data = initial_data.drop(columns=["step"])
+    if group_dict is not None:
+        coord_dict = group_dict.get(data.index.name)
+        if coord_dict is not None:
+            data["group"] = data.index.map(lambda x: coord_dict[x])
+            initial_data["group"] = initial_data.index.map(lambda x: coord_dict[x])
 
-    to_plot = _compute_bar_data(data, initial_data, metric)
+            data = data.groupby("group").sum()
+            initial_data = initial_data.groupby("group").sum()
 
-    if "step" in to_plot.columns:
-        to_plot = to_plot.drop(columns=["step"])
+    to_plot = _compute_bar_data(data, initial_data, metric, threshhold)
 
     if orientation == "v":
+        # to_plot.plot.bar(ax=ax, legend='', facecolor='none', edgecolor="black")
         to_plot.plot.bar(ax=ax, legend=legend)
-        ax.axhline(0, color="black", lw=0.5)
+        ax.axhline(0, color="black", lw=2.0)
     else:
+        # to_plot.plot.barh(ax=ax, legend='', facecolor='none', edgecolor="black")
         to_plot.plot.barh(ax=ax, legend=legend)
-        ax.axvline(0, color="black", lw=0.5)
+        ax.axvline(0, color="black", lw=2.0)
 
     if metric == "pct_change":
         ticker = PercentFormatter(xmax=1.0)
@@ -381,12 +403,14 @@ def plot_bar(
     var_names,
     initial_values=None,
     plot_together=False,
+    group_dict=None,
     orientation="v",
     n_cols=3,
     coords=None,
     metric: Literal[
         "pct_change", "change", "abs_change", "final", "initial", "both"
     ] = "pct_change",
+    threshhold=1e-6,
     **figure_kwargs,
 ):
     data = None
@@ -399,10 +423,18 @@ def plot_bar(
 
     if "optimizer" in idata:
         data = (
-            idata["optimizer"]["variables"][var_names]
+            idata["optimizer"]
+            .isel(step=-1)["variables"][var_names]
             .sel(**coords)
             .drop_vars(drop_vars)
         )
+        if initial_values is None:
+            initial_values = (
+                idata["optimizer"]
+                .isel(step=0)["variables"][var_names]
+                .sel(**coords)
+                .drop_vars(drop_vars)
+            )
 
     if "euler" in idata:
         if data is None:
@@ -431,6 +463,7 @@ def plot_bar(
 
     n_vars = len(var_names)
     if not plot_together:
+        n_cols = min(n_cols, n_vars)
         gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_vars)
         fig = plt.figure(dpi=dpi, figsize=figsize, **figure_kwargs)
         for idx, var in enumerate(var_names):
@@ -439,9 +472,11 @@ def plot_bar(
                 data[var],
                 initial_values[var],
                 cast(plt.axis, axis),
+                group_dict=group_dict,
                 drop_vars=drop_vars,
                 orientation=orientation,
                 metric=metric,
+                threshhold=threshhold,
             )
             axis.set(title=var)
             if metric == "final_initial":
@@ -472,6 +507,7 @@ def plot_bar(
             data,
             initial_values,
             ax,
+            group_dict=group_dict,
             drop_vars=drop_vars,
             orientation=orientation,
             metric=metric,
