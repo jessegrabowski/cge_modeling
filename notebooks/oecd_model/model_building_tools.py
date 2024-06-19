@@ -1,3 +1,5 @@
+import re
+
 import graphviz as gr
 from cge_modeling.pytensorf.compile import (
     object_to_pytensor,
@@ -63,7 +65,19 @@ def convert_equations(equations, coords, cache=None):
             x = eval(normalize_eq(eq.equation), cache.copy())
             pt_eqs.append(x)
         except Exception as e:
-            _log.warning(f"Could not compile equation: {eq.name}")
+            _log.info(f"Could not compile equation: {eq.name}")
+            tokens = [t.strip() for t in re.split("\W", eq.equation) if t.strip()]
+            vars = [cache.get(t) for t in tokens if t.strip() in cache.keys()]
+            non_vars = list(set([t for t in tokens if t.strip() not in cache.keys()]))
+            _log.info("Found the following variables with the following shapes:")
+            for v in vars:
+                _log.info(f"\t{v.name}: {v.type.shape}")
+            if non_vars:
+                _log.info(
+                    "Found the following non-variables, which might be junk, or might be missing in the model definition:"
+                )  # pragma: no cover
+                for nv in non_vars:
+                    _log.info(f"\t{nv}")
             raise e
 
     return pt_eqs
