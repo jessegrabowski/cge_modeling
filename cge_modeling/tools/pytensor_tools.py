@@ -1,4 +1,4 @@
-from typing import Any, Literal, Union
+from typing import Any, Literal, Union, cast
 
 import numpy as np
 import pytensor
@@ -199,7 +199,7 @@ def make_jacobian_from_sympy(
 def make_jacobian(
     system: pt.TensorLike,
     x: list[pt.TensorLike],
-    return_jvp: bool = True,
+    return_jvp: bool = False,
     p: None | pt.TensorVariable = None,
 ) -> pt.TensorVariable | tuple[pt.TensorVariable, pt.TensorVariable]:
     """
@@ -235,11 +235,10 @@ def make_jacobian(
 
     rewrite_pregrad(system)
     if return_jvp:
-        pass
-        # if p is None:
-        #     p = pt.tensor('p', shape=(n_vars,))
-        # jvp = pytensor.gradient.Rop(system, x, p)
-        # return jvp, p
+        if p is None:
+            p = [var.clone(name=f"{var.name}_point") for var in x]
+        jvp = pytensor.gradient.Rop(system, x, p)
+        return jvp, p
 
     column_list = pytensor.gradient.jacobian(system, x)
     jac = pt.concatenate(
@@ -267,7 +266,7 @@ def at_least_list(x: Any) -> list[Any]:
     if isinstance(x, list):
         return x
     else:
-        return [x]
+        return cast(list, [x])
 
 
 def clone_and_rename(x: pt.TensorVariable, suffix: str = "_next") -> pt.TensorVariable:
