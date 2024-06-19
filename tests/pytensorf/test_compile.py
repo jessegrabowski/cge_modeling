@@ -8,6 +8,7 @@ from cge_modeling.pytensorf.compile import (
     compile_euler_approximation_function,
     object_to_pytensor,
 )
+from cge_modeling.tools.pytensor_tools import make_jacobian
 from tests.utilities.models import load_model_1, load_model_2
 
 test_cases = [
@@ -22,7 +23,11 @@ test_cases = [
 )
 def test_object_to_pytensor(cls, name, coords):
     # noinspection PyArgumentList
-    obj = cls(name=name, dims=list(coords.keys()), description="A lovely item from group <dim:i>")
+    obj = cls(
+        name=name,
+        dims=list(coords.keys()),
+        description="A lovely item from group <dim:i>",
+    )
 
     pt_obj = object_to_pytensor(obj, coords)
     assert pt_obj.name == name
@@ -33,10 +38,17 @@ def test_object_to_pytensor(cls, name, coords):
 @pytest.mark.parametrize(
     "model_func, kwargs",
     [
-        (load_model_1, {"backend": "pytensor", "compile": False, "parse_equations_to_sympy": True}),
+        (
+            load_model_1,
+            {"backend": "pytensor", "compile": False, "parse_equations_to_sympy": True},
+        ),
         (
             load_model_2,
-            {"backend": "pytensor", "compile": False, "parse_equations_to_sympy": False},
+            {
+                "backend": "pytensor",
+                "compile": False,
+                "parse_equations_to_sympy": False,
+            },
         ),
     ],
     ids=["1_Sector", "3_Sector"],
@@ -46,7 +58,9 @@ def test_compile_to_pytensor(model_func, kwargs):
     n_variables = n_eq = len(cge_model.unpacked_variable_names)
     n_params = len(cge_model.unpacked_parameter_names)
 
-    (variables, parameters), (model, jac, jac_inv, B) = compile_cge_model_to_pytensor(cge_model)
+    (variables, parameters), (model, jac, jac_inv, B) = compile_cge_model_to_pytensor(
+        cge_model
+    )
 
     assert model.type.shape == (n_eq,)
     assert jac.type.shape == (n_eq, n_variables)
@@ -59,8 +73,6 @@ def test_compile_euler_approximation_function():
 
     variables = v1, v2 = [pt.dscalar(name) for name in ["v1", "v2"]]
     parameters = v3 = pt.dscalar("v3")
-    inputs = variables + parameters
-
     equations = pt.stack([v1**2 * v3 - 1, v1 + v2 - 2])
 
     def f_analytic(v3):
@@ -69,17 +81,39 @@ def test_compile_euler_approximation_function():
         return np.array([v1, v2])
 
     mode = "FAST_COMPILE"
+    A_inv = pt.linalg.inv(make_jacobian(equations, variables))
+    B = make_jacobian(equations, [parameters])
     f_1 = compile_euler_approximation_function(
-        equations, variables, [parameters], n_steps=1, mode=mode
+        A_inv=A_inv,
+        B=B,
+        variables=variables,
+        parameters=[parameters],
+        n_steps=1,
+        mode=mode,
     )
     f_10 = compile_euler_approximation_function(
-        equations, variables, [parameters], n_steps=10, mode=mode
+        A_inv=A_inv,
+        B=B,
+        variables=variables,
+        parameters=[parameters],
+        n_steps=10,
+        mode=mode,
     )
     f_100 = compile_euler_approximation_function(
-        equations, variables, [parameters], n_steps=100, mode=mode
+        A_inv=A_inv,
+        B=B,
+        variables=variables,
+        parameters=[parameters],
+        n_steps=100,
+        mode=mode,
     )
     f_10k = compile_euler_approximation_function(
-        equations, variables, [parameters], n_steps=10_000, mode=mode
+        A_inv=A_inv,
+        B=B,
+        variables=variables,
+        parameters=[parameters],
+        n_steps=10_000,
+        mode=mode,
     )
 
     initial_point = [1, 1]
@@ -91,7 +125,9 @@ def test_compile_euler_approximation_function():
         np.c_[f(*initial_point, v3_initial, np.array([v3_final]))[:2]].T
         for f in [f_1, f_10, f_100, f_10k]
     ]
-    errors = np.c_[[solution[-1] - analytic_solution for solution in approximate_solutions]]
+    errors = np.c_[
+        [solution[-1] - analytic_solution for solution in approximate_solutions]
+    ]
 
     # Test the errors are monotonically decreasing in the number of steps
     assert np.all(np.diff(np.abs(errors), axis=0) < 0)

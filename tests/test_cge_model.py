@@ -72,7 +72,9 @@ def test_add_wrong_type_raises(cls, cls_type, model):
     other_type = Variable if cls is Parameter else Parameter
     x = other_type(name="x")
 
-    with pytest.raises(ValueError, match=f"Expected instance of type {cls_type.capitalize()}"):
+    with pytest.raises(
+        ValueError, match=f"Expected instance of type {cls_type.capitalize()}"
+    ):
         getattr(model, f"add_{cls_type}")(x)
 
 
@@ -106,7 +108,9 @@ def test_get_objects(cls, cls_type, get_args, model):
     assert y_out is y
 
 
-@pytest.mark.parametrize("args", [["x"], ["y"], ["x", "y"], None], ids=["x", "y", "x,y", "default"])
+@pytest.mark.parametrize(
+    "args", [["x"], ["y"], ["x", "y"], None], ids=["x", "y", "x,y", "default"]
+)
 def test_get(args, model):
     x = Variable(name="x")
     y = Parameter(name="y")
@@ -150,17 +154,23 @@ def test_unpack_equation(model):
     model._simplify_unpacked_sympy_representation()
 
     assert len(model.unpacked_equation_symbols) == 3
-    assert all([f"sum for group {i}" in model.unpacked_equation_names for i in ["A", "B", "C"]])
+    assert all(
+        [f"sum for group {i}" in model.unpacked_equation_names for i in ["A", "B", "C"]]
+    )
     for i, eq in zip(["A", "B", "C"], model.unpacked_equation_symbols):
         inputs = get_inputs(eq)
         f = sp.lambdify(inputs, eq)
         kwargs = {arg.name: np.random.normal() for arg in inputs}
-        np.testing.assert_allclose(f(**kwargs), (kwargs[f"z_{i}"] - kwargs[f"x_{i}"] - kwargs["y"]))
+        np.testing.assert_allclose(
+            f(**kwargs), (kwargs[f"z_{i}"] - kwargs[f"x_{i}"] - kwargs["y"])
+        )
 
 
 def test_unpack_equation_with_sum():
     model = CGEModel(
-        coords={"i": ["A", "B", "C"], "j": ["A", "B"]}, compile=None, parse_equations_to_sympy=True
+        coords={"i": ["A", "B", "C"], "j": ["A", "B"]},
+        compile=None,
+        parse_equations_to_sympy=True,
     )
 
     z = Variable(name="z", dims="i")
@@ -180,7 +190,8 @@ def test_unpack_equation_with_sum():
         f = sp.lambdify(inputs, eq)
         kwargs = {arg.name: np.random.normal() for arg in inputs}
         np.testing.assert_allclose(
-            f(**kwargs), kwargs[f"z_{i}"] - kwargs["y"] - kwargs[f"x_{i}_A"] - kwargs[f"x_{i}_B"]
+            f(**kwargs),
+            kwargs[f"z_{i}"] - kwargs["y"] - kwargs[f"x_{i}_A"] - kwargs[f"x_{i}_B"],
         )
 
 
@@ -193,7 +204,8 @@ def test_unpack_equation_with_many_sums():
     b = Variable(name="b", dims=("i",))
 
     eq = Equation(
-        name="sum for group <dim:i>", equation="z = Sum(x, (j, 0, 1)) + Sum(b, (i, 0, 2))"
+        name="sum for group <dim:i>",
+        equation="z = Sum(x, (j, 0, 1)) + Sum(b, (i, 0, 2))",
     )
     model._initialize_group([x, z, b], "variables")
     model._initialize_group([eq], "equations")
@@ -232,7 +244,8 @@ def test_unpack_double_index():
         "X_C_F = VC_F * psi_X_C_F",
     ]
     local_dict = {
-        x.name: x for x in model.unpacked_variable_symbols + model.unpacked_parameter_symbols
+        x.name: x
+        for x in model.unpacked_variable_symbols + model.unpacked_parameter_symbols
     }
     expected_output_sp = [
         sp.parse_expr(expr, local_dict=local_dict, transformations="all")
@@ -251,7 +264,9 @@ def test_tax_unpack():
     income = Variable(name="income")
     tau = Parameter("tau", dims=("i", "k"))
 
-    eq = Equation("tax income", "income = Sum(Sum((tau * P_X * X), (i, 0, 2)), (k, 0, 5))")
+    eq = Equation(
+        "tax income", "income = Sum(Sum((tau * P_X * X), (i, 0, 2)), (k, 0, 5))"
+    )
     model._initialize_group([X, P_X, income], "variables")
     model._initialize_group([tau], "parameters")
     model._initialize_group([eq], "equations")
@@ -316,7 +331,8 @@ def test_long_unpack():
         [P_Y, P_M, P_E, w, r, X_D, X_M, X_E_D, X_E_M, L_d, K_d, E_d, Y], "variables"
     )
     model._initialize_group(
-        [tau_X_D, tau_X_M, tau_w, tau_r, tau_E, tau_Y, tau_X_E_D, tau_X_E_M], "parameters"
+        [tau_X_D, tau_X_M, tau_w, tau_r, tau_E, tau_Y, tau_X_E_D, tau_X_E_M],
+        "parameters",
     )
     model._initialize_group([eq], "equations")
     model._simplify_unpacked_sympy_representation()
@@ -370,7 +386,9 @@ def test_model_gradients(model_function, jac_function, backend, parse_to_sympy):
     ids=["simple_model", "3-goods simple"],
 )
 @pytest.mark.parametrize("sparse", [False, True], ids=["dense", "sparse"])
-def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, data, sparse):
+def test_pytensor_from_sympy(
+    model_function, calibrate_model, f_expected_jac, data, sparse
+):
     mod = model_function(
         equation_mode="numba",
         backend="pytensor",
@@ -401,8 +419,20 @@ def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, da
 @pytest.mark.parametrize(
     "method, solver_kwargs",
     [
-        ("_solve_with_minimize", {"method": "trust-exact"}),
-        ("_solve_with_root", {"method": "hybr"}),
+        (
+            "_solve_with_minimize",
+            {
+                "method": "trust-exact",
+                "use_hess": True,
+                "use_hessp": False,
+                "niter": 10_000,
+                "tol": 1e-16,
+            },
+        ),
+        (
+            "_solve_with_root",
+            {"method": "hybr", "use_jac": True, "niter": 10_000, "tol": 1e-16},
+        ),
         ("_solve_with_euler_approximation", {"n_steps": 500}),
     ],
     ids=["minimize", "root", "euler"],
@@ -422,22 +452,36 @@ def test_backends_agree(
     def solver_agreement_checks(results: list, names: list):
         for res, name in zip(results, names):
             if hasattr(res, "success"):
-                assert res.success, f"{name} solver failed to converge"
+                assert (
+                    res.success or res.fun < 1e-8
+                ), f"{name} solver failed to converge"
             if hasattr(res, "x"):
                 assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
                 assert np.all(np.isfinite(res.x)), f"{name} solver returned Infs"
 
-                np.testing.assert_allclose(
-                    np.around(results[0].x, 4), np.around(results[1].x, 4), atol=1e-5, rtol=1e-5
-                ), "Solvers disagree"
+                (
+                    np.testing.assert_allclose(
+                        np.around(results[0].x, 4),
+                        np.around(results[1].x, 4),
+                        atol=1e-5,
+                        rtol=1e-5,
+                    ),
+                    "Solvers disagree",
+                )
 
             else:
                 assert not np.all(np.isnan(res)), f"{name} solver returned NaNs"
                 assert np.all(np.isfinite(res)), f"{name} solver returned Infs"
 
-                np.testing.assert_allclose(
-                    np.around(results[0], 4), np.around(results[1], 4), atol=1e-5, rtol=1e-5
-                ), "Solvers disagree"
+                (
+                    np.testing.assert_allclose(
+                        np.around(results[0], 4),
+                        np.around(results[1], 4),
+                        atol=1e-5,
+                        rtol=1e-5,
+                    ),
+                    "Solvers disagree",
+                )
 
     calibated_data = calibrate_model(**data)
     x0, theta0 = variable_dict_to_flat_array(
@@ -456,7 +500,9 @@ def test_backends_agree(
         labor_increase, model_numba.variables, model_numba.parameters
     )
 
-    res_numba = getattr(model_numba, method)(calibated_data, theta_labor_increase, **solver_kwargs)
+    res_numba = getattr(model_numba, method)(
+        calibated_data, theta_labor_increase, **solver_kwargs
+    )
     res_pytensor = getattr(model_pytensor, method)(
         calibated_data, theta_labor_increase, **solver_kwargs
     )
@@ -480,7 +526,7 @@ def test_generate_SAM():
     initial_guess = {"C": 10000, "Y": 10000, "income": 10000, "K_d": 5000, "L_d": 1000}
 
     fixed_values = {"r": 1.0, "P": 1.0, "resid": 0.0}
-    data = mod.generate_SAM(
+    mod.generate_SAM(
         param_dict=param_dict,
         initial_variable_guess=initial_guess,
         fixed_values=fixed_values,

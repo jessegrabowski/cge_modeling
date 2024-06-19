@@ -284,6 +284,7 @@ def test_dixit_stiglitz(A, alpha, backend):
         dims=dims,
         coords=coords,
         backend=cast(BACKEND_TYPE, backend),
+        use_value_definition=False,
     )
 
     alpha_str = "alpha * " if alpha is not None else ""
@@ -330,6 +331,7 @@ def test_dixit_stiglitz_computation(backend):
         dims=dims,
         coords=coords,
         backend=cast(BACKEND_TYPE, backend),
+        use_value_definition=False,
     )
 
     inputs = ["X", "P_X", "Y", "P_Y", "A", "alpha", "epsilon"]

@@ -1170,7 +1170,7 @@ class CGEModel:
         use_hess = optimizer_kwargs.pop("use_hess", None)
         method = optimizer_kwargs.pop("method", "hybr")
         tol = optimizer_kwargs.pop("tol", 1e-6)
-        _ = optimizer_kwargs.pop("use_hessp")
+        _ = optimizer_kwargs.pop("use_hessp", None)
 
         if use_hess:
             _log.warning(
@@ -1212,12 +1212,13 @@ class CGEModel:
             f_jac=f_jac if use_jac else None,
             progressbar=progressbar,
             tol=tol,
+            backend=self._compile_backend,
         )
 
         f_optim = ft.partial(
             optimize.root,
             objective,
-            x0,
+            x0=x0,
             method=method,
             jac=use_jac or None,
             # callback=objective.callback, # Callbacks don't work with root
@@ -1297,6 +1298,7 @@ class CGEModel:
             f_hess=f_hess if use_hess else None,
             progressbar=progressbar,
             tol=tol,
+            backend=self._compile_backend,
         )
 
         f_optim = ft.partial(
@@ -1305,7 +1307,7 @@ class CGEModel:
             x0,
             jac=use_jac or None,
             hess=objective.f_hess if use_hess else None,
-            hessp=lambda x, p: f_hessp(x, p, theta_final) if use_hessp else None,
+            hessp=None if not use_hessp else lambda x, p: f_hessp(x, p, theta_final),
             callback=objective.callback,
             **optimizer_kwargs,
         )

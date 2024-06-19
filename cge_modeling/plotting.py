@@ -164,30 +164,25 @@ def plot_lines(
             data.plot.line(x="step", ax=axis, add_legend=legends[var])
 
         if plot_optimizer:
-            final_value = (
-                1 if not plot_euler else idata["euler"].variables.coords["step"].max()
-            )
-            scatter_shape = np.prod(
-                idata["optimizer"].variables[var].shape, dtype="int"
-            )
+            initial_value = idata["optimizer"].variables[var].isel(step=0).data.ravel()
+            final_value = idata["optimizer"].variables[var].isel(step=-1).data.ravel()
 
-            initial_scatter = np.full(scatter_shape, 0)
-            final_scatter = np.full(scatter_shape, final_value)
-
-            if initial_values is None and plot_euler:
-                initial_values = idata["euler"].variables.sel(step=0).data
+            t0 = np.zeros_like(initial_value)
+            T = np.ones_like(final_value)
+            if plot_euler:
+                T = T * idata["euler"].variables.step.max().item()
 
             axis.scatter(
-                initial_scatter,
-                initial_values[var].ravel(),
+                t0,
+                final_value,
                 marker="*",
                 color="tab:green",
                 zorder=10,
                 s=100,
             )
             axis.scatter(
-                final_scatter,
-                idata["optimizer"].variables[var].data.ravel(),
+                T,
+                final_value,
                 marker="*",
                 color="tab:red",
                 zorder=10,

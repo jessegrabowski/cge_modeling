@@ -549,11 +549,14 @@ class CostFuncWrapper:
         tol: float = 1e-6,
         progressbar: bool = True,
         update_every: int = 10,
+        backend="numba",
     ):
+        kwargs = dict(theta=args) if backend == "pytensor" else dict(endog_inputs=args)
+
         self.n_eval = 0
         self.maxeval = maxeval
         self.tol = tol
-        self.f = f if args is None else ft.partial(f, theta=args)
+        self.f = f if args is None else ft.partial(f, **kwargs)
         self.args = args
 
         self.use_jac = False
@@ -565,12 +568,12 @@ class CostFuncWrapper:
         if f_jac is not None:
             self.desc += ", ||grad|| = {:,.5g}"
             self.use_jac = True
-            self.f_jac = f_jac if args is None else ft.partial(f_jac, theta=args)
+            self.f_jac = f_jac if args is None else ft.partial(f_jac, **kwargs)
 
         if f_hess is not None:
             self.desc += ", ||hess|| = {:,.5g}"
             self.use_hess = True
-            self.f_hess = f_hess if args is None else ft.partial(f_hess, theta=args)
+            self.f_hess = f_hess if args is None else ft.partial(f_hess, **kwargs)
 
         self.previous_x = None
         self.progressbar = progressbar

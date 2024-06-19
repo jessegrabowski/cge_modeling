@@ -469,7 +469,7 @@ def dixit_stiglitz(
         )
     else:
         production_function = Template(
-            "$output * $output_price = ($factor_prices * $factors).sum()",
+            "$output = ($factor_prices * $factors).sum() / ($output_price)",
         ).safe_substitute(
             output=output,
             output_price=output_price,
