@@ -1,5 +1,3 @@
-from typing import Union
-
 import numpy as np
 from scipy import stats
 
@@ -37,7 +35,7 @@ DISTRIBUTION_FACTORY = {
 
 
 def generate_data(
-    objects: list[Union[Variable, Parameter]], coords: dict[str, list[str, ...]]
+    objects: list[Variable | Parameter], coords: dict[str, list[str, ...]]
 ):
     data_dict = {}
     for obj in objects:

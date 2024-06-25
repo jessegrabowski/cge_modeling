@@ -4,7 +4,6 @@ from abc import ABC
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Union
 
 import pandas as pd
 import sympy as sp
@@ -38,15 +37,15 @@ def _process_subscript_chunks(chunks):
 @dataclass(slots=True, order=True, frozen=False, repr=False)
 class ModelObject(ABC):
     name: str
-    dims: Optional[Union[tuple[str, ...], list[str, ...], str]] = None
-    dim_vals: Optional[dict[str, str]] = None
-    latex_name: Optional[str] = None
-    _full_latex_name: Optional[str] = None
-    description: Optional[str] = None
+    dims: tuple[str, ...] | list[str, ...] | str | None = None
+    dim_vals: dict[str, str] | None = None
+    latex_name: str | None = None
+    _full_latex_name: str | None = None
+    description: str | None = None
     base_name: str = None
     real: bool = True
     positive: bool = True
-    extend_subscript: Union[bool, int] = False
+    extend_subscript: bool | int = False
     assumptions: dict = field(default_factory=dict)
 
     def __post_init__(self):
@@ -221,7 +220,7 @@ class Parameter(ModelObject):
 class Equation:
     name: str
     equation: str
-    eq_id: Optional[int] = None
+    eq_id: int | None = None
 
     def _set_eq_id(self, new_id):
         object.__setattr__(self, "eq_id", new_id)

@@ -2,7 +2,9 @@ import functools as ft
 import logging
 import warnings
 from copy import deepcopy
-from typing import Callable, Literal, Optional, Union, cast
+from typing import Literal, cast
+
+from collections.abc import Callable
 
 import numba as nb
 import numpy as np
@@ -76,14 +78,14 @@ _log = logging.getLogger(__name__)
 class CGEModel:
     def __init__(
         self,
-        coords: Optional[dict[str, list[str, ...]]] = None,
-        variables: Optional[Union[list[Variable], dict[str, Variable]]] = None,
-        parameters: Optional[Union[list[Parameter], dict[str, Parameter]]] = None,
-        equations: Optional[Union[list[Equation], dict[str, Equation]]] = None,
-        numeraire: Optional[Variable] = None,
+        coords: dict[str, list[str, ...]] | None = None,
+        variables: list[Variable] | dict[str, Variable] | None = None,
+        parameters: list[Parameter] | dict[str, Parameter] | None = None,
+        equations: list[Equation] | dict[str, Equation] | None = None,
+        numeraire: Variable | None = None,
         parse_equations_to_sympy: bool = True,
-        backend: Optional[Literal["pytensor", "numba"]] = "numba",
-        mode: Optional[str] = None,
+        backend: Literal["pytensor", "numba"] | None = "numba",
+        mode: str | None = None,
         inverse_method: str = "solve",
         use_sparse_matrices: bool = False,
         compile: list[CompiledFunctions] | None = "all",
@@ -209,14 +211,14 @@ class CGEModel:
         self.scenarios: dict[str, Result] = {}
 
         self._compiled: list[str] = []
-        self._compile_backend: Optional[Literal["pytensor", "numba"]] = None
+        self._compile_backend: Literal["pytensor", "numba"] | None = None
 
-        self.f_system: Optional[Callable] = None
-        self.f_resid: Optional[Callable] = None
-        self.f_grad: Optional[Callable] = None
-        self.f_hess: Optional[Callable] = None
-        self.f_jac: Optional[Callable] = None
-        self.f_dX: Optional[Callable] = None
+        self.f_system: Callable | None = None
+        self.f_resid: Callable | None = None
+        self.f_grad: Callable | None = None
+        self.f_hess: Callable | None = None
+        self.f_jac: Callable | None = None
+        self.f_dX: Callable | None = None
 
         self.symbolic_solution_matrices = {}
 
@@ -548,7 +550,7 @@ class CGEModel:
     def get_parameter(self, param_name: str):
         return self._get_object(param_name, "parameters")
 
-    def get_parameters(self, param_names: Optional[list[str]] = None):
+    def get_parameters(self, param_names: list[str] | None = None):
         if param_names is None:
             param_names = self.parameter_names
         param_names = ensure_input_is_sequence(param_names)
@@ -557,15 +559,15 @@ class CGEModel:
     def get_variable(self, var_name: str):
         return self._get_object(var_name, "variables")
 
-    def get_variables(self, var_names: Optional[list[str]] = None):
+    def get_variables(self, var_names: list[str] | None = None):
         if var_names is None:
             var_names = self.variable_names
         var_names = ensure_input_is_sequence(var_names)
         return [self.get_variable(name) for name in var_names]
 
     def get(
-        self, names: Optional[Union[str, list[str, ...]]] = None
-    ) -> list[Union[Variable, Parameter]]:
+        self, names: str | list[str, ...] | None = None
+    ) -> list[Variable | Parameter]:
         """
         Retrieve a list of model objects (variables or parameters) from the model by name.
 
@@ -599,7 +601,7 @@ class CGEModel:
 
         return out
 
-    def get_symbol(self, names: Optional[list[str]] = None):
+    def get_symbol(self, names: list[str] | None = None):
         if names is None:
             names = self.unpacked_parameter_names + self.unpacked_parameter_symbols
         if isinstance(names, str):
@@ -888,10 +890,10 @@ class CGEModel:
 
     def summary(
         self,
-        variables: Union[Literal["all", "variables", "parameters"], list[str]] = "all",
-        results: Optional[Union[Result, list[Result]]] = None,
+        variables: Literal["all", "variables", "parameters"] | list[str] = "all",
+        results: Result | list[Result] | None = None,
         expand_indices: bool = False,
-        index_labels: Optional[dict[str, list[str]]] = None,
+        index_labels: dict[str, list[str]] | None = None,
     ):
         results = [] if results is None else results
         if isinstance(results, Result):
@@ -1068,12 +1070,12 @@ class CGEModel:
 
     def _solve_with_minimize(
         self,
-        data: dict[str, np.array],
-        theta_final: dict[str, np.array],
+        data: dict[str, np.ndarray],
+        theta_final: dict[str, np.ndarray],
         use_jac: bool = True,
         use_hess: bool = True,
         progressbar: bool = True,
-        fixed_values: Optional[dict[str, Union[int, float, np.ndarray]]] = None,
+        fixed_values: dict[str, int | float | np.ndarray] | None = None,
         **optimizer_kwargs,
     ):
         if "minimize" not in self._compiled:
@@ -1150,29 +1152,29 @@ class CGEModel:
 
     def generate_SAM(
         self,
-        param_dict: dict[str, np.array],
-        initial_variable_guess: dict[str, np.array],
+        param_dict: dict[str, np.ndarray],
+        initial_variable_guess: dict[str, np.ndarray],
         solve_method: Literal["root", "minimize", "euler"] = "root",
-        fixed_values: Optional[dict[str, np.array]] = None,
+        fixed_values: dict[str, np.ndarray] | None = None,
         use_jac: bool = True,
         use_hess: bool = True,
         n_steps: int = 100,
         **solver_kwargs,
-    ) -> dict[str, np.array]:
+    ) -> dict[str, np.ndarray]:
         """
         Generate a Social Accounting Matrix (SAM) from the model parameters.
 
         Parameters
         ----------
-        param_dict: dict[str, np.array]
+        param_dict: dict[str, np.ndarray]
             A dictionary of parameter values. The keys should be the names of the parameters, and the values should be
             numpy arrays of the same shape as the parameter.
 
-        initial_variable_guess: dict[str, np.array]
+        initial_variable_guess: dict[str, np.ndarray]
             A dictionary of initial values for the model variables. The keys should be the names of the variables, and
             the values should be numpy arrays of the same shape as the variable.
 
-        fixed_values: dict[str, np.array], optional
+        fixed_values: dict[str, np.ndarray], optional
             A dictionary of exact values for a subset of model variables. The keys should be the names of the variables
             to be changed, and the values should be numpy arrays of the same shape as the variable.
 
@@ -1200,7 +1202,7 @@ class CGEModel:
 
         Returns
         -------
-        variable_dict: dict[str, np.array]
+        variable_dict: dict[str, np.ndarray]
             A dictionary of variable values. The keys are the names of the variables, and the values are numpy arrays
             of the same shape as the variable.
 
@@ -1259,10 +1261,10 @@ class CGEModel:
 
     def simulate(
         self,
-        initial_state: dict[str, Union[float, np.array]],
-        final_values: Optional[dict[str, Union[float, np.array]]] = None,
-        final_delta: Optional[dict[str, Union[float, np.array]]] = None,
-        final_delta_pct: Optional[dict[str, Union[float, np.array]]] = None,
+        initial_state: dict[str, float | np.ndarray],
+        final_values: dict[str, float | np.ndarray] | None = None,
+        final_delta: dict[str, float | np.ndarray] | None = None,
+        final_delta_pct: dict[str, float | np.ndarray] | None = None,
         use_euler_approximation: bool = True,
         use_optimizer: bool = True,
         optimizer_mode: Literal["root", "minimize"] = "root",
@@ -1276,7 +1278,7 @@ class CGEModel:
 
         Parameters
         ----------
-        initial_state: dict[str, np.array]
+        initial_state: dict[str, np.ndarray]
             A dictionary of initial values for the model variables and parameters. The keys should be the names of the
             variables and parameters, and the values should be numpy arrays of the same shape as the variable or
             parameter.
@@ -1284,13 +1286,13 @@ class CGEModel:
             .. warning:: The inital state **must** represent a model equlibrium! This will be checked automatically
             before simulation begins, and an error will be raised if the initial state does not represent an equlibrium.
 
-        final_values: dict[str, np.array], optional
+        final_values: dict[str, np.ndarray], optional
             A dictionary of exact final values for a subset of model parameters. The keys should be the names of the
             parameters to be changed, and the values should be numpy arrays of the same shape as the parameter.
 
             Exactly one of final_values, final_delta, or final_delta_pct must be provided.
 
-        final_delta: dict[str, np.array], optional
+        final_delta: dict[str, np.ndarray], optional
             A dictionary of changes to be applied to a subset of the model parameters. Changes are added to the initial
             values, so that positive values increase the parameter value and negative values decrease the parameter.
             The keys should be the names of the parameters to be changed, and the values should be numpy arrays of the
@@ -1298,7 +1300,7 @@ class CGEModel:
 
             Exactly one of final_values, final_delta, or final_delta_pct must be provided.
 
-        final_delta_pct: dict[str, np.array], optional
+        final_delta_pct: dict[str, np.ndarray], optional
             A dictionary of percentage changes to be applied to a subset of the model parameters. Values provided are
             multipled by the initial values, so that values greater than 1.00 represent precentage increases, and values
             less than 1.00 represent percentage decreases. The keys should be the names of the parameters to be changed,
@@ -1426,7 +1428,7 @@ class CGEModel:
 
     def check_for_equilibrium(
         self,
-        data: Union[dict[str, Union[float, np.array]], InferenceData, xr.Dataset],
+        data: dict[str, float | np.ndarray] | InferenceData | xr.Dataset,
         tol=1e-6,
         print_equations=True,
     ):

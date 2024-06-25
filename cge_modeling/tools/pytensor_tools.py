@@ -1,4 +1,4 @@
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 import numpy as np
 import pytensor
@@ -12,9 +12,7 @@ from cge_modeling.base.primitives import Parameter, Variable
 from cge_modeling.tools.sympy_tools import sparse_jacobian
 
 
-def object_to_pytensor(
-    obj: Union[Parameter, Variable], coords: dict[str, list[str, ...]]
-):
+def object_to_pytensor(obj: Parameter | Variable, coords: dict[str, list[str, ...]]):
     """
     Convert a CGE model object to a PyTensor object.
 
