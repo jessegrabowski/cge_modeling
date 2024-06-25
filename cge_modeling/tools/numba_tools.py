@@ -1,5 +1,6 @@
 import re
-from typing import Callable, List, Optional, Union
+
+from collections.abc import Callable
 
 import numba as nb
 import numpy as np
@@ -57,10 +58,10 @@ class NumbaFriendlyNumPyPrinter(NumPyPrinter):
 
 
 def numba_lambdify(
-    exog_vars: List[sp.Symbol],
-    expr: Union[List[sp.Expr], sp.Matrix, List[sp.Matrix]],
-    endog_vars: Optional[List[sp.Symbol]] = None,
-    func_signature: Optional[str] = None,
+    exog_vars: list[sp.Symbol],
+    expr: list[sp.Expr] | sp.Matrix | list[sp.Matrix],
+    endog_vars: list[sp.Symbol] | None = None,
+    func_signature: str | None = None,
     ravel_outputs=False,
 ) -> Callable:
     """

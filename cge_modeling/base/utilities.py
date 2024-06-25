@@ -2,7 +2,9 @@ import functools as ft
 import re
 import sys
 from itertools import product
-from typing import Any, Callable, Optional, Sequence, Union, cast
+from typing import Any, Union, cast
+
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from fastprogress.fastprogress import ProgressBar, progress_bar
@@ -96,8 +98,8 @@ def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
 
 
 def _expand_var_by_index(
-    obj: Union[Variable, Parameter], coords: dict[str, list[str, ...]]
-) -> list[Union[Variable, Parameter]]:
+    obj: Variable | Parameter, coords: dict[str, list[str, ...]]
+) -> list[Variable | Parameter]:
     """
     Create a set of CGE Model objects from a single object using the cartesian product of the object's dimensions
 
@@ -205,7 +207,7 @@ def _replace_dim_marker_with_dim_name(s: str) -> str:
 
 
 def infer_object_shape_from_coords(
-    obj: Union[Variable, Parameter], coords: dict[str, list[str, ...]]
+    obj: Variable | Parameter, coords: dict[str, list[str, ...]]
 ) -> tuple[int]:
     """
     Infer the shape of a CGE Model object from a provided coordinate dictionary.
@@ -255,7 +257,7 @@ def infer_object_shape_from_coords(
 
 def make_flat_array_return_mask(
     x: np.ndarray,
-    all_objects: list[Union[Variable, Parameter]],
+    all_objects: list[Variable | Parameter],
     omit_object_names: list[str],
     coords: dict[str, list[str, ...]],
 ) -> np.ndarray:
@@ -274,7 +276,7 @@ def make_flat_array_return_mask(
 
 def flat_array_to_variable_dict(
     x: np.ndarray,
-    objects: list[Union[Variable, Parameter]],
+    objects: list[Variable | Parameter],
     coords: dict[str, list[str, ...]],
 ) -> dict[str, np.ndarray]:
     """
@@ -392,7 +394,7 @@ def variable_dict_to_flat_array(
 
 def wrap_fixed_values(
     f: Callable,
-    fixed_values: dict[str, Union[float, int, np.ndarray]],
+    fixed_values: dict[str, float | int | np.ndarray],
     variables: list[Variable],
     coords: dict[str, list[str, ...]],
 ) -> Callable:
@@ -532,8 +534,8 @@ class CostFuncWrapper:
     def __init__(
         self,
         f: Callable,
-        f_jac: Optional[Callable] = None,
-        f_hess: Optional[Callable] = None,
+        f_jac: Callable | None = None,
+        f_hess: Callable | None = None,
         maxeval: int = 5000,
         progressbar: bool = True,
         update_every: int = 10,

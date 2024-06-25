@@ -1,7 +1,9 @@
 import string
 from itertools import combinations, product
 from string import Template
-from typing import Literal, Optional, Sequence, Union, cast
+from typing import Literal, cast
+
+from collections.abc import Sequence
 
 from cge_modeling.tools.pytensor_tools import at_least_list
 
@@ -27,9 +29,9 @@ def unwrap_singleton_list(x):
 
 
 def unpack_string_inputs(
-    *inputs: Union[str, list[str, ...]],
-    dims: Optional[Sequence[str]] = None,
-    coords: Optional[dict[str, list[str, ...]]] = None,
+    *inputs: str | list[str, ...],
+    dims: Sequence[str] | None = None,
+    coords: dict[str, list[str, ...]] | None = None,
 ) -> list[list[str, ...]]:
     """
     Unpack string inputs into lists of variables using the provided dims and coords.
@@ -81,7 +83,7 @@ def unpack_string_inputs(
 
 
 def _add_second_alpha(
-    alpha: Union[str, list[str, ...]], factors: Union[str, list[str, ...]]
+    alpha: str | list[str, ...], factors: str | list[str, ...]
 ) -> list[str, ...]:
     if not isinstance(factors, list) or len(factors) != 2:
         # If there are not exactly two factors, we don't need to add a second alpha. It will either be unpacked
@@ -98,12 +100,12 @@ def _add_second_alpha(
 
 
 def CES(
-    factors: Union[list[str, ...], str],
-    factor_prices: Union[list[str, ...], str],
+    factors: list[str, ...] | str,
+    factor_prices: list[str, ...] | str,
     output: str,
     output_price: str,
     TFP: str,
-    factor_shares: Union[str, list[str, ...]],
+    factor_shares: str | list[str, ...],
     epsilon: str,
     *args,
     **kwargs,
@@ -206,16 +208,16 @@ def CES(
 
 
 def dixit_stiglitz(
-    factors: Union[str, list[str, ...]],
-    factor_prices: Union[str, list[str, ...]],
+    factors: str | list[str, ...],
+    factor_prices: str | list[str, ...],
     output: str,
     output_price: str,
     epsilon: str,
     dims: str,
     coords: dict[str, list[str, ...]],
     backend: BACKEND_TYPE = "numba",
-    TFP: Optional[str] = None,
-    factor_shares: Optional[str] = None,
+    TFP: str | None = None,
+    factor_shares: str | None = None,
 ) -> tuple[str, str]:
     """
     Generate string equations representing a Dixit-Stiglitz production process.
@@ -339,11 +341,11 @@ def dixit_stiglitz(
 
 
 def _1d_leontief(
-    factors: Union[str, list[str, ...]],
-    factor_prices: Union[str, list[str, ...]],
+    factors: str | list[str, ...],
+    factor_prices: str | list[str, ...],
     output: str,
     output_price: str,
-    factor_shares: Union[str, list[str, ...]],
+    factor_shares: str | list[str, ...],
     *args,
     **kwargs,
 ) -> tuple[str, ...]:
@@ -365,11 +367,11 @@ def _1d_leontief(
 
 
 def _2d_leontief(
-    factors: Union[str, list[str, ...]],
-    factor_prices: Union[str, list[str, ...]],
+    factors: str | list[str, ...],
+    factor_prices: str | list[str, ...],
     output: str,
     output_price: str,
-    factor_shares: Union[str, list[str, ...]],
+    factor_shares: str | list[str, ...],
     dims: str,
     coords: dict[str, list[str, ...]],
     sum_dim: str | None = None,
@@ -470,12 +472,12 @@ def _2d_leontief(
 
 
 def leontief(
-    factors: Union[str, list[str, ...]],
-    factor_prices: Union[str, list[str, ...]],
+    factors: str | list[str, ...],
+    factor_prices: str | list[str, ...],
     output: str,
     output_price: str,
-    factor_shares: Union[str, list[str, ...]],
-    dims: Union[str, list[str, ...]],
+    factor_shares: str | list[str, ...],
+    dims: str | list[str, ...],
     coords: dict[str, list[str, ...]],
     sum_dim: str | None = None,
     expand_price_dim: bool = True,

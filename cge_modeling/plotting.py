@@ -1,4 +1,4 @@
-from typing import Literal, Optional, Union, cast
+from typing import Literal, cast
 
 import arviz as az
 import matplotlib.pyplot as plt
@@ -57,8 +57,8 @@ def plot_lines(
     idata: az.InferenceData,
     mod: CGEModel,
     n_cols: int = 5,
-    var_names: Optional[list[str]] = None,
-    initial_values: Optional[dict[str, np.ndarray]] = None,
+    var_names: list[str] | None = None,
+    initial_values: dict[str, np.ndarray] | None = None,
     plot_euler: bool = True,
     plot_optimizer: bool = True,
     rename_dict: dict[str, str] | None = None,
@@ -173,10 +173,10 @@ def plot_kateplot(
     idata: az.InferenceData,
     initial_values: dict[str, np.array],
     mod: CGEModel,
-    var_names: Union[str, list[str]],
-    shock_name: Optional[str] = None,
-    rename_dict: Optional[dict[str, str]] = None,
-    cmap: Optional[Union[str, Colormap]] = None,
+    var_names: str | list[str],
+    shock_name: str | None = None,
+    rename_dict: dict[str, str] | None = None,
+    cmap: str | Colormap | None = None,
 ) -> plt.Figure:
     """
     Make an area plot of the initial and final values of the variables in the model.
