@@ -1,7 +1,6 @@
 import functools as ft
 import re
 import sys
-import warnings
 from itertools import product
 from typing import Any, Callable, Optional, Sequence, Union, cast
 
@@ -72,7 +71,9 @@ def _validate_input(obj: Any, cls: CGETypes):
     """
 
     if not isinstance(obj, cast(type, cls)):
-        raise ValueError(f"Expected instance of type {cls.__name__}, found {type(obj).__name__}")
+        raise ValueError(
+            f"Expected instance of type {cls.__name__}, found {type(obj).__name__}"
+        )
 
 
 def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
@@ -272,7 +273,9 @@ def make_flat_array_return_mask(
 
 
 def flat_array_to_variable_dict(
-    x: np.ndarray, objects: list[Union[Variable, Parameter]], coords: dict[str, list[str, ...]]
+    x: np.ndarray,
+    objects: list[Union[Variable, Parameter]],
+    coords: dict[str, list[str, ...]],
 ) -> dict[str, np.ndarray]:
     """
     Convert a flat array to a dictionary of variables and parameters.
@@ -336,7 +339,9 @@ def flat_array_to_variable_dict(
 
 
 def variable_dict_to_flat_array(
-    d: dict[str, np.ndarray], variable_list: [list[Variable]], parameter_list: list[Parameter]
+    d: dict[str, np.ndarray],
+    variable_list: [list[Variable]],
+    parameter_list: list[Parameter],
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Convert a dictionary of variables and parameters to a single long vector.
@@ -375,8 +380,12 @@ def variable_dict_to_flat_array(
     # TODO: This function cannot currently handle batch dimensions, but it should be able to.
     """
 
-    variables = np.concatenate([np.atleast_1d(d[var.name]).ravel() for var in variable_list])
-    parameters = np.concatenate([np.atleast_1d(d[var.name]).ravel() for var in parameter_list])
+    variables = np.concatenate(
+        [np.atleast_1d(d[var.name]).ravel() for var in variable_list]
+    )
+    parameters = np.concatenate(
+        [np.atleast_1d(d[var.name]).ravel() for var in parameter_list]
+    )
 
     return variables, parameters
 
@@ -473,7 +482,9 @@ def wrap_pytensor_func_for_scipy(
     def inner_f(x0, theta):
         # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
         inputs = np.r_[x0, theta]
-        data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
+        data = flat_array_to_variable_dict(
+            inputs, variable_list + parameter_list, coords
+        )
         return f(**data)
 
     return inner_f
@@ -549,7 +560,9 @@ class CostFuncWrapper:
         self.previous_x = None
         self.progressbar = progressbar
         if progressbar:
-            self.progress = progress_bar(range(maxeval), total=maxeval, display=progressbar)
+            self.progress = progress_bar(
+                range(maxeval), total=maxeval, display=progressbar
+            )
             self.progress.update(0)
         else:
             self.progress = range(maxeval)
@@ -616,4 +629,6 @@ class CostFuncWrapper:
                 else:
                     norm_grad = np.linalg.norm(grad)
                     norm_hess = np.linalg.norm(hess)
-                    self.progress.comment = self.desc.format(value, norm_grad, norm_hess)
+                    self.progress.comment = self.desc.format(
+                        value, norm_grad, norm_hess
+                    )

@@ -1,5 +1,3 @@
-from ctypes import cast
-
 import pytest
 
 from cge_modeling.base.primitives import Parameter, Variable
@@ -11,8 +9,18 @@ from cge_modeling.base.primitives import Parameter, Variable
     [
         ("x", "x", None, ("x", "x, Positive = True, Real = True", ())),
         ("x", "x", ("i",), ("x_{i}", "x_{i}, Positive = True, Real = True", ("i",))),
-        ("x", r"\Omega", "i", (r"\Omega_{i}", r"\Omega_{i}, Positive = True, Real = True", ("i",))),
-        ("x", "x", "i,j", ("x_{i, j}", "x_{i, j}, Positive = True, Real = True", ("i", "j"))),
+        (
+            "x",
+            r"\Omega",
+            "i",
+            (r"\Omega_{i}", r"\Omega_{i}, Positive = True, Real = True", ("i",)),
+        ),
+        (
+            "x",
+            "x",
+            "i,j",
+            ("x_{i, j}", "x_{i, j}, Positive = True, Real = True", ("i", "j")),
+        ),
         (
             "x_d",
             "x_d",

@@ -70,7 +70,9 @@ def test_add_wrong_type_raises(cls, cls_type, model):
     other_type = Variable if cls is Parameter else Parameter
     x = other_type(name="x")
 
-    with pytest.raises(ValueError, match=f"Expected instance of type {cls_type.capitalize()}"):
+    with pytest.raises(
+        ValueError, match=f"Expected instance of type {cls_type.capitalize()}"
+    ):
         getattr(model, f"add_{cls_type}")(x)
 
 
@@ -104,7 +106,9 @@ def test_get_objects(cls, cls_type, get_args, model):
     assert y_out is y
 
 
-@pytest.mark.parametrize("args", [["x"], ["y"], ["x", "y"], None], ids=["x", "y", "x,y", "default"])
+@pytest.mark.parametrize(
+    "args", [["x"], ["y"], ["x", "y"], None], ids=["x", "y", "x,y", "default"]
+)
 def test_get(args, model):
     x = Variable(name="x")
     y = Parameter(name="y")
@@ -132,7 +136,9 @@ def test_get(args, model):
 @pytest.mark.parametrize("backend", ["numba", "pytensor"], ids=["numba", "pytensor"])
 def test_model_gradients(model_function, jac_function, backend):
     mode = "FAST_COMPILE" if backend == "pytensor" else None
-    mod = model_function(backend=backend, parse_equations_to_sympy=backend == "numba", mode=mode)
+    mod = model_function(
+        backend=backend, parse_equations_to_sympy=backend == "numba", mode=mode
+    )
     data = generate_data(mod.variables + mod.parameters, mod.coords)
 
     J_expected = jac_function(**data)
@@ -155,7 +161,9 @@ def test_model_gradients(model_function, jac_function, backend):
     ids=["simple_model", "3-goods simple"],
 )
 @pytest.mark.parametrize("sparse", [False, True], ids=["dense", "sparse"])
-def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, data, sparse):
+def test_pytensor_from_sympy(
+    model_function, calibrate_model, f_expected_jac, data, sparse
+):
     mod = model_function(
         equation_mode="numba",
         backend="pytensor",
@@ -212,17 +220,29 @@ def test_backends_agree(
                 assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
                 assert np.all(np.isfinite(res.x)), f"{name} solver returned Infs"
 
-                np.testing.assert_allclose(
-                    np.around(results[0].x, 4), np.around(results[1].x, 4), atol=1e-5, rtol=1e-5
-                ), "Solvers disagree"
+                (
+                    np.testing.assert_allclose(
+                        np.around(results[0].x, 4),
+                        np.around(results[1].x, 4),
+                        atol=1e-5,
+                        rtol=1e-5,
+                    ),
+                    "Solvers disagree",
+                )
 
             else:
                 assert not np.all(np.isnan(res)), f"{name} solver returned NaNs"
                 assert np.all(np.isfinite(res)), f"{name} solver returned Infs"
 
-                np.testing.assert_allclose(
-                    np.around(results[0], 4), np.around(results[1], 4), atol=1e-5, rtol=1e-5
-                ), "Solvers disagree"
+                (
+                    np.testing.assert_allclose(
+                        np.around(results[0], 4),
+                        np.around(results[1], 4),
+                        atol=1e-5,
+                        rtol=1e-5,
+                    ),
+                    "Solvers disagree",
+                )
 
     calibated_data = calibrate_model(**data)
     x0, theta0 = variable_dict_to_flat_array(
@@ -241,7 +261,9 @@ def test_backends_agree(
         labor_increase, model_numba.variables, model_numba.parameters
     )
 
-    res_numba = getattr(model_numba, method)(calibated_data, theta_labor_increase, **solver_kwargs)
+    res_numba = getattr(model_numba, method)(
+        calibated_data, theta_labor_increase, **solver_kwargs
+    )
     res_pytensor = getattr(model_pytensor, method)(
         calibated_data, theta_labor_increase, **solver_kwargs
     )
@@ -265,7 +287,7 @@ def test_generate_SAM():
     initial_guess = {"C": 10000, "Y": 10000, "income": 10000, "K_d": 5000, "L_d": 1000}
 
     fixed_values = {"r": 1.0, "P": 1.0, "resid": 0.0}
-    data = mod.generate_SAM(
+    mod.generate_SAM(
         param_dict=param_dict,
         initial_variable_guess=initial_guess,
         fixed_values=fixed_values,

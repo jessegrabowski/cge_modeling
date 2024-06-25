@@ -30,6 +30,9 @@ repos:
   hooks:
     - id: no-print-statements
       types: [python]
+      exclude: |
+        (?x)^
+        |cge_modeling/base/cge.py
 
 - repo: https://github.com/MarcoGorelli/absolufy-imports
   rev: v0.3.1

@@ -14,7 +14,9 @@ def _check_pairwise_lengths_match(names, args):
     name_pairs = combinations(names, 2)
     for name_pair, arg_pair in zip(name_pairs, arg_pairs):
         if len(arg_pair[0]) != len(arg_pair[1]):
-            raise ValueError(f"Lengths of {name_pair[0]} and {name_pair[1]} do not match")
+            raise ValueError(
+                f"Lengths of {name_pair[0]} and {name_pair[1]} do not match"
+            )
 
 
 def unwrap_singleton_list(x):
@@ -160,7 +162,8 @@ def CES(
 
     factor_shares = _add_second_alpha(factor_shares, factors)
     _check_pairwise_lengths_match(
-        ["factors", "factor_prices", "factor_shares"], [factors, factor_prices, factor_shares]
+        ["factors", "factor_prices", "factor_shares"],
+        [factors, factor_prices, factor_shares],
     )
 
     production_inner_template = Template(
@@ -176,7 +179,9 @@ def CES(
 
     eq_production = Template(
         "$output = $TFP * ($inner) ** ($epsilon / ($epsilon - 1))"
-    ).safe_substitute(output=output, inner=" + ".join(production_inner), TFP=TFP, epsilon=epsilon)
+    ).safe_substitute(
+        output=output, inner=" + ".join(production_inner), TFP=TFP, epsilon=epsilon
+    )
 
     factor_demand_template = Template(
         "$factor = $output / $TFP * (($factor_share) * $output_price * $TFP / ($factor_price)) ** "
@@ -192,7 +197,9 @@ def CES(
             TFP=TFP,
             epsilon=epsilon,
         )
-        for factor, factor_price, factor_share in zip(factors, factor_prices, factor_shares)
+        for factor, factor_price, factor_share in zip(
+            factors, factor_prices, factor_shares
+        )
     ]
 
     return (eq_production,) + tuple(eq_fac_demands)
@@ -273,7 +280,8 @@ def dixit_stiglitz(
     """
 
     for var, name in zip(
-        [factors, factor_prices, factor_shares], ["factors", "factor_prices", "factor_shares"]
+        [factors, factor_prices, factor_shares],
+        ["factors", "factor_prices", "factor_shares"],
     ):
         if isinstance(var, list) and len(var) != 1:
             raise ValueError(
@@ -286,7 +294,7 @@ def dixit_stiglitz(
     )
 
     share_str = "$factor_share * " if factor_shares is not None else ""
-    TFP_str = f"$TFP * " if TFP is not None else ""
+    TFP_str = "$TFP * " if TFP is not None else ""
 
     kernel_str = f"{share_str}$factor ** (($epsilon - 1) / $epsilon)"
 
@@ -302,10 +310,17 @@ def dixit_stiglitz(
     elif backend == "pytensor":
         rhs_str = "($kernel).sum() ** ($epsilon / ($epsilon - 1))"
     else:
-        raise ValueError(f"backend must be one of 'numba' or 'pytensor', found {backend}")
+        raise ValueError(
+            f"backend must be one of 'numba' or 'pytensor', found {backend}"
+        )
 
     production_function = Template(f"$output = {TFP_str}{rhs_str}").safe_substitute(
-        output=output, TFP=TFP, kernel=kernel, epsilon=epsilon, dims=dims, dim_len=dim_len
+        output=output,
+        TFP=TFP,
+        kernel=kernel,
+        epsilon=epsilon,
+        dims=dims,
+        dim_len=dim_len,
     )
 
     demand_template = f"$factor = $output / {TFP_str}({TFP_str}{share_str}$output_price / $factor_price) ** $epsilon"
@@ -336,11 +351,14 @@ def _1d_leontief(
     Helper function to generate Leontief production equaitons for the case where ndim == 1.
 
     """
-    zp_rhs = " + ".join([f"{price} * {factor}" for factor, price in zip(factors, factor_prices)])
+    zp_rhs = " + ".join(
+        [f"{price} * {factor}" for factor, price in zip(factors, factor_prices)]
+    )
     zero_profit = f"{output} = ({zp_rhs}) / ({output_price})"
 
     factor_demands = (
-        f"{factor} = {output} * {share}" for factor, share in zip(factors, factor_shares)
+        f"{factor} = {output} * {share}"
+        for factor, share in zip(factors, factor_shares)
     )
 
     return (zero_profit,) + tuple(factor_demands)
@@ -434,7 +452,9 @@ def _2d_leontief(
         #
         # zero_profit = f"{_swapaxes(output, core_dim, batch_dim)} = {rhs} / ({_swapaxes(output_price, core_dim, batch_dim)})"
 
-        factor_demands = f"{factors} = {factor_shares} * {_swapaxes(output, core_dim, batch_dim)}"
+        factor_demands = (
+            f"{factors} = {factor_shares} * {_swapaxes(output, core_dim, batch_dim)}"
+        )
 
     elif backend == "pytensor":
         price_slice = "[:, None]" if expand_price_dim else ""
@@ -442,7 +462,9 @@ def _2d_leontief(
         factor_demands = f"{factors} = {factor_shares} * {output}[None]"
 
     else:
-        raise ValueError(f"backend must be one of 'numba' or 'pytensor', found {backend}")
+        raise ValueError(
+            f"backend must be one of 'numba' or 'pytensor', found {backend}"
+        )
 
     return zero_profit, factor_demands
 
@@ -522,7 +544,8 @@ def leontief(
     """
 
     _check_pairwise_lengths_match(
-        ["factors", "factor_prices", "factor_shares"], [factors, factor_prices, factor_shares]
+        ["factors", "factor_prices", "factor_shares"],
+        [factors, factor_prices, factor_shares],
     )
 
     factors = at_least_list(factors)
@@ -532,7 +555,14 @@ def leontief(
                 f"Leontief production function expects at least two factors when len(dims) == 1, found {len(factors)}"
             )
         return _1d_leontief(
-            factors, factor_prices, output, output_price, factor_shares, dims, coords, backend
+            factors,
+            factor_prices,
+            output,
+            output_price,
+            factor_shares,
+            dims,
+            coords,
+            backend,
         )
     else:
         if len(factors) != 1:

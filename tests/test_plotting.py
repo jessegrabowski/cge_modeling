@@ -16,7 +16,11 @@ def test_data():
 def test_plot_kateplot(test_data: tuple):
     plot_data, mod, calibrated_data = test_data
     plot_kateplot(
-        plot_data, mod=mod, initial_values=calibrated_data, shock_name="L_s", var_names="C"
+        plot_data,
+        mod=mod,
+        initial_values=calibrated_data,
+        shock_name="L_s",
+        var_names="C",
     )
 
 

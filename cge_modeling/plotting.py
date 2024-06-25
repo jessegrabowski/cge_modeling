@@ -1,4 +1,3 @@
-from itertools import product
 from typing import Literal, Optional, Union, cast
 
 import arviz as az
@@ -128,9 +127,13 @@ def plot_lines(
 
     cmap = "tab10" if cmap is None else cmap
     if cmap in plt.colormaps:
-        f_cmap = lambda n: plt.colormaps[cmap](np.linspace(0, 1, n))
+
+        def f_cmap(n):
+            return plt.colormaps[cmap](np.linspace(0, 1, n))
     elif cmap in plt.color_sequences:
-        f_cmap = lambda n: plt.color_sequences[cmap]
+
+        def f_cmap(n):
+            return plt.color_sequences[cmap]
     else:
         raise ValueError(f"Colormap {cmap} not found in matplotlib.")
 
@@ -203,7 +206,7 @@ def plot_kateplot(
     """
     try:
         import squarify  # noqa
-    except ImportError as e:
+    except ImportError:
         raise ImportError(
             'Package "squarify" is required to make kateplots. '
             "Please install the package using pip install squarify"
@@ -224,16 +227,22 @@ def plot_kateplot(
 
     dims = [idata["optimizer"].variables[var].dims for var in var_names]
     if not all([dim == dims[0] for dim in dims]):
-        raise ValueError("Not all variables have the same dimensions, cannot plot together")
+        raise ValueError(
+            "Not all variables have the same dimensions, cannot plot together"
+        )
 
     dims = list(dims[0])
 
     labels = [label for dim in dims for label in mod.coords[dim]]
     pretty_labels = [rename_dict.get(label, label) for label in labels]
     if len(pretty_labels) == 0:
-        raise ValueError("The selected variable is a scalar; cannot create an area plot.")
+        raise ValueError(
+            "The selected variable is a scalar; cannot create an area plot."
+        )
 
-    pre_data = np.concatenate([np.atleast_1d(initial_values[var]).ravel() for var in var_names])
+    pre_data = np.concatenate(
+        [np.atleast_1d(initial_values[var]).ravel() for var in var_names]
+    )
     post_data = np.concatenate(
         [idata["optimizer"].variables[var].data.ravel() for var in var_names]
     )
@@ -287,10 +296,11 @@ def _plot_one_bar(
         data = data.to_dataframe().droplevel(level=drop_vars, axis=0)
         initial_data = initial_data.to_dataframe().droplevel(level=drop_vars, axis=0)
     except ValueError:
-
         data = pd.DataFrame([data.to_dict()]).loc[:, ["data", "name"]].set_index("name")
         initial_data = (
-            pd.DataFrame([initial_data.to_dict()]).loc[:, ["data", "name"]].set_index("name")
+            pd.DataFrame([initial_data.to_dict()])
+            .loc[:, ["data", "name"]]
+            .set_index("name")
         )
 
     to_plot = _compute_bar_data(data, initial_data, metric)
@@ -330,11 +340,18 @@ def plot_bar(
 ):
     data = None
     coords = coords if coords is not None else {}
-    coords = {key: value if isinstance(value, list) else [value] for key, value in coords.items()}
+    coords = {
+        key: value if isinstance(value, list) else [value]
+        for key, value in coords.items()
+    }
     drop_vars = [var for var in coords.keys() if len(coords[var]) == 1]
 
     if "optimizer" in idata:
-        data = idata["optimizer"]["variables"][var_names].sel(**coords).drop_vars(drop_vars)
+        data = (
+            idata["optimizer"]["variables"][var_names]
+            .sel(**coords)
+            .drop_vars(drop_vars)
+        )
 
     if "euler" in idata:
         if data is None:
@@ -377,8 +394,8 @@ def plot_bar(
             )
             axis.set(title=var)
             if metric == "final_initial":
-                l = axis.legend()
-                for text in l.get_texts():
+                legend = axis.legend()
+                for text in legend.get_texts():
                     new_text = text.get_text().split("_")[-1].capitalize()
                     text.set_text(new_text)
 
@@ -389,7 +406,9 @@ def plot_bar(
         ]
         if not all([dim == var_dims[0] for dim in var_dims]):
             msg = "All variables must have the same dimensions to plot together. Found the following: \n"
-            msg += "\n".join(f"{var_name}: {dim}" for var_name, dim in zip(var_names, var_dims))
+            msg += "\n".join(
+                f"{var_name}: {dim}" for var_name, dim in zip(var_names, var_dims)
+            )
             msg += (
                 "\nUse the `coords` argument to select values for dimensions that are not shared across variables, "
                 "or set plot_together=False to plot separately."
@@ -399,7 +418,12 @@ def plot_bar(
 
         # labels = [label for label in [make_labels(var_name, mod) for var_name in var_names]]
         _ = _plot_one_bar(
-            data, initial_values, ax, drop_vars=drop_vars, orientation=orientation, metric=metric
+            data,
+            initial_values,
+            ax,
+            drop_vars=drop_vars,
+            orientation=orientation,
+            metric=metric,
         )
 
     return fig

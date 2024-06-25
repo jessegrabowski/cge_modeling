@@ -2,7 +2,7 @@ import functools as ft
 import logging
 import warnings
 from copy import deepcopy
-from typing import Callable, Literal, Optional, Sequence, Union, cast
+from typing import Callable, Literal, Optional, Union, cast
 
 import numba as nb
 import numpy as np
@@ -36,7 +36,6 @@ from cge_modeling.base.utilities import (
 )
 from cge_modeling.pytensorf.compile import (
     compile_cge_model_to_pytensor,
-    compile_cge_model_to_pytensor_Op,
     euler_approximation,
     euler_approximation_from_CGEModel,
     pytensor_objects_from_CGEModel,
@@ -47,7 +46,7 @@ from cge_modeling.tools.output_tools import (
     list_of_array_to_idata,
     optimizer_result_to_idata,
 )
-from cge_modeling.tools.pytensor_tools import get_required_inputs, make_jacobian
+from cge_modeling.tools.pytensor_tools import make_jacobian
 from cge_modeling.tools.sympy_tools import (
     enumerate_indexbase,
     expand_obj_by_indices,
@@ -90,7 +89,6 @@ class CGEModel:
         compile: list[CompiledFunctions] | None = "all",
         use_scan_euler: bool = True,
     ):
-
         """
         This class represents a CGE model. It is the main interface for interacting with the model.
 
@@ -188,7 +186,9 @@ class CGEModel:
         self._initialize_group(variables, "variables")
         if numeraire is not None:
             if numeraire not in self.variable_names:
-                raise ValueError("Requested numeraire not found among supplied variables")
+                raise ValueError(
+                    "Requested numeraire not found among supplied variables"
+                )
             self.numeraire = self._variables[numeraire]
 
         self._initialize_group(parameters, "parameters")
@@ -367,7 +367,9 @@ class CGEModel:
                 for eq_name in self.unpacked_equation_names
             ]
         else:
-            raise NotImplementedError("Cannot unpack equations when sympy parsing is disabled")
+            raise NotImplementedError(
+                "Cannot unpack equations when sympy parsing is disabled"
+            )
 
     def _add_object(
         self,
@@ -450,10 +452,14 @@ class CGEModel:
     def add_sympy_equation(self, equation: Equation, overwrite: bool = False):
         _validate_input(equation, Equation)
         var_dict = {k: v.to_sympy() for k, v in self._variables.items()}
-        fancy_var_dict = {k: v.to_sympy(use_latex_name=True) for k, v in self._variables.items()}
+        fancy_var_dict = {
+            k: v.to_sympy(use_latex_name=True) for k, v in self._variables.items()
+        }
 
         param_dict = {k: v.to_sympy() for k, v in self._parameters.items()}
-        fancy_param_dict = {k: v.to_sympy(use_latex_name=True) for k, v in self._parameters.items()}
+        fancy_param_dict = {
+            k: v.to_sympy(use_latex_name=True) for k, v in self._parameters.items()
+        }
 
         str_dim_to_symbol = dict(zip(self.coords.keys(), self._symbolic_coords.keys()))
 
@@ -481,7 +487,9 @@ class CGEModel:
 
         # Standardize equation
         try:
-            standard_eq = substitute_reduce_ops(sympy_eq.lhs - sympy_eq.rhs, self.coords)
+            standard_eq = substitute_reduce_ops(
+                sympy_eq.lhs - sympy_eq.rhs, self.coords
+            )
         except Exception as e:
             raise ValueError(
                 f"""Could not standardize equation "{equation.name}":\n{sympy_eq}\n\nEncountered the """
@@ -504,21 +512,27 @@ class CGEModel:
 
         self._add_object(new_eq, "equations", overwrite)
 
-    def add_pytensor_equation(self, equation: Equation, overwrite: bool = False) -> None:
+    def add_pytensor_equation(
+        self, equation: Equation, overwrite: bool = False
+    ) -> None:
         self._add_object(equation, "equations", overwrite)
 
     def add_equations(self, equations: list[Equation], overwrite: bool = False):
         equations = ensure_input_is_sequence(equations)
         [_validate_input(equation, Equation) for equation in equations]
         add_function = (
-            self.add_sympy_equation if self.parse_equations_to_sympy else self.add_pytensor_equation
+            self.add_sympy_equation
+            if self.parse_equations_to_sympy
+            else self.add_pytensor_equation
         )
         for equation in equations:
             add_function(equation, overwrite)  # type: ignore
 
     def _unpack_equations(self, *args):
         if self.equations is None:
-            raise ValueError("Cannot unpack equations before they are added to the model.")
+            raise ValueError(
+                "Cannot unpack equations before they are added to the model."
+            )
         if self.parse_equations_to_sympy:
             unpacked_eqs = self._unpack_objects(self.equations)
             unpacked_names = [eq.name for eq in unpacked_eqs]
@@ -577,7 +591,9 @@ class CGEModel:
             elif name in self.parameter_names:
                 out.append(self._parameters[name])
             else:
-                raise ValueError(f'Requested name "{name}" is not a known parameter or variable.')
+                raise ValueError(
+                    f'Requested name "{name}" is not a known parameter or variable.'
+                )
         if len(out) == 1:
             return out[0]
 
@@ -607,7 +623,9 @@ class CGEModel:
         return out
 
     def _euler_wrapper(self, f_dX, *, theta_final, n_steps, mode=None, **data):
-        x0 = np.concatenate([np.atleast_1d(data[x]).ravel() for x in self.variable_names], axis=0)
+        x0 = np.concatenate(
+            [np.atleast_1d(data[x]).ravel() for x in self.variable_names], axis=0
+        )
         theta0 = np.concatenate(
             [np.atleast_1d(data[x]).ravel() for x in self.parameter_names], axis=0
         )
@@ -616,7 +634,8 @@ class CGEModel:
             result = euler_approx(f_dX, x0, theta0, theta_final, n_steps, progress)
         # Decompose the result back to a list of numpy arrays
         shapes = [
-            infer_object_shape_from_coords(x, self.coords) for x in self.variables + self.parameters
+            infer_object_shape_from_coords(x, self.coords)
+            for x in self.variables + self.parameters
         ]
         out = []
         cursor = 0
@@ -665,7 +684,9 @@ class CGEModel:
             # Functions used by optimize.minimize to solve the system of equations by minimizing the loss function
             # Save these as member functions so they can be reused by optimizers
             self.f_resid = numba_lambdify(variables, resid, parameters)
-            self.f_grad = numba_lambdify(variables, grad, parameters, ravel_outputs=True)
+            self.f_grad = numba_lambdify(
+                variables, grad, parameters, ravel_outputs=True
+            )
             self.f_hess = numba_lambdify(variables, hess, parameters)
 
         if "euler" in functions_to_compile:
@@ -699,10 +720,11 @@ class CGEModel:
         sparse: bool = False,
         use_scan_euler: bool = True,
     ):
-
-        _log.info(f"Compiling model equations into pytensor graph")
-        (variables, parameters), (system, jac, jac_inv, B) = compile_cge_model_to_pytensor(
-            self, inverse_method=inverse_method, sparse=sparse
+        _log.info("Compiling model equations into pytensor graph")
+        (variables, parameters), (system, jac, jac_inv, B) = (
+            compile_cge_model_to_pytensor(
+                self, inverse_method=inverse_method, sparse=sparse
+            )
         )
         inputs = variables + parameters
         text_mode = "C" if mode is None else mode
@@ -744,22 +766,25 @@ class CGEModel:
                 self.f_jac = f_jac
 
         if "minimize" in functions_to_compile:
-            _log.info(f"Computing sum of squared errors")
+            _log.info("Computing sum of squared errors")
             resid = (system**2).sum()
 
-            _log.info(f"Computing SSE gradient")
+            _log.info("Computing SSE gradient")
             grad = pytensor.grad(resid, variables)
             grad = pt.specify_shape(
-                pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]), self.n_variables
+                pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]),
+                self.n_variables,
             )
 
-            _log.info(f"Computing SSE Jacobian")
+            _log.info("Computing SSE Jacobian")
             hess = make_jacobian(grad, variables)
 
             _log.info(
                 f"Compiling SSE functions (sse, gradient, jacobian) into {text_mode} function"
             )
-            f_root = pytensor.function(inputs=inputs, outputs=[resid, grad, hess], mode=mode)
+            f_root = pytensor.function(
+                inputs=inputs, outputs=[resid, grad, hess], mode=mode
+            )
             f_root.trust_inputs = True
 
             if mode in ["JAX", "NUMBA"]:
@@ -839,7 +864,9 @@ class CGEModel:
             return
 
         else:
-            functions_to_compile = [fn for fn in functions_to_compile if fn not in self._compiled]
+            functions_to_compile = [
+                fn for fn in functions_to_compile if fn not in self._compiled
+            ]
             _log.info(f"Compiling model with {functions_to_compile} functions")
 
         if backend == "numba":
@@ -888,7 +915,9 @@ class CGEModel:
             elif var_name in self.variable_names:
                 item = self._variables[var_name]
             else:
-                raise ValueError(f"{var_name} is not a variable or parameter of the model.")
+                raise ValueError(
+                    f"{var_name} is not a variable or parameter of the model."
+                )
             info_dict["Symbol"].append(item)
             info_dict["Description"].append(item.description)
 
@@ -919,14 +948,17 @@ class CGEModel:
         equations = self.unpacked_equation_symbols
         symbolic_data = {self.get_symbol(k): v for k, v in data.items()}
 
-        all_model_objects = self.unpacked_variable_symbols + self.unpacked_parameter_symbols
+        all_model_objects = (
+            self.unpacked_variable_symbols + self.unpacked_parameter_symbols
+        )
 
         calibrated_system = recursive_solve_symbolic(equations, symbolic_data, max_iter)
         initial_values = np.array(
             [data.get(x.name, np.nan) for x in all_model_objects], dtype="float64"
         )
         fitted_values = np.array(
-            [calibrated_system.get(x, np.nan) for x in all_model_objects], dtype="float64"
+            [calibrated_system.get(x, np.nan) for x in all_model_objects],
+            dtype="float64",
         )
 
         x0, theta0 = (
@@ -996,20 +1028,29 @@ class CGEModel:
                     f"{[x for x in fixed_values.keys() if x in self.parameter_names]}"
                 )
             free_variables = [x for x in self.variables if x.name not in fixed_values]
-            f_system = wrap_fixed_values(f_system, fixed_values, self.variables, self.coords)
+            f_system = wrap_fixed_values(
+                f_system, fixed_values, self.variables, self.coords
+            )
             f_jac = wrap_fixed_values(f_jac, fixed_values, self.variables, self.coords)
 
         if self._compile_backend == "pytensor":
             parameters = self.parameters
             coords = self.coords
 
-            f_system = wrap_pytensor_func_for_scipy(f_system, free_variables, parameters, coords)
-            f_jac = wrap_pytensor_func_for_scipy(f_jac, free_variables, parameters, coords)
+            f_system = wrap_pytensor_func_for_scipy(
+                f_system, free_variables, parameters, coords
+            )
+            f_jac = wrap_pytensor_func_for_scipy(
+                f_jac, free_variables, parameters, coords
+            )
 
         x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
         objective = CostFuncWrapper(
-            maxeval=maxeval, f=f_system, f_jac=f_jac if use_jac else None, progressbar=progressbar
+            maxeval=maxeval,
+            f=f_system,
+            f_jac=f_jac if use_jac else None,
+            progressbar=progressbar,
         )
 
         f_optim = ft.partial(
@@ -1045,7 +1086,9 @@ class CGEModel:
 
         if not use_jac and use_hess:
             use_hess = False
-            _log.warning("use_hess is ignored when use_jac=False. Setting use_hess=False.")
+            _log.warning(
+                "use_hess is ignored when use_jac=False. Setting use_hess=False."
+            )
 
         if fixed_values is not None:
             if any(x in self.parameter_names for x in fixed_values.keys()):
@@ -1056,17 +1099,29 @@ class CGEModel:
                 )
 
             free_variables = [x for x in self.variables if x.name not in fixed_values]
-            f_resid = wrap_fixed_values(f_resid, fixed_values, self.variables, self.coords)
-            f_grad = wrap_fixed_values(f_grad, fixed_values, self.variables, self.coords)
-            f_hess = wrap_fixed_values(f_hess, fixed_values, self.variables, self.coords)
+            f_resid = wrap_fixed_values(
+                f_resid, fixed_values, self.variables, self.coords
+            )
+            f_grad = wrap_fixed_values(
+                f_grad, fixed_values, self.variables, self.coords
+            )
+            f_hess = wrap_fixed_values(
+                f_hess, fixed_values, self.variables, self.coords
+            )
 
         if self._compile_backend == "pytensor":
             parameters = self.parameters
             coords = self.coords
 
-            f_resid = wrap_pytensor_func_for_scipy(f_resid, free_variables, parameters, coords)
-            f_grad = wrap_pytensor_func_for_scipy(f_grad, free_variables, parameters, coords)
-            f_hess = wrap_pytensor_func_for_scipy(f_hess, free_variables, parameters, coords)
+            f_resid = wrap_pytensor_func_for_scipy(
+                f_resid, free_variables, parameters, coords
+            )
+            f_grad = wrap_pytensor_func_for_scipy(
+                f_grad, free_variables, parameters, coords
+            )
+            f_hess = wrap_pytensor_func_for_scipy(
+                f_hess, free_variables, parameters, coords
+            )
 
         x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
         maxeval = optimizer_kwargs.pop("niter", 5000)
@@ -1162,7 +1217,9 @@ class CGEModel:
         """
         SOLVER_FACTORY = {
             "root": ft.partial(self._solve_with_root, use_jac=use_jac),
-            "minimize": ft.partial(self._solve_with_minimize, use_jac=use_jac, use_hess=use_hess),
+            "minimize": ft.partial(
+                self._solve_with_minimize, use_jac=use_jac, use_hess=use_hess
+            ),
             "euler": ft.partial(self._solve_with_euler_approximation, n_steps=n_steps),
         }
 
@@ -1173,11 +1230,16 @@ class CGEModel:
 
         joint_dict = {**param_dict, **initial_variable_guess}
         free_variables = [var for var in self.variables if var.name not in fixed_values]
-        _, flat_params = variable_dict_to_flat_array(joint_dict, free_variables, self.parameters)
+        _, flat_params = variable_dict_to_flat_array(
+            joint_dict, free_variables, self.parameters
+        )
 
         f_solver = SOLVER_FACTORY[solve_method]
         res = f_solver(
-            data=joint_dict, theta_final=flat_params, fixed_values=fixed_values, **solver_kwargs
+            data=joint_dict,
+            theta_final=flat_params,
+            fixed_values=fixed_values,
+            **solver_kwargs,
         )
 
         if not solve_method == "euler":
@@ -1187,7 +1249,9 @@ class CGEModel:
                     "diagnostic purposes only"
                 )
 
-            result_dict = flat_array_to_variable_dict(res.x, free_variables, self.coords)
+            result_dict = flat_array_to_variable_dict(
+                res.x, free_variables, self.coords
+            )
         else:
             result_dict = res
 
@@ -1386,7 +1450,9 @@ class CGEModel:
 
         if isinstance(data, InferenceData):
             if not ("variables" in data.groups() and "parameters" in data.groups()):
-                raise ValueError("InferenceData must contain variables and parameters groups")
+                raise ValueError(
+                    "InferenceData must contain variables and parameters groups"
+                )
 
             if "step" in data["variables"].dims:
                 data = (
@@ -1397,7 +1463,9 @@ class CGEModel:
                 data = data.to_dict()["variables"] | data.to_dict()["parameters"]
 
         elif isinstance(data, xr.Dataset):
-            data = {x.name: data[x.name].values for x in self.variables + self.parameters}
+            data = {
+                x.name: data[x.name].values for x in self.variables + self.parameters
+            }
 
         if self._compile_backend == "pytensor":
             errors = self.f_system(**data)
@@ -1502,7 +1570,9 @@ def expand_compact_system(
         numeraires = list(numeraire_dict.keys())
 
     index_symbols = list(index_dict.keys())
-    index_dicts = [{k: v for k, v in enumerate(index_dict[idx])} for idx in index_symbols]
+    index_dicts = [
+        {k: v for k, v in enumerate(index_dict[idx])} for idx in index_symbols
+    ]
 
     compact_equations = [eq.doit() for eq in compact_equations]
     variables = enumerate_indexbase(
@@ -1532,7 +1602,9 @@ def expand_compact_system(
     named_param_sub_dict = make_indexbase_sub_dict(named_parameters)
 
     idx_var_to_named_var = dict(zip(var_sub_dict.values(), named_var_sub_dict.values()))
-    idx_param_to_named_param = dict(zip(param_sub_dict.values(), named_param_sub_dict.values()))
+    idx_param_to_named_param = dict(
+        zip(param_sub_dict.values(), named_param_sub_dict.values())
+    )
 
     numeraires = [idx_var_to_named_var.get(var_sub_dict.get(x)) for x in numeraires]
     numeraire_dict = {k: v for k, v in zip(numeraires, numeraire_dict.values())}
@@ -1551,10 +1623,12 @@ def expand_compact_system(
     if check_square:
         if n_eq != n_vars:
             names = [x.name for x in numeraires]
-            msg = f"After expanding index sets"
+            msg = "After expanding index sets"
             if len(names) > 0:
                 msg += f' and removing {", ".join(names)},'
-            msg += f" system is not square. Found {n_eq} equations and {n_vars} variables."
+            msg += (
+                f" system is not square. Found {n_eq} equations and {n_vars} variables."
+            )
             raise ValueError(msg)
 
     return equations, named_variables, named_parameters
@@ -1576,7 +1650,9 @@ def compile_cge_to_numba(
     jac = sp.Matrix(equations).jacobian(variables)
     hess = grad.jacobian(variables)
 
-    f_system = numba_lambdify(variables, sp.Matrix(equations), parameters, ravel_outputs=True)
+    f_system = numba_lambdify(
+        variables, sp.Matrix(equations), parameters, ravel_outputs=True
+    )
     f_resid = numba_lambdify(variables, resid, parameters)
     f_grad = numba_lambdify(variables, grad, parameters, ravel_outputs=True)
     f_hess = numba_lambdify(variables, hess, parameters)
@@ -1602,13 +1678,19 @@ def numba_linearize_cge_func(model: CGEModel):
     B_mat = sp.Matrix([[eq.diff(x) for x in parameters] for eq in equations])
     model.symbolic_solution_matrices["B_matirx"] = B_mat
 
-    sub_dict = {x: sp.Symbol(f"{x.name}_0", **x.assumptions0) for x in variables + parameters}
+    sub_dict = {
+        x: sp.Symbol(f"{x.name}_0", **x.assumptions0) for x in variables + parameters
+    }
 
     A_sub = A_mat.subs(sub_dict)
     Bv = B_mat.subs(sub_dict) @ sp.Matrix([[x] for x in parameters])
 
-    nb_A_sub = numba_lambdify(exog_vars=parameters, expr=A_sub, endog_vars=list(sub_dict.values()))
-    nb_B_sub = numba_lambdify(exog_vars=parameters, expr=Bv, endog_vars=list(sub_dict.values()))
+    nb_A_sub = numba_lambdify(
+        exog_vars=parameters, expr=A_sub, endog_vars=list(sub_dict.values())
+    )
+    nb_B_sub = numba_lambdify(
+        exog_vars=parameters, expr=Bv, endog_vars=list(sub_dict.values())
+    )
 
     @nb.njit
     def f_dX(endog, exog):

@@ -36,7 +36,9 @@ DISTRIBUTION_FACTORY = {
 }
 
 
-def generate_data(objects: list[Union[Variable, Parameter]], coords: dict[str, list[str, ...]]):
+def generate_data(
+    objects: list[Union[Variable, Parameter]], coords: dict[str, list[str, ...]]
+):
     data_dict = {}
     for obj in objects:
         if obj.name in DISTRIBUTION_FACTORY:

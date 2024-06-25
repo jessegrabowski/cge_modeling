@@ -14,7 +14,10 @@ from sympy.printing.latex import latex
 greeks = list(greeks) + ["varepsilon"]
 Greeks = [x.title() for x in greeks]
 GREEK_PATTERN = "|".join(
-    [f"(((^{greek})|((?=[_^]){greek})|((?<=[_^]){greek})))" for greek in greeks + Greeks]
+    [
+        f"(((^{greek})|((?=[_^]){greek})|((?<=[_^]){greek})))"
+        for greek in greeks + Greeks
+    ]
 )
 
 
@@ -86,7 +89,9 @@ class ModelObject(ABC):
             if all([isinstance(x, str) for x in dims]):
                 return dims
             else:
-                raise ValueError(f"dims must be a string or a tuple of strings, found {dims}")
+                raise ValueError(
+                    f"dims must be a string or a tuple of strings, found {dims}"
+                )
 
         # Case 2: Index is a single comma delimited string. Convert to a tuple
         elif isinstance(dims, str):
@@ -94,7 +99,9 @@ class ModelObject(ABC):
             return tuple(dim.strip() for dim in dims)
 
         else:
-            raise ValueError(f"dims must be a string or a tuple of strings, found {dims}")
+            raise ValueError(
+                f"dims must be a string or a tuple of strings, found {dims}"
+            )
 
     def _initialize_dim_vals(self):
         dims = self.dims
@@ -110,7 +117,7 @@ class ModelObject(ABC):
                 f" values; found {type(dim_vals)}"
             )
 
-        keys, values = list(dim_vals.keys()), list(dim_vals.values())
+        keys, _ = list(dim_vals.keys()), list(dim_vals.values())
 
         # Check all the keys are in the dims
         extra_dims = set(keys) - set(dims)
@@ -151,9 +158,13 @@ class ModelObject(ABC):
 
     def _initialize_description(self):
         if self.description is not None:
-            self.description = _pretty_print_dim_flags(self.description, self.dims, self.dim_vals)
+            self.description = _pretty_print_dim_flags(
+                self.description, self.dims, self.dim_vals
+            )
             return self.description
-        return f"{self._full_latex_name}, Positive = {self.positive}, Real = {self.real}"
+        return (
+            f"{self._full_latex_name}, Positive = {self.positive}, Real = {self.real}"
+        )
 
     def __getitem__(self, item: str):
         return getattr(self, item)
@@ -266,7 +277,14 @@ class _SympyEquation(Equation):
 
 class Result:
     def __init__(
-        self, name, variables, parameters, initial_values, fitted_values, success, meta=None
+        self,
+        name,
+        variables,
+        parameters,
+        initial_values,
+        fitted_values,
+        success,
+        meta=None,
     ):
         self.name = name
         self.variables = variables

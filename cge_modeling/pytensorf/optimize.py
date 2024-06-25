@@ -1,12 +1,12 @@
 import functools as ft
-from typing import Callable, Optional, Union
+from typing import Optional, Union
 
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
 
 from cge_modeling.pytensorf.compile import flat_tensor_to_ragged_list
-from cge_modeling.tools.pytensor_tools import at_least_list, flatten_equations
+from cge_modeling.tools.pytensor_tools import flatten_equations
 
 
 def eval_func_maybe_exog(X, exog, f, has_exog):
@@ -62,7 +62,9 @@ def check_stepsize(norm_root, norm_root_new, step_size, initial_step_size):
     is_decreasing = pt.lt(norm_root_new, norm_root)
 
     return pytensor.ifelse.ifelse(
-        is_decreasing, (is_decreasing, initial_step_size), (is_decreasing, step_size * 0.5)
+        is_decreasing,
+        (is_decreasing, initial_step_size),
+        (is_decreasing, step_size * 0.5),
     )
 
 
@@ -120,7 +122,9 @@ def root(
     step_size: int = 1,
     max_iter: int = 100,
     tol: float = 1e-8,
-) -> tuple[list[pt.TensorVariable], pt.TensorVariable, pt.TensorVariable, pt.TensorVariable]:
+) -> tuple[
+    list[pt.TensorVariable], pt.TensorVariable, pt.TensorVariable, pt.TensorVariable
+]:
     """
     Find the root of a system of equations using Newton's method with backtracking.
 

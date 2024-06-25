@@ -2,7 +2,7 @@ from functools import reduce
 
 import pandas as pd
 
-from cge_modeling.gams.excel_constants import COORDS_BY_SHEET, SHEET_GROUPS, SHEET_NAMES
+from cge_modeling.gams.excel_constants import COORDS_BY_SHEET, SHEET_GROUPS
 from cge_modeling.gams.gams_constants import ENERGY
 
 
@@ -29,13 +29,10 @@ def set_df_index_names(df, sheet, coords):
         df.index.names = coords["index"]
     else:
         df.index.name = coords["index"][0]
-    if n_headers is None:
-        name = sheet
+    if n_headers > 1:
+        df.columns.names = coords["columns"]
     else:
-        if n_headers > 1:
-            df.columns.names = coords["columns"]
-        else:
-            df.columns.name = coords["columns"][0]
+        df.columns.name = coords["columns"][0]
 
     return df
 
@@ -45,7 +42,10 @@ def make_tokens_from_sheet_name(sheet, coords):
     if n_headers is None:
         return
     tokens = [
-        x.strip() for token in sheet.split(",") for x in token.split("by") if len(x.strip()) > 0
+        x.strip()
+        for token in sheet.split(",")
+        for x in token.split("by")
+        if len(x.strip()) > 0
     ]
     return tokens
 
@@ -72,7 +72,6 @@ def add_duplicate_indices(df, missing, all_indices):
     if len(missing) == 0:
         return df
 
-    index_cols = list(df.index.names)
     df = df.reset_index()
     assert isinstance(df, pd.DataFrame)
 
@@ -89,7 +88,9 @@ def get_missing_indices(df, all_indices):
 
 
 def concatenate_group_stack(dfs):
-    all_indices = reduce(lambda l, r: l.union(r), [set(x.index.names) for x in dfs])
+    all_indices = reduce(
+        lambda left, right: left.union(right), [set(x.index.names) for x in dfs]
+    )
     missing_indices = [get_missing_indices(df, all_indices) for df in dfs]
 
     if all([len(x) == 0 for x in missing_indices]):
@@ -128,12 +129,12 @@ def get_load_type(x):
     return None
 
 
-def list_replace(l, sub_dict):
-    new_l = l.copy()
+def list_replace(input_list, sub_dict):
+    new_list = input_list.copy()
     for old, new in sub_dict.items():
-        idx = l.index(old)
-        new_l[idx] = new
-    return new_l
+        idx = input_list.index(old)
+        new_list[idx] = new
+    return new_list
 
 
 def load_all_sheets_as_xarray(path):
@@ -162,7 +163,11 @@ def load_all_sheets_as_xarray(path):
 def make_code_dicts(path):
     code_to_country = (
         pd.read_excel(
-            path, sheet_name="Country Codes", index_col=0, header=None, names=["code", "country"]
+            path,
+            sheet_name="Country Codes",
+            index_col=0,
+            header=None,
+            names=["code", "country"],
         )
         .iloc[:, 0]
         .to_dict()
@@ -170,7 +175,11 @@ def make_code_dicts(path):
 
     code_to_commodity = (
         pd.read_excel(
-            path, sheet_name="Commodities", index_col=0, header=None, names=["code", "commodity"]
+            path,
+            sheet_name="Commodities",
+            index_col=0,
+            header=None,
+            names=["code", "commodity"],
         )
         .iloc[:, 0]
         .to_dict()
@@ -183,7 +192,11 @@ def make_code_dicts(path):
 
     code_to_labor = (
         pd.read_excel(
-            path, sheet_name="Labor Types", index_col=0, header=None, names=["code", "labor"]
+            path,
+            sheet_name="Labor Types",
+            index_col=0,
+            header=None,
+            names=["code", "labor"],
         )
         .iloc[:, 0]
         .to_dict()
@@ -191,7 +204,11 @@ def make_code_dicts(path):
 
     code_to_factor = (
         pd.read_excel(
-            path, sheet_name="Factor Types", index_col=0, header=None, names=["code", "factor"]
+            path,
+            sheet_name="Factor Types",
+            index_col=0,
+            header=None,
+            names=["code", "factor"],
         )
         .iloc[:, 0]
         .to_dict()
@@ -209,7 +226,11 @@ def make_code_dicts(path):
 
     code_to_load = {"BL": "base load", "P": "peak load"}
 
-    code_to_margin = {"OTP": "Transport nec", "WTP": "Water transport", "ATP": "Air transport"}
+    code_to_margin = {
+        "OTP": "Transport nec",
+        "WTP": "Water transport",
+        "ATP": "Air transport",
+    }
 
     names = [
         "country",

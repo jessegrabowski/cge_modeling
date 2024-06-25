@@ -201,7 +201,10 @@ def numba_lambdify(
         unpacked_inputs += "\n" + exog_unpacked
 
     assignments = "\n".join(
-        [f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}" for x, y in sub_dict]
+        [
+            f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}"
+            for x, y in sub_dict
+        ]
     )
     returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
     full_code = f"{decorator}\ndef f({input_signature}):\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"
