@@ -3,18 +3,20 @@ channels:
   - conda-forge
 dependencies:
   # Core dependencies
-  - python=3.11
+  - python=3.12
   - jupyter<7
-  - jupyter_contrib_nbextensions
   - pip
   - numpy
   - scipy
   - sympy
   - pandas
   - numba
-  - matplotlib
+  - IPython
   - pymc
   - pytensor
+  - tqdm
+  - numba-progress
+  - fastprogress
   - matplotlib
 
   # JAX Backend
@@ -26,6 +28,10 @@ dependencies:
       - texttable
       - latextable
       - squarify
+      - jupyter_contrib_nbextensions
+      - jupyter_nbextensions_configurator
+      - sympytensor
+
 
   # For building docs
   - sphinx>=5.1.0,<6
@@ -33,15 +39,6 @@ dependencies:
   - pygments
   - pydot
   - ipython
-
-  # code style
-  - black
-  - isort
-
-  # For linting
-  - flake8
-  - pep8
-  - pyflakes
 
   # developer tools
   - pre-commit

@@ -113,7 +113,9 @@ def indexed_variable_to_sympy_symbol(obj: ModelObject) -> sp.Symbol:
     return sp.Symbol(name, **obj.assumptions)
 
 
-def indexed_variables_to_sub_dict(obj_list: list[ModelObject]) -> dict[sp.Symbol, sp.Symbol]:
+def indexed_variables_to_sub_dict(
+    obj_list: list[ModelObject],
+) -> dict[sp.Symbol, sp.Symbol]:
     """
     Construct a mapping between ModelObject sympy representations using IndexedBase and simple Sympy symbols.
 
@@ -204,7 +206,10 @@ def info_to_symbols(var_info, assumptions):
     names, index_symbols = (list(t) for t in zip(*var_info))
     has_index = [len(idx) > 0 for idx in index_symbols]
 
-    base_vars = [make_symbol(name, has_idx, assumptions) for name, has_idx in zip(names, has_index)]
+    base_vars = [
+        make_symbol(name, has_idx, assumptions)
+        for name, has_idx in zip(names, has_index)
+    ]
 
     def inject_index(x, has_idx, idx):
         if not has_idx:
@@ -290,7 +295,9 @@ def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, list[str, ...]]) -> sp.
     return eq
 
 
-def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim="raise") -> list[str]:
+def _validate_dims(
+    obj: ModelObject, dims: list[str], on_unused_dim="raise"
+) -> list[str]:
     """
     Validate that the provided dims are associated with the provided object. If not, either raise an error or ignore
     the unused dims, based on the value of on_unused_dim.

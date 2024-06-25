@@ -1,12 +1,12 @@
 import functools as ft
-from typing import Callable, Optional, Union
+from typing import Optional, Union
 
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
 
 from cge_modeling.pytensorf.compile import flat_tensor_to_ragged_list
-from cge_modeling.tools.pytensor_tools import at_least_list, flatten_equations
+from cge_modeling.tools.pytensor_tools import flatten_equations
 
 
 def eval_func_maybe_exog(X, exog, f, has_exog):
@@ -53,7 +53,7 @@ def _check_convergence(norm_step, norm_root, tol):
 
 
 def check_convergence(norm_step, norm_root, converged, tol):
-    return pytensor.ifelse.ifelse(
+    return pytensor.ifelse(
         converged, np.array(True), _check_convergence(norm_step, norm_root, tol)
     )
 
@@ -61,13 +61,15 @@ def check_convergence(norm_step, norm_root, converged, tol):
 def check_stepsize(norm_root, norm_root_new, step_size, initial_step_size):
     is_decreasing = pt.lt(norm_root_new, norm_root)
 
-    return pytensor.ifelse.ifelse(
-        is_decreasing, (is_decreasing, initial_step_size), (is_decreasing, step_size * 0.5)
+    return pytensor.ifelse(
+        is_decreasing,
+        (is_decreasing, initial_step_size),
+        (is_decreasing, step_size * 0.5),
     )
 
 
 def backtrack_if_not_decreasing(is_decreasing, X, new_X):
-    return pytensor.ifelse.ifelse(is_decreasing, new_X, X)
+    return pytensor.ifelse(is_decreasing, new_X, X)
 
 
 def scan_body(*args, F, J_inv, initial_step_size, tol, has_exog, n_endog, n_exog):
@@ -78,7 +80,7 @@ def scan_body(*args, F, J_inv, initial_step_size, tol, has_exog, n_endog, n_exog
     shapes = [x.type.shape for x in X]
     flat_X = flatten_equations(X)
 
-    out = pytensor.ifelse.ifelse(
+    out = pytensor.ifelse(
         converged,
         no_op(flat_X),
         _newton_step(flat_X, exog, F, J_inv, step_size, has_exog, shapes),
@@ -120,7 +122,9 @@ def root(
     step_size: int = 1,
     max_iter: int = 100,
     tol: float = 1e-8,
-) -> tuple[list[pt.TensorVariable], pt.TensorVariable, pt.TensorVariable, pt.TensorVariable]:
+) -> tuple[
+    list[pt.TensorVariable], pt.TensorVariable, pt.TensorVariable, pt.TensorVariable
+]:
     """
     Find the root of a system of equations using Newton's method with backtracking.
 

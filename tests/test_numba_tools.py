@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 import sympy as sp
 
 from cge_modeling.tools.numba_tools import numba_lambdify

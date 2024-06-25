@@ -107,7 +107,11 @@ COORDS_BY_SHEET = {
         "columns": ("destination",),
         "groups": None,
     },
-    "Margin Exports, BP": {"index": ("commodity",), "columns": ("country",), "groups": ("price",)},
+    "Margin Exports, BP": {
+        "index": ("commodity",),
+        "columns": ("country",),
+        "groups": ("price",),
+    },
     "Capital Depreciation": {"index": ("country",), "columns": None, "groups": None},
     "Domestic Purchases by Firms, BP": {
         "index": ("commodity", "activity"),

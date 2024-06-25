@@ -5,7 +5,6 @@ from numpy.testing import assert_allclose
 
 from cge_modeling.base.utilities import flat_array_to_variable_dict
 from cge_modeling.pytensorf.compile import (
-    compile_cge_model_to_pytensor,
     compile_cge_model_to_pytensor_Op,
 )
 from cge_modeling.pytensorf.optimize import root
@@ -42,7 +41,9 @@ def test_simple_root():
     x_val = 1.0
     y_val = 1.0
 
-    root_histories, converged, step_size, n_steps = root(f, f_jac_inv, {"x": x_val, "y": y_val})
+    root_histories, converged, step_size, n_steps = root(
+        f, f_jac_inv, {"x": x_val, "y": y_val}
+    )
     final_root = _postprocess_root_return(root_histories)
 
     assert_allclose(final_root, [0.0, 1.0], atol=1e-8)
@@ -96,12 +97,18 @@ def test_small_model():
     assert_allclose(root_eval[0], root_eval[1], atol=1e-8)
 
     # Check residuals are zero at the root
-    assert_allclose(f_model_compiled(*root_eval, **param_vals).ravel(), np.zeros(7), atol=1e-8)
+    assert_allclose(
+        f_model_compiled(*root_eval, **param_vals).ravel(), np.zeros(7), atol=1e-8
+    )
 
 
 def test_small_model_from_compile():
-    mod = load_model_1(parse_equations_to_sympy=False, backend="pytensor", compile=False)
-    (f_model, f_jac, f_jac_inv) = compile_cge_model_to_pytensor_Op(mod, inverse_method="solve")
+    mod = load_model_1(
+        parse_equations_to_sympy=False, backend="pytensor", compile=False
+    )
+    (f_model, f_jac, f_jac_inv) = compile_cge_model_to_pytensor_Op(
+        mod, inverse_method="solve"
+    )
     data = {
         "Y": 11000.0,
         "C": 11000.0,
@@ -152,18 +159,24 @@ def test_small_model_from_compile():
     assert_allclose(root_eval[Y_idx], root_eval[C_idx], atol=1e-8)
 
     # Check residuals are zero at the root
-    params = np.concatenate([np.atleast_1d(param_data[param]) for param in mod.parameter_names])
+    params = np.concatenate(
+        [np.atleast_1d(param_data[param]) for param in mod.parameter_names]
+    )
     assert_allclose(f_model(*root_eval, *params).eval(), np.zeros(8), atol=1e-8)
 
 
 def test_sector_model_from_compile():
-    mod = load_model_2(parse_equations_to_sympy=False, mode="FAST_COMPILE", backend="pytensor")
+    mod = load_model_2(
+        parse_equations_to_sympy=False, mode="FAST_COMPILE", backend="pytensor"
+    )
     calib_dict = calibrate_model_2(**model_2_data)
 
     x0 = {var.name: calib_dict[var.name] for var in mod.variables}
     params = {param.name: calib_dict[param.name] for param in mod.parameters}
 
-    f_model, f_jac, f_jac_inv = compile_cge_model_to_pytensor_Op(mod, inverse_method="solve")
+    f_model, f_jac, f_jac_inv = compile_cge_model_to_pytensor_Op(
+        mod, inverse_method="solve"
+    )
 
     root_history, converged, step_size, n_steps = root(
         f_model, f_jac_inv, initial_data=x0, parameters=params, tol=1e-8, max_iter=500
@@ -174,5 +187,7 @@ def test_sector_model_from_compile():
 
     # Check residuals are zero at the root
     assert_allclose(
-        mod.f_system(**root_point, **params).ravel(), np.zeros(mod.n_variables), atol=1e-8
+        mod.f_system(**root_point, **params).ravel(),
+        np.zeros(mod.n_variables),
+        atol=1e-8,
     )
