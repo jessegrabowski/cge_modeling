@@ -10,7 +10,7 @@ dependencies:
   - pandas
   - numba
   - IPython
-  - pytensor
+  - pytensor>=2.23,<2.24
   - tqdm
   - numba-progress
   - fastprogress
