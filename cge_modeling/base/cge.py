@@ -1070,8 +1070,8 @@ class CGEModel:
 
     def _solve_with_minimize(
         self,
-        data: dict[str, np.array],
-        theta_final: dict[str, np.array],
+        data: dict[str, np.ndarray],
+        theta_final: dict[str, np.ndarray],
         use_jac: bool = True,
         use_hess: bool = True,
         progressbar: bool = True,
@@ -1152,29 +1152,29 @@ class CGEModel:
 
     def generate_SAM(
         self,
-        param_dict: dict[str, np.array],
-        initial_variable_guess: dict[str, np.array],
+        param_dict: dict[str, np.ndarray],
+        initial_variable_guess: dict[str, np.ndarray],
         solve_method: Literal["root", "minimize", "euler"] = "root",
-        fixed_values: dict[str, np.array] | None = None,
+        fixed_values: dict[str, np.ndarray] | None = None,
         use_jac: bool = True,
         use_hess: bool = True,
         n_steps: int = 100,
         **solver_kwargs,
-    ) -> dict[str, np.array]:
+    ) -> dict[str, np.ndarray]:
         """
         Generate a Social Accounting Matrix (SAM) from the model parameters.
 
         Parameters
         ----------
-        param_dict: dict[str, np.array]
+        param_dict: dict[str, np.ndarray]
             A dictionary of parameter values. The keys should be the names of the parameters, and the values should be
             numpy arrays of the same shape as the parameter.
 
-        initial_variable_guess: dict[str, np.array]
+        initial_variable_guess: dict[str, np.ndarray]
             A dictionary of initial values for the model variables. The keys should be the names of the variables, and
             the values should be numpy arrays of the same shape as the variable.
 
-        fixed_values: dict[str, np.array], optional
+        fixed_values: dict[str, np.ndarray], optional
             A dictionary of exact values for a subset of model variables. The keys should be the names of the variables
             to be changed, and the values should be numpy arrays of the same shape as the variable.
 
@@ -1202,7 +1202,7 @@ class CGEModel:
 
         Returns
         -------
-        variable_dict: dict[str, np.array]
+        variable_dict: dict[str, np.ndarray]
             A dictionary of variable values. The keys are the names of the variables, and the values are numpy arrays
             of the same shape as the variable.
 
@@ -1261,10 +1261,10 @@ class CGEModel:
 
     def simulate(
         self,
-        initial_state: dict[str, float | np.array],
-        final_values: dict[str, float | np.array] | None = None,
-        final_delta: dict[str, float | np.array] | None = None,
-        final_delta_pct: dict[str, float | np.array] | None = None,
+        initial_state: dict[str, float | np.ndarray],
+        final_values: dict[str, float | np.ndarray] | None = None,
+        final_delta: dict[str, float | np.ndarray] | None = None,
+        final_delta_pct: dict[str, float | np.ndarray] | None = None,
         use_euler_approximation: bool = True,
         use_optimizer: bool = True,
         optimizer_mode: Literal["root", "minimize"] = "root",
@@ -1278,7 +1278,7 @@ class CGEModel:
 
         Parameters
         ----------
-        initial_state: dict[str, np.array]
+        initial_state: dict[str, np.ndarray]
             A dictionary of initial values for the model variables and parameters. The keys should be the names of the
             variables and parameters, and the values should be numpy arrays of the same shape as the variable or
             parameter.
@@ -1286,13 +1286,13 @@ class CGEModel:
             .. warning:: The inital state **must** represent a model equlibrium! This will be checked automatically
             before simulation begins, and an error will be raised if the initial state does not represent an equlibrium.
 
-        final_values: dict[str, np.array], optional
+        final_values: dict[str, np.ndarray], optional
             A dictionary of exact final values for a subset of model parameters. The keys should be the names of the
             parameters to be changed, and the values should be numpy arrays of the same shape as the parameter.
 
             Exactly one of final_values, final_delta, or final_delta_pct must be provided.
 
-        final_delta: dict[str, np.array], optional
+        final_delta: dict[str, np.ndarray], optional
             A dictionary of changes to be applied to a subset of the model parameters. Changes are added to the initial
             values, so that positive values increase the parameter value and negative values decrease the parameter.
             The keys should be the names of the parameters to be changed, and the values should be numpy arrays of the
@@ -1300,7 +1300,7 @@ class CGEModel:
 
             Exactly one of final_values, final_delta, or final_delta_pct must be provided.
 
-        final_delta_pct: dict[str, np.array], optional
+        final_delta_pct: dict[str, np.ndarray], optional
             A dictionary of percentage changes to be applied to a subset of the model parameters. Values provided are
             multipled by the initial values, so that values greater than 1.00 represent precentage increases, and values
             less than 1.00 represent percentage decreases. The keys should be the names of the parameters to be changed,
@@ -1428,7 +1428,7 @@ class CGEModel:
 
     def check_for_equilibrium(
         self,
-        data: dict[str, float | np.array] | InferenceData | xr.Dataset,
+        data: dict[str, float | np.ndarray] | InferenceData | xr.Dataset,
         tol=1e-6,
         print_equations=True,
     ):
