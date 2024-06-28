@@ -324,7 +324,7 @@ def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, Any]) -> sp.Expr:
         idx_pairs = product(*numeric_labels)
 
         sub_dict = {
-            base[*idx_pair]: base[*label_pair]
+            base[tuple(idx_pair)]: base[tuple(label_pair)]
             for idx_pair, label_pair in zip(idx_pairs, label_pairs)
         }
         return sub_dict
