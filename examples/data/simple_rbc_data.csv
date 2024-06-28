@@ -1,0 +1,7 @@
+,,Factor,Factor,Institution,Production,Activities
+,,Labor,Capital,Household,Firm,Firm
+Factor,Labor,,,,,7000
+Factor,Capital,,,,,3000
+Institution,Household,7000,3000,,,
+Production,Firm,,,10000,,
+Activities,Firm,,,,10000,
