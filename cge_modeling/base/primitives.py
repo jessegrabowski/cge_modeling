@@ -116,7 +116,7 @@ class ModelObject(ABC):
                 f" values; found {type(dim_vals)}"
             )
 
-        keys, _ = list(dim_vals.keys()), list(dim_vals.values())
+        keys = list(dim_vals.keys())
 
         # Check all the keys are in the dims
         extra_dims = set(keys) - set(dims)

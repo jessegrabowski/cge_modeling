@@ -1,10 +1,11 @@
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
 import sympy as sp
 from pytensor.compile.sharedvalue import SharedVariable
+from pytensor.graph import rewrite_graph
 from pytensor.graph.basic import graph_inputs
 from sympytensor import as_tensor
 
@@ -193,7 +194,12 @@ def make_jacobian_from_sympy(
     return packed_jac
 
 
-def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike]) -> pt.TensorLike:
+def make_jacobian(
+    system: pt.TensorLike,
+    x: list[pt.TensorLike],
+    return_jvp: bool = False,
+    p: None | pt.TensorVariable = None,
+) -> pt.TensorVariable | tuple[pt.TensorVariable, pt.TensorVariable]:
     """
     Make a Jacobian matrix from a system of equations and a list of variables.
 
@@ -203,11 +209,18 @@ def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike]) -> pt.TensorLik
         A vector of equations
     x: list[pytensor.tensor.TensorVariable]
         A list of variables
+    return_jvp: bool
+        If true, compute only a jacobian-vector product with respect to an arbitray vectory p
+    p: TensorVariable, optional
+        Symbolic variable used in the computation of the JVP. Ignored if return_jvp is False. If None, a variable will
+        be created.
 
     Returns
     -------
     jac: pytensor.tensor.TensorVariable
         The Jacobian matrix of the system of equations with respect to the variables
+    p: pytensor.tensor.TensorVariable
+        The symbolic variable used in the computation of the JVP. Only returned if return_jvp is True.
 
     Notes
     -----
@@ -217,6 +230,13 @@ def make_jacobian(system: pt.TensorLike, x: list[pt.TensorLike]) -> pt.TensorLik
     """
     n_eq = system.type.shape[0]
     n_vars = int(np.sum([np.prod(var.type.shape) for var in x]))
+
+    rewrite_pregrad(system)
+    if return_jvp:
+        if p is None:
+            p = [var.clone(name=f"{var.name}_point") for var in x]
+        jvp = pytensor.gradient.Rop(system, x, p)
+        return jvp, p
 
     column_list = pytensor.gradient.jacobian(system, x)
     jac = pt.concatenate(
@@ -244,7 +264,7 @@ def at_least_list(x: Any) -> list[Any]:
     if isinstance(x, list):
         return x
     else:
-        return [x]
+        return cast(list, [x])
 
 
 def clone_and_rename(x: pt.TensorVariable, suffix: str = "_next") -> pt.TensorVariable:
@@ -281,3 +301,10 @@ def get_required_inputs(graph):
         if isinstance(v, pt.TensorVariable)
         and not isinstance(v, pt.TensorConstant | SharedVariable)
     ]
+
+
+def rewrite_pregrad(graph):
+    """Apply simplifying or stabilizing rewrites to graph that are safe to use
+    pre-grad.
+    """
+    return rewrite_graph(graph, include=("canonicalize", "stabilize"))

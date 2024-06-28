@@ -16,6 +16,7 @@ dependencies:
   - numba-progress
   - fastprogress
   - matplotlib
+  - joblib
 
   - pip:
     - latextable

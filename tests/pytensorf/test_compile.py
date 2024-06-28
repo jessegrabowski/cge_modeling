@@ -8,6 +8,7 @@ from cge_modeling.pytensorf.compile import (
     compile_euler_approximation_function,
     object_to_pytensor,
 )
+from cge_modeling.tools.pytensor_tools import make_jacobian
 from tests.utilities.models import load_model_1, load_model_2
 
 test_cases = [
@@ -72,7 +73,6 @@ def test_compile_euler_approximation_function():
 
     variables = v1, v2 = [pt.dscalar(name) for name in ["v1", "v2"]]
     parameters = v3 = pt.dscalar("v3")
-
     equations = pt.stack([v1**2 * v3 - 1, v1 + v2 - 2])
 
     def f_analytic(v3):
@@ -81,17 +81,39 @@ def test_compile_euler_approximation_function():
         return np.array([v1, v2])
 
     mode = "FAST_COMPILE"
+    A_inv = pt.linalg.inv(make_jacobian(equations, variables))
+    B = make_jacobian(equations, [parameters])
     f_1 = compile_euler_approximation_function(
-        equations, variables, [parameters], n_steps=1, mode=mode
+        A_inv=A_inv,
+        B=B,
+        variables=variables,
+        parameters=[parameters],
+        n_steps=1,
+        mode=mode,
     )
     f_10 = compile_euler_approximation_function(
-        equations, variables, [parameters], n_steps=10, mode=mode
+        A_inv=A_inv,
+        B=B,
+        variables=variables,
+        parameters=[parameters],
+        n_steps=10,
+        mode=mode,
     )
     f_100 = compile_euler_approximation_function(
-        equations, variables, [parameters], n_steps=100, mode=mode
+        A_inv=A_inv,
+        B=B,
+        variables=variables,
+        parameters=[parameters],
+        n_steps=100,
+        mode=mode,
     )
     f_10k = compile_euler_approximation_function(
-        equations, variables, [parameters], n_steps=10_000, mode=mode
+        A_inv=A_inv,
+        B=B,
+        variables=variables,
+        parameters=[parameters],
+        n_steps=10_000,
+        mode=mode,
     )
 
     initial_point = [1, 1]

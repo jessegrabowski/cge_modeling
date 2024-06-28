@@ -1,6 +1,7 @@
 import re
 import warnings
 from collections import defaultdict
+from copy import deepcopy
 
 import arviz as az
 import numpy as np
@@ -473,18 +474,28 @@ def list_of_array_to_idata(list_of_arrays: list, cge_model):
     return idata
 
 
-def optimizer_result_to_idata(res, theta, mod):
-    coords = mod.coords
+def optimizer_result_to_idata(res, theta, initial_values, mod):
+    coords = deepcopy(mod.coords)
+    coords["step"] = [0, 1]
     result = flat_array_to_variable_dict(
         np.r_[res.x, theta], mod.variables + mod.parameters, coords
     )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         optim_var_dict = {
-            obj.name: (obj.dims, result[obj.name]) for obj in mod.variables
+            obj.name: (
+                ("step",) + obj.dims,
+                np.stack([initial_values[obj.name], result[obj.name]]),
+            )
+            for obj in mod.variables
         }
+        # optim_param_dict = {obj.name: (obj.dims, result[obj.name]) for obj in mod.parameters}
         optim_param_dict = {
-            obj.name: (obj.dims, result[obj.name]) for obj in mod.parameters
+            obj.name: (
+                ("step",) + obj.dims,
+                np.stack([initial_values[obj.name], result[obj.name]]),
+            )
+            for obj in mod.parameters
         }
         optim_idata = az.InferenceData(
             variables=xr.Dataset(optim_var_dict, coords=coords),

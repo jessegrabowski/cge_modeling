@@ -1,0 +1,48 @@
+name: cge-dev
+channels:
+  - conda-forge
+dependencies:
+  # Core dependencies
+  - python=3.12
+  - jupyter<7
+  - pip
+  - numpy
+  - scipy
+  - sympy
+  - pandas
+  - numba
+  - IPython
+  - pymc
+  - pytensor
+  - tqdm
+  - numba-progress
+  - fastprogress
+  - matplotlib
+  - joblib
+
+  # JAX Backend
+  - jax
+  - numpyro
+  - blackjax
+
+  - pip:
+      - texttable
+      - latextable
+      - squarify
+      - jupyter_contrib_nbextensions
+      - jupyter_nbextensions_configurator
+      - sympytensor
+
+
+  # For building docs
+  - sphinx>=5.1.0,<6
+  - sphinx_rtd_theme
+  - pygments
+  - pydot
+  - ipython
+
+  # developer tools
+  - pre-commit
+  - pytest
+  - pytest-env
+  - pytest-cov
