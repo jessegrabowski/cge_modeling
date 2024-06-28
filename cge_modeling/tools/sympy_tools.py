@@ -1,6 +1,8 @@
 from functools import reduce
 from itertools import product
-from typing import Any, Literal, Optional, Sequence, cast
+from typing import Any, Literal, cast
+
+from collections.abc import Sequence
 
 import sympy as sp
 from joblib import Parallel, delayed
@@ -397,7 +399,7 @@ def _validate_dims(
 def expand_obj_by_indices(
     obj: ModelObject,
     coords: dict[str : list[str]],
-    dims: Optional[list[str]] = None,
+    dims: list[str] | None = None,
     on_unused_dim: Literal["raise", "ignore"] = "raise",
 ) -> list[ModelObject]:
     """

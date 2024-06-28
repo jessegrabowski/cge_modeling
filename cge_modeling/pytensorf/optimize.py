@@ -1,5 +1,4 @@
 import functools as ft
-from typing import Optional, Union
 
 
 import numpy as np
@@ -104,7 +103,7 @@ def scan_body(*args, F, J_inv, initial_step_size, tol, has_exog, n_endog, n_exog
     return return_X + [is_converged, new_step_size, new_n_steps]
 
 
-def _process_root_data(data: Optional[dict[str, np.ndarray]]) -> list[pt.TensorLike]:
+def _process_root_data(data: dict[str, np.ndarray] | None) -> list[pt.TensorLike]:
     if data is None:
         return [pt.as_tensor_variable(np.nan, name="dummy_exog", shape=())]
     else:
@@ -118,8 +117,8 @@ def _process_root_data(data: Optional[dict[str, np.ndarray]]) -> list[pt.TensorL
 def root(
     f: pt.Op,
     f_jac_inv: pt.Op,
-    initial_data: dict[str, Union[np.ndarray, float]],
-    parameters: Optional[dict[str, Union[np.ndarray, float]]] = None,
+    initial_data: dict[str, np.ndarray | float],
+    parameters: dict[str, np.ndarray | float] | None = None,
     step_size: int = 1,
     max_iter: int = 100,
     tol: float = 1e-8,

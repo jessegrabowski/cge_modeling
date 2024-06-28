@@ -80,7 +80,7 @@ def plot_lines(
         The number of columns in the grid of plots.
     var_names: list of str, optional
         Name of the variables to plot. If None, all variables will be plotted.
-    initial_values: dict[str, np.array], optional
+    initial_values: dict[str, np.ndarray], optional
         The initial values of the variables in the model; those passed to the simulate method. If None, the initial
         values will be taken from the InferenceData object.
     plot_euler: bool, default True
@@ -198,7 +198,7 @@ def plot_lines(
 
 def plot_kateplot(
     idata: az.InferenceData,
-    initial_values: dict[str, np.array],
+    initial_values: dict[str, np.ndarray],
     mod: CGEModel,
     var_names: str | list[str],
     shock_name: str | None = None,
@@ -213,7 +213,7 @@ def plot_kateplot(
     ----------
     idata: az.InferenceData
         The InferenceData object returned by the model's simulate method.
-    initial_values: dict[str, np.array]
+    initial_values: dict[str, np.ndarray]
         The initial values of the variables in the model; those passed to the simulate method.
     mod: CGEModel
         The model object.
