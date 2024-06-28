@@ -3,9 +3,31 @@ from itertools import product
 from typing import Any, Literal, Optional, Sequence, cast
 
 import sympy as sp
+from joblib import Parallel, delayed
 
 from cge_modeling.base.primitives import ModelObject
 from cge_modeling.tools.utils import brackets_to_snake_case
+
+
+def get_inputs(x: sp.Expr) -> list[sp.Symbol]:
+    """
+    Given an expression x, returns all root inputs required to compute x
+
+    Parameters
+    ----------
+    x: sp.Expr
+        Sympy express
+
+    Returns
+    -------
+    inputs: list of sp.Symbol
+        Root symbols required to compute the expression x
+    """
+    inputs = []
+    for obj in sp.preorder_traversal(x):
+        if len(obj.args) == 0 and not isinstance(obj, sp.core.Number):
+            inputs.append(obj)
+    return inputs
 
 
 def _prod(args: Sequence) -> Any:
@@ -66,8 +88,10 @@ def make_symbol(name, index=False, assumptions=None):
         return sp.Symbol(name, **assumptions)
 
 
-def sub_all_eqs(equations, sub_dict):
-    return [eq.subs(sub_dict) for eq in equations]
+def sub_all_eqs(equations, sub_dict, n_jobs=-1):
+    with Parallel(n_jobs) as pool:
+        res = pool(delayed(lambda x: x.subs(sub_dict))(eq) for eq in equations)
+    return res
 
 
 def make_indexed_name(obj: ModelObject, delimiter="_") -> str:
@@ -261,7 +285,7 @@ def find_equation_dims(eq: sp.Expr, index_symbols: list[sp.Idx]) -> tuple[str]:
     return cast(tuple[str], tuple(x.name for x in sorted_ids))
 
 
-def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, list[str, ...]]) -> sp.Expr:
+def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, Any]) -> sp.Expr:
     """
     Substitute a sum or product operation with a sum or product of expanded expressions.
 
@@ -278,20 +302,58 @@ def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, list[str, ...]]) -> sp.
         The expanded expression
     """
 
+    def make_sub_dict(
+        indexed_expr: sp.Indexed, used_idxs: list[sp.Idx], coords: dict[str, list[str]]
+    ):
+        base, *idxs = indexed_expr.args
+
+        labels = [
+            coords[i.name] if i in used_idxs else [i] * len(coords[i.name])
+            for i in idxs
+        ]
+        numeric_labels = [
+            range(len(coords[i.name]))
+            if i in used_indices
+            else [i] * len(coords[i.name])
+            for i in idxs
+        ]
+
+        label_pairs = product(*labels)
+        idx_pairs = product(*numeric_labels)
+
+        sub_dict = {
+            base[*idx_pair]: base[*label_pair]
+            for idx_pair, label_pair in zip(idx_pairs, label_pairs)
+        }
+        return sub_dict
+
     for op_to_find in OPS_TO_FIND:
         found_ops = list(eq.find(op_to_find))
+        if len(found_ops) == 0:
+            continue
+
         for op in found_ops:
-            expr, index_info = op.args
-            idx, start, stop = index_info
+            expr, *index_infos = op.args
+            used_indices = [info[0] for info in index_infos]
 
-            assert idx.name in coords.keys()
-            assert len(coords[idx.name]) == stop - start + 1
+            indexed_exprs = [
+                x for x in sp.preorder_traversal(expr) if isinstance(x, sp.Indexed)
+            ]
 
-            expanded_expr = OP_TO_PY[op_to_find](
-                [expr.subs({idx: val}) for val in coords[idx.name]]
-            )
-            sub_dict = {op: expanded_expr}
-            eq = eq.subs(sub_dict)
+            op_doit = op.doit()
+            for var in indexed_exprs:
+                sub_dict = make_sub_dict(var, used_indices, coords)
+                op_doit = op_doit.subs(sub_dict)
+
+            eq = eq.subs({op: op_doit})
+
+            # indexed_exprs = [x for x in sp.preorder_traversal(op_doit) if isinstance(x, sp.Indexed)]
+            # label_subs = {k: {i: v for i, v in enumerate(coords[k.name])} for k in used_indices}
+            # subbed_exprs = [recursive_sub(x, label_subs, used_indices) for x in indexed_exprs]
+            # sub_dict = dict(zip(indexed_exprs, subbed_exprs))
+            # op_subbed = op_doit.subs(sub_dict)
+            # eq = eq.subs({op: op_subbed})
+
     return eq
 
 

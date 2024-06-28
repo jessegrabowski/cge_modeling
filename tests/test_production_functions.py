@@ -17,6 +17,7 @@ from cge_modeling.production_functions import (
     dixit_stiglitz,
     leontief,
     unpack_string_inputs,
+    cobb_douglass,
 )
 from cge_modeling.tools.sympy_tools import (
     expand_obj_by_indices,
@@ -96,6 +97,90 @@ def test_check_pairwise_lengths():
         _check_pairwise_lengths_match(
             ["factors", "factor_prices", "alpha"], [factors, factor_prices, alpha]
         )
+
+
+def setup_cobb_douglass(alpha):
+    factors = ["L", "K"]
+    factor_prices = ["w", "r"]
+    output = "Y"
+    output_price = "P"
+    A = "A"
+
+    [eq_production, L_demand, K_demand] = cobb_douglass(
+        factors=factors,
+        factor_prices=factor_prices,
+        output=output,
+        output_price=output_price,
+        TFP=A,
+        factor_shares=alpha,
+    )
+
+    return eq_production, L_demand, K_demand
+
+
+@pytest.mark.parametrize(
+    "alpha", ["alpha", ["alpha", "1 - alpha"]], ids=["single", "double"]
+)
+def test_cobb_douglass(alpha):
+    eq_production, L_demand, K_demand = setup_cobb_douglass(alpha)
+    assert eq_production == "Y = A * L ** (alpha) * K ** (1 - alpha)"
+    assert L_demand == "L = (alpha) * Y * (P) / (w)"
+    assert K_demand == "K = (1 - alpha) * Y * (P) / (r)"
+
+
+def test_cobb_douglass_pytensor_compile():
+    eq_production, L_demand, K_demand = setup_cobb_douglass("alpha")
+
+    def expected_Y(L, K, A, alpha):
+        return A * L**alpha * K ** (1 - alpha)
+
+    def expected_L(Y, w, P, alpha):
+        return alpha * Y * P / w
+
+    def expected_K(Y, r, P, alpha):
+        return (1 - alpha) * Y * P / r
+
+    def compile_Y():
+        L = pt.dscalar("L")
+        K = pt.dscalar("K")
+        A = pt.dscalar("A")
+        alpha = pt.dscalar("alpha")
+
+        exec(eq_production)
+        return locals()["Y"], [K, L, A, alpha]
+
+    Y, inputs = compile_Y()
+    f_Y = pytensor.function(inputs, Y, on_unused_input="ignore", mode="FAST_COMPILE")
+    expected = expected_Y(L=1, K=1, A=1, alpha=0.5)
+    np.testing.assert_allclose(f_Y(1, 1, 1, 0.5), expected)
+
+    def compile_L():
+        Y = pt.dscalar("Y")
+        w = pt.dscalar("w")
+        P = pt.dscalar("P")
+        alpha = pt.dscalar("alpha")
+
+        exec(L_demand)
+        return locals()["L"], [Y, w, P, alpha]
+
+    L, inputs = compile_L()
+    f_L = pytensor.function(inputs, L, on_unused_input="ignore", mode="FAST_COMPILE")
+    expected = expected_L(Y=1, w=1, P=1, alpha=0.5)
+    np.testing.assert_allclose(f_L(1, 1, 1, 0.5), expected)
+
+    def compile_K():
+        Y = pt.dscalar("Y")
+        r = pt.dscalar("r")
+        P = pt.dscalar("P")
+        alpha = pt.dscalar("alpha")
+
+        exec(K_demand)
+        return locals()["K"], [Y, r, P, alpha]
+
+    K, inputs = compile_K()
+    f_K = pytensor.function(inputs, K, on_unused_input="ignore", mode="FAST_COMPILE")
+    expected = expected_K(Y=1, r=1, P=1, alpha=0.5)
+    np.testing.assert_allclose(f_K(1, 1, 1, 0.5), expected)
 
 
 @pytest.mark.parametrize(
@@ -199,6 +284,7 @@ def test_dixit_stiglitz(A, alpha, backend):
         dims=dims,
         coords=coords,
         backend=cast(BACKEND_TYPE, backend),
+        use_value_definition=False,
     )
 
     alpha_str = "alpha * " if alpha is not None else ""
@@ -245,6 +331,7 @@ def test_dixit_stiglitz_computation(backend):
         dims=dims,
         coords=coords,
         backend=cast(BACKEND_TYPE, backend),
+        use_value_definition=False,
     )
 
     inputs = ["X", "P_X", "Y", "P_Y", "A", "alpha", "epsilon"]

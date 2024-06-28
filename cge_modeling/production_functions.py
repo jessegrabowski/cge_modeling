@@ -1,7 +1,9 @@
 import string
 from itertools import combinations, product
 from string import Template
-from typing import Literal, Optional, Sequence, Union, cast
+from typing import Literal, cast
+
+from collections.abc import Sequence
 
 from cge_modeling.tools.pytensor_tools import at_least_list
 
@@ -27,9 +29,9 @@ def unwrap_singleton_list(x):
 
 
 def unpack_string_inputs(
-    *inputs: Union[str, list[str, ...]],
-    dims: Optional[Sequence[str]] = None,
-    coords: Optional[dict[str, list[str, ...]]] = None,
+    *inputs: str | list[str, ...],
+    dims: Sequence[str] | None = None,
+    coords: dict[str, list[str, ...]] | None = None,
 ) -> list[list[str, ...]]:
     """
     Unpack string inputs into lists of variables using the provided dims and coords.
@@ -81,7 +83,7 @@ def unpack_string_inputs(
 
 
 def _add_second_alpha(
-    alpha: Union[str, list[str, ...]], factors: Union[str, list[str, ...]]
+    alpha: str | list[str, ...], factors: str | list[str, ...]
 ) -> list[str, ...]:
     if not isinstance(factors, list) or len(factors) != 2:
         # If there are not exactly two factors, we don't need to add a second alpha. It will either be unpacked
@@ -97,14 +99,133 @@ def _add_second_alpha(
     return alpha
 
 
+def cobb_douglass(
+    factors: list[str, ...],
+    factor_prices: list[str, str],
+    output: str,
+    output_price: str,
+    factor_shares: str,
+    TFP: str = "1",
+    use_value_definition: bool = False,
+) -> tuple[str, ...]:
+    """
+    Generate string equations representing a Cobb-Douglas production process.
+
+    A Cobb-Douglas production process is defined as:
+
+    .. math::
+        Y = A \\prod_{i \\in I} X_i^{\\alpha_i}
+
+    Where :math:`A` is the total factor productivity parameter, :math:`\\alpha_i` is the share of factor :math:`X_i` in
+    the production process. The profit maximization problem for this production function generates the following factor
+    demands:
+
+    .. math::
+        X_i = \frac{Y}{A} \frac{\\alpha_i P_Y A}{P_i}
+
+    A Cobb-Douglas can be shown to be a special case of the CES production function, when the elasticity of substitution
+    between input factors is :math:`\\epsilon = 1`. In this special case, the ratio of factor inputs ..math:`\\frac{X_i}{X_j}`
+    is always equal to the ratio of factor prices ..math:`\\frac{P_i}{P_j}`. That is, the proportion of the i-th
+    input factor used in the production process is always exactly ..math:`\\alpha_i`, and prices adjust to ensure that
+    this is so.
+
+    Parameters
+    ----------
+    factors: list of str
+        Production factors
+
+    factor_prices: list of str
+        Production factor prices. Must be the same length as factors.
+
+    output: str
+        Name of the output of the production function.
+
+    output_price: str
+        Name of the price of the output.
+
+    factor_shares: str or list of str
+        Factor shares in the production function. If a list, it should be the same length as factors, or one less. If
+        one less, the last factor share is assumed to be 1 - sum(factor_shares).
+
+        A string is valid only if len(factors) == 2, in which case the string is interpreted as [factor_shares].
+
+    TFP: str, default "1"
+        Technology parameter
+
+    Returns
+    -------
+    production_function: str
+        Equation representing the Cobb-Douglas production function
+    factor_demands: list of str
+        A list of equations, one for each factor, representing the factor demands
+    """
+    if isinstance(factor_shares, str):
+        factor_shares = [factor_shares]
+
+    factor_shares = _add_second_alpha(factor_shares, factors)
+    _check_pairwise_lengths_match(
+        ["factors", "factor_prices", "factor_shares"],
+        [factors, factor_prices, factor_shares],
+    )
+
+    if not use_value_definition:
+        production_inner_template = Template("$factor ** ($factor_share)")
+        production_inner = [
+            production_inner_template.safe_substitute(
+                factor=factor, factor_share=factor_share
+            )
+            for factor, factor_share in zip(factors, factor_shares)
+        ]
+
+        eq_production = Template(
+            "$output = $TFP * " + " * ".join(production_inner)
+        ).safe_substitute(output=output, TFP=TFP)
+    else:
+        total_factor_value = " + ".join(
+            [
+                f"{factor_price} * {factor}"
+                for factor_price, factor in zip(factor_prices, factors)
+            ]
+        )
+        eq_production = Template(
+            "$output * $output_price = $total_factor_value",
+        ).safe_substitute(
+            output=output,
+            output_price=output_price,
+            total_factor_value=total_factor_value,
+        )
+
+    factor_demand_template = Template(
+        "$factor = ($factor_share) * $output * ($output_price) / ($factor_price)"
+    )
+
+    eq_fac_demands = [
+        factor_demand_template.safe_substitute(
+            factor=factor,
+            factor_price=factor_price,
+            output=output,
+            output_price=output_price,
+            factor_share=factor_share,
+            TFP=TFP,
+        )
+        for factor, factor_price, factor_share in zip(
+            factors, factor_prices, factor_shares
+        )
+    ]
+
+    return (eq_production,) + tuple(eq_fac_demands)
+
+
 def CES(
-    factors: Union[list[str, ...], str],
-    factor_prices: Union[list[str, ...], str],
+    factors: list[str, ...] | str,
+    factor_prices: list[str, ...] | str,
     output: str,
     output_price: str,
     TFP: str,
-    factor_shares: Union[str, list[str, ...]],
+    factor_shares: str | list[str, ...],
     epsilon: str,
+    expand_price_dim: Literal["input", "output", "both", None] = None,
+    use_value_definition=False,
     *args,
     **kwargs,
 ) -> tuple[str, ...]:
@@ -151,6 +272,9 @@ def CES(
     epsilon:
         elasticity parameter
 
+    expand_price_dim: str, one of 'input', 'output', 'both', or None
+        Price dimension to expand. If expanded, a price P will be printed as P[:, None].
+
     args, kwargs:
         Ignored; included for signature compatibility with other production functions
 
@@ -166,27 +290,48 @@ def CES(
         [factors, factor_prices, factor_shares],
     )
 
-    production_inner_template = Template(
-        "($factor_shares) * $factor ** (($epsilon - 1) / $epsilon)"
-    )
-
-    production_inner = [
-        production_inner_template.safe_substitute(
-            factor=factor, factor_shares=factor_share, epsilon=epsilon
+    if not use_value_definition:
+        production_inner_template = Template(
+            "($factor_shares) * $factor ** (($epsilon - 1) / $epsilon)"
         )
-        for factor, factor_share in zip(factors, factor_shares)
-    ]
 
-    eq_production = Template(
-        "$output = $TFP * ($inner) ** ($epsilon / ($epsilon - 1))"
-    ).safe_substitute(
-        output=output, inner=" + ".join(production_inner), TFP=TFP, epsilon=epsilon
-    )
+        production_inner = [
+            production_inner_template.safe_substitute(
+                factor=factor, factor_shares=factor_share, epsilon=epsilon
+            )
+            for factor, factor_share in zip(factors, factor_shares)
+        ]
+
+        eq_production = Template(
+            "$output = $TFP * ($inner) ** ($epsilon / ($epsilon - 1))"
+        ).safe_substitute(
+            output=output, inner=" + ".join(production_inner), TFP=TFP, epsilon=epsilon
+        )
+    else:
+        total_factor_value = " + ".join(
+            [
+                f"{factor_price} * {factor}"
+                for factor_price, factor in zip(factor_prices, factors)
+            ]
+        )
+        eq_production = Template(
+            "$output * $output_price = $total_factor_value",
+        ).safe_substitute(
+            output=output,
+            output_price=output_price,
+            total_factor_value=total_factor_value,
+        )
 
     factor_demand_template = Template(
         "$factor = $output / $TFP * (($factor_share) * $output_price * $TFP / ($factor_price)) ** "
         "$epsilon"
     )
+
+    if expand_price_dim in ["output", "both"]:
+        output_price = f"{output_price}[:, None]"
+    if expand_price_dim in ["input", "both"]:
+        factor_prices = [f"{factor_price}[:, None]" for factor_price in factor_prices]
+
     eq_fac_demands = [
         factor_demand_template.safe_substitute(
             factor=factor,
@@ -206,16 +351,17 @@ def CES(
 
 
 def dixit_stiglitz(
-    factors: Union[str, list[str, ...]],
-    factor_prices: Union[str, list[str, ...]],
+    factors: str | list[str, ...],
+    factor_prices: str | list[str, ...],
     output: str,
     output_price: str,
     epsilon: str,
     dims: str,
     coords: dict[str, list[str, ...]],
     backend: BACKEND_TYPE = "numba",
-    TFP: Optional[str] = None,
-    factor_shares: Optional[str] = None,
+    TFP: str | None = None,
+    factor_shares: str | None = None,
+    use_value_definition=True,
 ) -> tuple[str, str]:
     """
     Generate string equations representing a Dixit-Stiglitz production process.
@@ -314,14 +460,24 @@ def dixit_stiglitz(
             f"backend must be one of 'numba' or 'pytensor', found {backend}"
         )
 
-    production_function = Template(f"$output = {TFP_str}{rhs_str}").safe_substitute(
-        output=output,
-        TFP=TFP,
-        kernel=kernel,
-        epsilon=epsilon,
-        dims=dims,
-        dim_len=dim_len,
-    )
+    if not use_value_definition:
+        production_function = Template(f"$output = {TFP_str}{rhs_str}").safe_substitute(
+            output=output,
+            TFP=TFP,
+            kernel=kernel,
+            epsilon=epsilon,
+            dims=dims,
+            dim_len=dim_len,
+        )
+    else:
+        production_function = Template(
+            "$output = ($factor_prices * $factors).sum() / ($output_price)",
+        ).safe_substitute(
+            output=output,
+            output_price=output_price,
+            factor_prices=factor_prices,
+            factors=factors,
+        )
 
     demand_template = f"$factor = $output / {TFP_str}({TFP_str}{share_str}$output_price / $factor_price) ** $epsilon"
 
@@ -339,11 +495,11 @@ def dixit_stiglitz(
 
 
 def _1d_leontief(
-    factors: Union[str, list[str, ...]],
-    factor_prices: Union[str, list[str, ...]],
+    factors: str | list[str, ...],
+    factor_prices: str | list[str, ...],
     output: str,
     output_price: str,
-    factor_shares: Union[str, list[str, ...]],
+    factor_shares: str | list[str, ...],
     *args,
     **kwargs,
 ) -> tuple[str, ...]:
@@ -365,15 +521,16 @@ def _1d_leontief(
 
 
 def _2d_leontief(
-    factors: Union[str, list[str, ...]],
-    factor_prices: Union[str, list[str, ...]],
+    factors: str | list[str, ...],
+    factor_prices: str | list[str, ...],
     output: str,
     output_price: str,
-    factor_shares: Union[str, list[str, ...]],
+    factor_shares: str | list[str, ...],
     dims: str,
     coords: dict[str, list[str, ...]],
     sum_dim: str | None = None,
     expand_price_dim: bool = True,
+    transpose_output: bool = True,
     backend: Literal["numba", "pytensor"] = "numba",
 ) -> tuple[str, ...]:
     r"""
@@ -436,25 +593,16 @@ def _2d_leontief(
         batch_dim = dims.pop(sum_axis)
         core_dim = dims[0]
         n_core, n_batch = (len(coords[x]) for x in [core_dim, batch_dim])
-        zero_profit = f"{_swapaxes(output, batch_dim, core_dim)} = Sum({factor_prices} * {factors}, ({batch_dim}, 0, {n_batch - 1})) / {_swapaxes(output_price, batch_dim, core_dim)}"
+        profit_output = output
+        profit_price = output_price
 
-        # if n_core == n_batch:
-        #     rhs = (
-        #         f"Sum({_swapaxes(factor_prices, core_dim, batch_dim)} * {_T(factors, core_dim, batch_dim, coords)}, "
-        #         + f"({sum_dim}, 0, {len(coords[sum_dim]) - 1}))"
-        #     )
-        # elif n_core > n_batch:
-        #     rhs = (
-        #         f"Sum({factor_prices} * {factors}, ({batch_dim}, 0, {len(coords[batch_dim]) - 1}))"
-        #     )
-        # elif n_core < n_batch:
-        #     raise NotImplementedError
-        #
-        # zero_profit = f"{_swapaxes(output, core_dim, batch_dim)} = {rhs} / ({_swapaxes(output_price, core_dim, batch_dim)})"
+        if transpose_output:
+            profit_output = _swapaxes(output, batch_dim, core_dim)
+            profit_price = _swapaxes(output_price, batch_dim, core_dim)
 
-        factor_demands = (
-            f"{factors} = {factor_shares} * {_swapaxes(output, core_dim, batch_dim)}"
-        )
+        zero_profit = f"{profit_output} = Sum({factor_prices} * {factors}, ({batch_dim}, 0, {n_batch - 1})) / {profit_price}"
+        # zero_profit = f"{_swapaxes(output, batch_dim, core_dim)} = Sum({factor_prices} * {factors}, ({batch_dim}, 0, {n_batch - 1})) / {_swapaxes(output_price, batch_dim, core_dim)}"
+        factor_demands = f"{factors} = {factor_shares} * {output}"
 
     elif backend == "pytensor":
         price_slice = "[:, None]" if expand_price_dim else ""
@@ -470,15 +618,16 @@ def _2d_leontief(
 
 
 def leontief(
-    factors: Union[str, list[str, ...]],
-    factor_prices: Union[str, list[str, ...]],
+    factors: str | list[str, ...],
+    factor_prices: str | list[str, ...],
     output: str,
     output_price: str,
-    factor_shares: Union[str, list[str, ...]],
-    dims: Union[str, list[str, ...]],
+    factor_shares: str | list[str, ...],
+    dims: str | list[str, ...],
     coords: dict[str, list[str, ...]],
     sum_dim: str | None = None,
     expand_price_dim: bool = True,
+    transpose_output: bool = True,
     backend: Literal["numba", "pytensor"] = "numba",
 ) -> tuple[str, ...]:
     """
@@ -570,14 +719,15 @@ def leontief(
                 f"Leontief production function expects exactly one factor when len(dims) == 2, found {len(factors)}"
             )
         return _2d_leontief(
-            factors,
-            factor_prices,
-            output,
-            output_price,
-            factor_shares,
-            dims,
-            coords,
-            sum_dim,
-            expand_price_dim,
-            backend,
+            factors=factors,
+            factor_shares=factor_shares,
+            output=output,
+            output_price=output_price,
+            factor_prices=factor_prices,
+            dims=dims,
+            coords=coords,
+            sum_dim=sum_dim,
+            expand_price_dim=expand_price_dim,
+            transpose_output=transpose_output,
+            backend=backend,
         )

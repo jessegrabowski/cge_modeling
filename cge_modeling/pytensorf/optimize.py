@@ -1,6 +1,7 @@
 import functools as ft
 from typing import Optional, Union
 
+
 import numpy as np
 import pytensor
 import pytensor.tensor as pt

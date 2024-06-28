@@ -1,4 +1,4 @@
-from typing import Literal, Optional, Union, cast
+from typing import Literal, cast
 
 import arviz as az
 import matplotlib.pyplot as plt
@@ -57,8 +57,8 @@ def plot_lines(
     idata: az.InferenceData,
     mod: CGEModel,
     n_cols: int = 5,
-    var_names: Optional[list[str]] = None,
-    initial_values: Optional[dict[str, np.ndarray]] = None,
+    var_names: list[str] | None = None,
+    initial_values: dict[str, np.ndarray] | None = None,
     plot_euler: bool = True,
     plot_optimizer: bool = True,
     rename_dict: dict[str, str] | None = None,
@@ -71,8 +71,9 @@ def plot_lines(
 
     Parameters
     ----------
-    idata: az.InferenceData
-        The InferenceData object returned by the model's simulate method.
+    result: az.InferenceData or dict of az.InferenceData
+        The value returned by the model's simulate method. This should be an InferenceData object or a dictionary of
+        idata with keys "euler" and "optimizer"
     mod: CGEModel
         The model object.
     n_cols: int, default 5
@@ -117,51 +118,77 @@ def plot_lines(
         legends = dict.fromkeys(legends, True)
         legends.update(dict.fromkeys(no_legend, False))
 
+    if "euler" not in idata and plot_euler:
+        raise ValueError(
+            'Cannot plot results of euler approximation, provided results has no "euler" group'
+        )
+    if "optimizer" not in idata and plot_optimizer:
+        raise ValueError(
+            'Cannot plot results of optimizer, provided results has no "optimizer" group'
+        )
+
     n_vars = len(var_names)
+    n_cols = min(n_cols, n_vars)
     gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_vars)
 
     figsize = figure_kwargs.get("figsize", (15, 9))
     dpi = figure_kwargs.get("dpi", 144)
 
     fig = plt.figure(figsize=figsize, dpi=dpi)
-
     cmap = "tab10" if cmap is None else cmap
+
     if cmap in plt.colormaps:
 
         def f_cmap(n):
             return plt.colormaps[cmap](np.linspace(0, 1, n))
     elif cmap in plt.color_sequences:
 
-        def f_cmap(n):
+        def f_cmap(*args):
             return plt.color_sequences[cmap]
     else:
         raise ValueError(f"Colormap {cmap} not found in matplotlib.")
 
     for idx, var in enumerate(var_names):
-        data = idata["euler"].variables[var]
-
-        n_lines = int(np.prod(data.values.shape[1:]))
-        cycler = plt.cycler(color=f_cmap(n_lines))
         axis = fig.add_subplot(gs[plot_locs[idx]])
-        axis.set_prop_cycle(cycler)
-
-        if data.ndim > 2:
-            data = data.stack(pair=data.dims[1:])
-        data.plot.line(x="step", ax=axis, add_legend=legends[var])
         axis.set(title=rename_dict.get(var, var), xlabel=None)
 
-        scatter_grid = np.full(
-            int(np.prod(idata["optimizer"].variables[var].shape)),
-            idata["euler"].variables.coords["step"].max(),
-        )
-        axis.scatter(
-            scatter_grid,
-            idata["optimizer"].variables[var].data.ravel(),
-            marker="*",
-            color="tab:red",
-            zorder=10,
-            s=100,
-        )
+        if plot_euler:
+            data = idata["euler"].variables[var]
+
+            n_lines = int(np.prod(data.values.shape[1:]))
+            cycler = plt.cycler(color=f_cmap(n_lines))
+            axis.set_prop_cycle(cycler)
+
+            if data.ndim > 2:
+                data = data.stack(pair=data.dims[1:])
+            data.plot.line(x="step", ax=axis, add_legend=legends[var])
+
+        if plot_optimizer:
+            initial_value = idata["optimizer"].variables[var].isel(step=0).data.ravel()
+            final_value = idata["optimizer"].variables[var].isel(step=-1).data.ravel()
+
+            t0 = np.zeros_like(initial_value)
+            T = np.ones_like(final_value)
+            if plot_euler:
+                T = T * idata["euler"].variables.step.max().item()
+
+            axis.scatter(
+                t0,
+                final_value,
+                marker="*",
+                color="tab:green",
+                zorder=10,
+                s=100,
+            )
+            axis.scatter(
+                T,
+                final_value,
+                marker="*",
+                color="tab:red",
+                zorder=10,
+                s=100,
+            )
+
         [spine.set_visible(False) for spine in axis.spines.values()]
         axis.grid(ls="--", lw=0.5)
 
@@ -173,10 +200,11 @@ def plot_kateplot(
     idata: az.InferenceData,
     initial_values: dict[str, np.array],
     mod: CGEModel,
-    var_names: Union[str, list[str]],
-    shock_name: Optional[str] = None,
-    rename_dict: Optional[dict[str, str]] = None,
-    cmap: Optional[Union[str, Colormap]] = None,
+    var_names: str | list[str],
+    shock_name: str | None = None,
+    rename_dict: dict[str, str] | None = None,
+    cmap: str | Colormap | None = None,
+    **plot_kwargs,
 ) -> plt.Figure:
     """
     Make an area plot of the initial and final values of the variables in the model.
@@ -198,6 +226,8 @@ def plot_kateplot(
         A dictionary mapping the variable names to more descriptive (or human readable) names for the plot.
     cmap: str or matplotlib.colors.Colormap, optional
         The colormap to use for the plot. If None, the default colormap will be used.
+
+    **plot_kwargs
 
     Returns
     -------
@@ -225,7 +255,7 @@ def plot_kateplot(
     elif isinstance(cmap, str):
         cmap = plt.colormaps[cmap]
 
-    dims = [idata["optimizer"].variables[var].dims for var in var_names]
+    dims = [mod.get(var).dims for var in var_names]
     if not all([dim == dims[0] for dim in dims]):
         raise ValueError(
             "Not all variables have the same dimensions, cannot plot together"
@@ -243,9 +273,20 @@ def plot_kateplot(
     pre_data = np.concatenate(
         [np.atleast_1d(initial_values[var]).ravel() for var in var_names]
     )
-    post_data = np.concatenate(
-        [idata["optimizer"].variables[var].data.ravel() for var in var_names]
-    )
+    if "optimizer" in idata:
+        post_data = np.concatenate(
+            [
+                idata["optimizer"].isel(step=-1).variables[var].data.ravel()
+                for var in var_names
+            ]
+        )
+    else:
+        post_data = np.concatenate(
+            [
+                idata["euler"].isel(step=-1).variables[var].data.ravel()
+                for var in var_names
+            ]
+        )
 
     zero_mask = np.isclose(pre_data, 0) | np.isclose(post_data, 0)
     pre_data = pre_data[~zero_mask]
@@ -259,14 +300,27 @@ def plot_kateplot(
     ):
         axis.grid(ls="--", lw=0.5)
         axis.set(title=title)
-        squarify.plot(sizes=data, label=pretty_labels, alpha=0.8, ax=axis, color=colors)
+        squarify.plot(
+            sizes=data,
+            label=pretty_labels,
+            alpha=0.8,
+            ax=axis,
+            color=colors,
+            **plot_kwargs,
+        )
 
     return fig
 
 
-def _compute_bar_data(data, initial_data, metric):
+def _compute_bar_data(data, initial_data, metric, threshold=1e-6):
     if metric == "pct_change":
-        return (data - initial_data) / initial_data
+        pct_change = np.divide(
+            data - initial_data,
+            initial_data,
+            where=initial_data > threshold,
+            out=np.zeros_like(data),
+        )
+        return pct_change
     elif metric == "change":
         return data - initial_data
     elif metric == "abs_change":
@@ -275,7 +329,7 @@ def _compute_bar_data(data, initial_data, metric):
         return data
     elif metric == "initial":
         return initial_data
-    elif metric == "final_initial":
+    elif metric == "both":
         return data.join(initial_data, lsuffix="_final", rsuffix="_initial")
     else:
         raise ValueError(f"Invalid value type: {metric}")
@@ -286,11 +340,13 @@ def _plot_one_bar(
     initial_data,
     ax,
     drop_vars,
+    group_dict=None,
     orientation="v",
     metric: Literal[
-        "pct_change", "change", "abs_change", "final", "initial", "final_initial"
+        "pct_change", "change", "abs_change", "final", "initial", "both"
     ] = "pct_change",
     legend=True,
+    threshhold=1e-6,
 ):
     try:
         data = data.to_dataframe().droplevel(level=drop_vars, axis=0)
@@ -302,18 +358,30 @@ def _plot_one_bar(
             .loc[:, ["data", "name"]]
             .set_index("name")
         )
+    if "step" in data.columns:
+        data = data.drop(columns=["step"])
+    if "step" in initial_data.columns:
+        initial_data = initial_data.drop(columns=["step"])
+    if group_dict is not None:
+        coord_dict = group_dict.get(data.index.name)
+        if coord_dict is not None:
+            data["group"] = data.index.map(lambda x: coord_dict[x])
+            initial_data["group"] = initial_data.index.map(lambda x: coord_dict[x])
 
-    to_plot = _compute_bar_data(data, initial_data, metric)
+            data = data.groupby("group").sum()
+            initial_data = initial_data.groupby("group").sum()
 
-    if "step" in to_plot.columns:
-        to_plot = to_plot.drop(columns=["step"])
+    to_plot = _compute_bar_data(data, initial_data, metric, threshhold)
 
     if orientation == "v":
+        # to_plot.plot.bar(ax=ax, legend='', facecolor='none', edgecolor="black")
         to_plot.plot.bar(ax=ax, legend=legend)
+        ax.axhline(0, color="black", lw=2.0)
     else:
+        # to_plot.plot.barh(ax=ax, legend='', facecolor='none', edgecolor="black")
         to_plot.plot.barh(ax=ax, legend=legend)
+        ax.axvline(0, color="black", lw=2.0)
 
-    ax.axvline(0, color="black", lw=0.5)
     if metric == "pct_change":
         ticker = PercentFormatter(xmax=1.0)
         if orientation == "v":
@@ -330,12 +398,14 @@ def plot_bar(
     var_names,
     initial_values=None,
     plot_together=False,
+    group_dict=None,
     orientation="v",
     n_cols=3,
     coords=None,
     metric: Literal[
-        "pct_change", "change", "abs_change", "final", "initial", "final_initial"
+        "pct_change", "change", "abs_change", "final", "initial", "both"
     ] = "pct_change",
+    threshhold=1e-6,
     **figure_kwargs,
 ):
     data = None
@@ -348,10 +418,18 @@ def plot_bar(
 
     if "optimizer" in idata:
         data = (
-            idata["optimizer"]["variables"][var_names]
+            idata["optimizer"]
+            .isel(step=-1)["variables"][var_names]
             .sel(**coords)
             .drop_vars(drop_vars)
         )
+        if initial_values is None:
+            initial_values = (
+                idata["optimizer"]
+                .isel(step=0)["variables"][var_names]
+                .sel(**coords)
+                .drop_vars(drop_vars)
+            )
 
     if "euler" in idata:
         if data is None:
@@ -380,6 +458,7 @@ def plot_bar(
 
     n_vars = len(var_names)
     if not plot_together:
+        n_cols = min(n_cols, n_vars)
         gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_vars)
         fig = plt.figure(dpi=dpi, figsize=figsize, **figure_kwargs)
         for idx, var in enumerate(var_names):
@@ -388,9 +467,11 @@ def plot_bar(
                 data[var],
                 initial_values[var],
                 cast(plt.axis, axis),
+                group_dict=group_dict,
                 drop_vars=drop_vars,
                 orientation=orientation,
                 metric=metric,
+                threshhold=threshhold,
             )
             axis.set(title=var)
             if metric == "final_initial":
@@ -421,6 +502,7 @@ def plot_bar(
             data,
             initial_values,
             ax,
+            group_dict=group_dict,
             drop_vars=drop_vars,
             orientation=orientation,
             metric=metric,

@@ -6,6 +6,7 @@ sympy
 scipy
 pandas
 ipython
+joblib
 pytensor
 latextable
 texttable
