@@ -5,7 +5,6 @@ numpy
 sympy
 scipy
 pandas
-ipython
 joblib
 pytensor
 latextable

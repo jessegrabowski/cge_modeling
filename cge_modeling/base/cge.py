@@ -884,7 +884,6 @@ class CGEModel:
                         system, jac_inv, B, variables, parameters
                     )
                     # inputs = get_required_inputs(outputs)
-                    print(inputs, outputs)
                     f_step = pytensor.function(inputs, outputs, mode=mode)
                     f_step.trust_inputs = True
                     self.f_step = f_step
