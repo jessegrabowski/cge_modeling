@@ -58,13 +58,10 @@ def test_compile_to_pytensor(model_func, kwargs):
     n_variables = n_eq = len(cge_model.unpacked_variable_names)
     n_params = len(cge_model.unpacked_parameter_names)
 
-    (variables, parameters), (model, jac, jac_inv, B) = compile_cge_model_to_pytensor(
-        cge_model
-    )
+    (variables, parameters), (model, jac, B) = compile_cge_model_to_pytensor(cge_model)
 
     assert model.type.shape == (n_eq,)
     assert jac.type.shape == (n_eq, n_variables)
-    assert jac_inv.type.shape == (n_eq, n_variables)
     assert B.type.shape == (n_eq, n_params)
 
 
@@ -81,10 +78,11 @@ def test_compile_euler_approximation_function():
         return np.array([v1, v2])
 
     mode = "FAST_COMPILE"
-    A_inv = pt.linalg.inv(make_jacobian(equations, variables))
+
+    A = make_jacobian(equations, variables)
     B = make_jacobian(equations, [parameters])
     f_1 = compile_euler_approximation_function(
-        A_inv=A_inv,
+        A=A,
         B=B,
         variables=variables,
         parameters=[parameters],
@@ -92,7 +90,7 @@ def test_compile_euler_approximation_function():
         mode=mode,
     )
     f_10 = compile_euler_approximation_function(
-        A_inv=A_inv,
+        A=A,
         B=B,
         variables=variables,
         parameters=[parameters],
@@ -100,7 +98,7 @@ def test_compile_euler_approximation_function():
         mode=mode,
     )
     f_100 = compile_euler_approximation_function(
-        A_inv=A_inv,
+        A=A,
         B=B,
         variables=variables,
         parameters=[parameters],
@@ -108,7 +106,7 @@ def test_compile_euler_approximation_function():
         mode=mode,
     )
     f_10k = compile_euler_approximation_function(
-        A_inv=A_inv,
+        A=A,
         B=B,
         variables=variables,
         parameters=[parameters],

@@ -1,5 +1,5 @@
 import logging
-from typing import Literal, cast
+from typing import cast
 
 import numpy as np
 import pytensor
@@ -75,11 +75,8 @@ def pytensor_objects_from_CGEModel(cge_model):
 
 def compile_cge_model_to_pytensor(
     cge_model,
-    inverse_method: Literal["solve", "pinv", "svd"] = "solve",
     sparse=False,
-) -> tuple[
-    tuple[list, list], tuple[pt.TensorLike, pt.TensorLike, pt.TensorLike, pt.TensorLike]
-]:
+) -> tuple[tuple[list, list], tuple[pt.TensorLike, pt.TensorLike, pt.TensorLike]]:
     """
     Compile a CGE model to a PyTensor function.
 
@@ -87,9 +84,7 @@ def compile_cge_model_to_pytensor(
     ----------
     cge_model: CGEModel
         The CGE model object to compile
-    inverse_method: str, optional
-        The method to use to compute the inverse of the Jacobian. One of "solve", "pinv", or "svd". Defaults to "solve".
-        Note that if svd is chosen, gradients for autodiff will not be available.
+
     sparse: bool, optional
         Whether to use sparse matrices for the Jacobian and its inverse. Defaults to False.
 
@@ -113,9 +108,6 @@ def compile_cge_model_to_pytensor(
             A pytensor matrix representing the Jacobian of the system of equations. The shape of the matrix is
             (n_eq, n_eq), where n_eq is the number of *unrolled* equations in the system of equations.
 
-        jac_inv: pytensor.tensor.TensorVariable
-            A pytensor matrix representing the inverse of the Jacobian of the system of equations.
-
         B: pytensor.tensor.TensorVariable
             A pytensor matrix representing the Jacobian of the system of equations with respect to the parameters.
             The shape of the matrix is (n_eq, n_params), where n_eq is the number of *unrolled* equations in the system
@@ -129,7 +121,7 @@ def compile_cge_model_to_pytensor(
     ) = pytensor_objects_from_CGEModel(cge_model)
     cache, unpacked_cache = sympy_to_pytensor_caches
 
-    n_eq = flat_equations.type.shape[0]
+    # n_eq = flat_equations.type.shape[0]
     inputs = (variables, parameters)
 
     if not all([x in cache.values() for x in inputs[0] + inputs[1]]):
@@ -183,32 +175,29 @@ def compile_cge_model_to_pytensor(
     jac.name = "jacobian"
     B.name = "B"
 
-    _log.info("Inverting jacobian")
-    if inverse_method == "pinv":
-        jac_inv = pt.linalg.pinv(jac)
-    elif inverse_method == "solve":
-        jac_inv = pt.linalg.solve(jac, pt.eye(jac.shape[0]), check_finite=False)
-    elif inverse_method == "svd":
-        U, S, V = pt.linalg.svd(jac)
-        S_inv = pt.where(pt.gt(S, 1e-8), 1 / S, 0)
-        jac_inv = V @ pt.diag(S_inv) @ U.T
-    else:
-        raise ValueError(
-            f'Invalid inverse method {inverse_method}, expected one of "pinv", "solve", "svd"'
-        )
+    # _log.info("Inverting jacobian")
+    # if inverse_method == "pinv":
+    #     jac_inv = pt.linalg.pinv(jac)
+    # elif inverse_method == "solve":
+    #     jac_inv = pt.linalg.solve(jac, pt.eye(jac.shape[0]), check_finite=False)
+    # elif inverse_method == "svd":
+    #     U, S, V = pt.linalg.svd(jac)
+    #     S_inv = pt.where(pt.gt(S, 1e-8), 1 / S, 0)
+    #     jac_inv = V @ pt.diag(S_inv) @ U.T
+    # else:
+    #     raise ValueError(
+    #         f'Invalid inverse method {inverse_method}, expected one of "pinv", "solve", "svd"'
+    #     )
 
-    jac_inv = pt.specify_shape(jac_inv, (n_eq, n_eq))
-    jac_inv.name = "inverse_jacobian"
+    # jac_inv = pt.specify_shape(jac_inv, (n_eq, n_eq))
+    # jac_inv.name = "inverse_jacobian"
 
-    outputs = (flat_equations, jac, jac_inv, B)
+    outputs = (flat_equations, jac, B)
 
     return inputs, outputs
 
 
-def compile_cge_model_to_pytensor_Op(
-    cge_model,
-    inverse_method: Literal["solve", "pinv", "svd"] = "solve",
-) -> tuple[pt.Op, pt.Op, pt.Op]:
+def compile_cge_model_to_pytensor_Op(cge_model) -> tuple[pt.Op, pt.Op]:
     """
     Compile a CGE model to a PyTensor Ops.
 
@@ -216,9 +205,6 @@ def compile_cge_model_to_pytensor_Op(
     ----------
     cge_model: CGEModel
         The CGE model object to compile
-    inverse_method: str, optional
-        The method to use to compute the inverse of the Jacobian. One of "solve", "pinv", or "svd". Defaults to "solve".
-        Note that if svd is chosen, gradients for autodiff will not be available.
 
     Returns
     -------
@@ -230,11 +216,6 @@ def compile_cge_model_to_pytensor_Op(
         A PyTensor Op representing computation of the Jacobian of model equations given model variables and
         parameters as inputs
 
-    f_jac_inv: pt.Op
-        A PyTensor Op representing computation of the inverse of the Jacobian of model equations given model
-        variables and parameters as inputs
-
-
     Notes
     -----
     In general, it shouldn't be necessary to use this function. Most downstream computation can directly use the graph
@@ -242,18 +223,15 @@ def compile_cge_model_to_pytensor_Op(
     need to be "anonymous". This function exists to facilitate that use case.
     """
 
-    (variables, parameters), outputs = compile_cge_model_to_pytensor(
-        cge_model, inverse_method=inverse_method
-    )
+    (variables, parameters), outputs = compile_cge_model_to_pytensor(cge_model)
 
-    flat_equations, jac, jac_inv, _ = outputs
+    flat_equations, jac, B = outputs
     inputs = list(variables) + list(parameters)
 
     f_model = OpFromGraph(inputs, outputs=[flat_equations], inline=True)
     f_jac = OpFromGraph(inputs, outputs=[jac], inline=True)
-    f_jac_inv = OpFromGraph(inputs, outputs=[jac_inv], inline=True)
 
-    return f_model, f_jac, f_jac_inv
+    return f_model, f_jac
 
 
 def flat_tensor_to_ragged_list(tensor, shapes):
@@ -270,7 +248,7 @@ def flat_tensor_to_ragged_list(tensor, shapes):
 
 
 def euler_approximation(
-    A_inv: pt.TensorVariable,
+    A: pt.TensorVariable,
     B: pt.TensorVariable,
     variables: list[pt.Variable],
     parameters: list[pt.Variable],
@@ -287,7 +265,7 @@ def euler_approximation(
 
     Parameters
     ----------
-    A_inv: pytensor.tensor.TensorVariable
+    A: pytensor.tensor.TensorVariable
         Inverse of the Jacobian of the system of equations with respect to the variables
     B: pytensor.tensor.TensorVariable
         Jacobian of the system of equations with respect to the parameters
@@ -323,7 +301,7 @@ def euler_approximation(
     Bv = B @ pt.atleast_1d(step_size)
     Bv.name = "Bv"
 
-    step = -A_inv @ Bv
+    step = -pt.linalg.solve(A, Bv, assume_a="gen", check_finite=False)
 
     f_step = OpFromGraph(x_list + theta_list + [step_size], [step], inline=True)
 
@@ -363,7 +341,7 @@ def euler_approximation(
     return theta_final, final_result
 
 
-def pytensor_euler_step(system, A_inv, B, variables, parameters):
+def pytensor_euler_step(system, A, B, variables, parameters):
     x_list = at_least_list(variables)
     x_shapes = [x.type.shape for x in x_list]
 
@@ -386,7 +364,7 @@ def pytensor_euler_step(system, A_inv, B, variables, parameters):
         v = flatten_equations(step_size)
         Bv = B @ v
 
-    step = -A_inv @ Bv
+    step = pt.linalg.solve(-A, Bv)
     step.name = "euler_step"
 
     delta_x = flat_tensor_to_ragged_list(step, x_shapes)
@@ -395,7 +373,8 @@ def pytensor_euler_step(system, A_inv, B, variables, parameters):
     theta_next = [theta + dtheta for theta, dtheta in zip(theta_list, step_size)]
 
     inputs = x_list + theta_list + theta0 + theta_final + [n_steps]
-    outputs = [pt.stack(x_next, axis=-1), pt.stack(theta_next, axis=-1)]
+    outputs = x_next + theta_next
+
     return inputs, outputs
 
 
@@ -507,10 +486,10 @@ def jax_euler_step(system, variables, parameters):
 
 
 def compile_euler_approximation_function(
-    A_inv, B, variables, parameters, n_steps=100, mode=None
+    A, B, variables, parameters, n_steps=100, mode=None
 ):
     theta_final, result = euler_approximation(
-        A_inv, B, variables, parameters, n_steps=n_steps
+        A, B, variables, parameters, n_steps=n_steps
     )
     theta_final.name = "theta_final"
     inputs = variables + parameters + [theta_final]

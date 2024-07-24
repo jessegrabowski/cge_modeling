@@ -267,7 +267,6 @@ class CGEModel:
             self._compile(
                 backend=backend,
                 mode=mode,
-                inverse_method=inverse_method,
                 functions_to_compile=compile,
                 use_scan_euler=use_scan_euler,
             )
@@ -738,15 +737,12 @@ class CGEModel:
         self,
         mode,
         functions_to_compile: list[CompiledFunctions],
-        inverse_method: Literal["solve", "pinv", "svd"] = "solve",
         sparse: bool = False,
         use_scan_euler: bool = True,
     ):
         _log.info("Compiling model equations into pytensor graph")
-        (variables, parameters), (system, jac, jac_inv, B) = (
-            compile_cge_model_to_pytensor(
-                self, inverse_method=inverse_method, sparse=sparse
-            )
+        (variables, parameters), (system, jac, B) = compile_cge_model_to_pytensor(
+            self, sparse=sparse
         )
         inputs = variables + parameters
         text_mode = "C" if mode is None else mode
@@ -807,6 +803,7 @@ class CGEModel:
                     pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]),
                     self.n_variables,
                 )
+
                 # View grad as the function, compute jvp instead  (hessp)
                 # _log.info("Computing SSE Jacobian")
                 # hessp, p = make_jacobian(grad, variables, return_jvp=True)
@@ -863,7 +860,7 @@ class CGEModel:
                         )
                         self.__last_n_steps = n_steps
                         self.__compiled_f_euler = compile_euler_approximation_function(
-                            jac_inv,
+                            jac,
                             B,
                             variables,
                             parameters,
@@ -881,7 +878,7 @@ class CGEModel:
                     f_step = jax_euler_step(system, variables, parameters)
                 else:
                     inputs, outputs = pytensor_euler_step(
-                        system, jac_inv, B, variables, parameters
+                        system, jac, B, variables, parameters
                     )
                     # inputs = get_required_inputs(outputs)
                     f_step = pytensor.function(inputs, outputs, mode=mode)
@@ -927,7 +924,10 @@ class CGEModel:
                             n_steps=n_steps,
                         )
 
-                        current_variable_vals, current_parameter_vals = current_step
+                        current_variable_vals = current_step[: len(self.variable_names)]
+                        current_parameter_vals = current_step[
+                            len(self.variable_names) :
+                        ]
 
                         # current_variable_vals = flat_current_step[
                         #     : len(self.variable_names)
@@ -979,7 +979,6 @@ class CGEModel:
         self,
         backend: Literal["pytensor", "numba"] | None = "pytensor",
         mode=None,
-        inverse_method: Literal["solve", "pinv", "svd"] = "solve",
         functions_to_compile: list[CompiledFunctions] = "all",
         use_scan_euler: bool = True,
     ):
@@ -992,9 +991,6 @@ class CGEModel:
             The backend to compile to. One of 'pytensor' or 'numba'.
         mode: str
             Pytensor compile mode. Ignored if mode is not 'pytensor'.
-        inverse_method: str
-            The method to use to compute the inverse of the Jacobian. One of "solve", "pinv", or "svd".
-            Defaults to "solve". Ignored if mode is not 'pytensor'
         functions_to_compile: list of str
             A list of functions to compile. Valid choices are 'root', 'minimum', 'euler', or 'all'. Defaults to 'all'.
         use_scan_euler: bool
@@ -1034,7 +1030,6 @@ class CGEModel:
         elif backend == "pytensor":
             self._compile_pytensor(
                 mode=mode,
-                inverse_method=inverse_method,
                 functions_to_compile=functions_to_compile,
                 use_scan_euler=use_scan_euler,
                 sparse=self.sparse,
