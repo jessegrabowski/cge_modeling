@@ -952,7 +952,8 @@ class CGEModel:
                         elapsed = end - start
                         unit = "s/it"
                         if elapsed < 1:
-                            elapsed = 1 / elapsed
+                            # if elapsed is exactly zero just put a big number
+                            elapsed = 1 / elapsed if elapsed != 0 else 1000000
                             unit = "it/s"
 
                         progress.comment = desc.format(elapsed, unit, rmse)
