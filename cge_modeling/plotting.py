@@ -3,40 +3,11 @@ from typing import Literal, cast
 import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from matplotlib.colors import Colormap
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import PercentFormatter
 
 from cge_modeling import CGEModel
-
-
-def _recover_shock_sizes(res):
-    if not any(group in res for group in ["euler", "optimizer"]):
-        raise ValueError("No simulation results found")
-    params = res["euler"].parameters if "euler" in res else res["optimizer"].parameters
-    shocks = {
-        x: (params[x].isel(step=0).values, params[x].isel(step=-1).values)
-        for x in params
-    }
-
-    return shocks
-
-
-def _get_single_shock(shocks):
-    init = {key: value[0] for key, value in shocks.items()}
-    final = {key: value[1] for key, value in shocks.items()}
-    delta = {k: init[k] - final[k] for k in shocks.keys()}
-
-    has_shocks = np.array([np.all(x != 0) for x in delta.values()])
-    if has_shocks.sum() > 1:
-        return False, None, None, None
-    shock_var = list(shocks.keys())[has_shocks.tolist().index(True)]
-    coord_shock = delta[shock_var] != 0
-    if coord_shock.sum() > 1:
-        return False, None, None, None
-
-    return True, shock_var, init[shock_var][coord_shock], final[shock_var][coord_shock]
 
 
 def prepare_gridspec_figure(
@@ -82,7 +53,7 @@ def prepare_gridspec_figure(
 
 
 def plot_lines(
-    result: dict[str, az.InferenceData],
+    idata: az.InferenceData,
     mod: CGEModel,
     n_cols: int = 5,
     var_names: list[str] | None = None,
@@ -92,7 +63,6 @@ def plot_lines(
     rename_dict: dict[str, str] | None = None,
     legends: bool | list | None = None,
     cmap: str | None = None,
-    x_unit: Literal["step", "pct", "value"] = "step",
     **figure_kwargs,
 ) -> plt.Figure:
     """
@@ -109,7 +79,7 @@ def plot_lines(
         The number of columns in the grid of plots.
     var_names: list of str, optional
         Name of the variables to plot. If None, all variables will be plotted.
-    initial_values: dict[str, np.ndarray], optional
+    initial_values: dict[str, np.array], optional
         The initial values of the variables in the model; those passed to the simulate method. If None, the initial
         values will be taken from the InferenceData object.
     plot_euler: bool, default True
@@ -132,8 +102,6 @@ def plot_lines(
     fig: plt.Figure
         The figure object containing the plot.
     """
-    shock_var = None
-
     if var_names is None:
         var_names = mod.variable_names
 
@@ -149,11 +117,11 @@ def plot_lines(
         legends = dict.fromkeys(legends, True)
         legends.update(dict.fromkeys(no_legend, False))
 
-    if "euler" not in result and plot_euler:
+    if "euler" not in idata and plot_euler:
         raise ValueError(
             'Cannot plot results of euler approximation, provided results has no "euler" group'
         )
-    if "optimizer" not in result and plot_optimizer:
+    if "optimizer" not in idata and plot_optimizer:
         raise ValueError(
             'Cannot plot results of optimizer, provided results has no "optimizer" group'
         )
@@ -172,7 +140,6 @@ def plot_lines(
 
         def f_cmap(n):
             return plt.colormaps[cmap](np.linspace(0, 1, n))
-
     elif cmap in plt.color_sequences:
 
         def f_cmap(*args):
@@ -182,16 +149,10 @@ def plot_lines(
 
     for idx, var in enumerate(var_names):
         axis = fig.add_subplot(gs[plot_locs[idx]])
-        x_value = (
-            result["euler"].parameters.coords["step"].values
-            if "euler" in result
-            else result["optimizer"].parameters.coords["step"].values
-        )
-        t0 = x_value[0]
-        T = x_value[-1]
+        axis.set(title=rename_dict.get(var, var), xlabel=None)
 
         if plot_euler:
-            data = result["euler"].variables[var]
+            data = idata["euler"].variables[var]
 
             n_lines = int(np.prod(data.values.shape[1:]))
             cycler = plt.cycler(color=f_cmap(n_lines))
@@ -199,30 +160,17 @@ def plot_lines(
 
             if data.ndim > 2:
                 data = data.stack(pair=data.dims[1:])
-
-            axis.plot(x_value, data.values, lw=0.5, label=legends[var])
-
-            if x_unit == "pct":
-                axis.xaxis.set_major_formatter(PercentFormatter(x_value.max()))
-            elif x_unit == "value":
-                shocks = _recover_shock_sizes(result)
-                has_single_shock, shock_var, t0, T = _get_single_shock(shocks)
-                if not has_single_shock:
-                    raise ValueError(
-                        'Found more than one shock in the provided results. Cannot use x_unit="value", '
-                        "because there is no single scalar range over which to plot the change in the "
-                        "model variables."
-                    )
-                n_steps = x_value.shape[0]
-                tick_values = np.linspace(t0, T, n_steps).squeeze()
-                axis.set_xlim(0, n_steps)
-                axis.xaxis.set_major_formatter(
-                    lambda x, pos: f"{int(tick_values[max(0, int(x) - 1)]) + 1:d}"
-                )
+            data.plot.line(x="step", ax=axis, add_legend=legends[var])
 
         if plot_optimizer:
-            initial_value = result["optimizer"].variables[var].isel(step=0).data.ravel()
-            final_value = result["optimizer"].variables[var].isel(step=-1).data.ravel()
+            initial_value = idata["optimizer"].variables[var].isel(step=0).data.ravel()
+            final_value = idata["optimizer"].variables[var].isel(step=-1).data.ravel()
+
+            t0 = np.zeros_like(initial_value)
+            T = np.ones_like(final_value)
+
+            if plot_euler:
+                T = T * idata["euler"].variables.step.max().item()
 
             axis.scatter(
                 t0,
@@ -244,20 +192,13 @@ def plot_lines(
         [spine.set_visible(False) for spine in axis.spines.values()]
         axis.grid(ls="--", lw=0.5)
 
-        xlabel_dict = {
-            "step": "Step",
-            "pct": "Percent of Shock Implemented",
-            "value": rename_dict.get(shock_var, shock_var),
-        }
-        axis.set(title=rename_dict.get(var, var), xlabel=xlabel_dict[x_unit], ylabel="")
-
     fig.tight_layout()
     return fig
 
 
 def plot_kateplot(
     idata: az.InferenceData,
-    initial_values: dict[str, np.ndarray],
+    initial_values: dict[str, np.array],
     mod: CGEModel,
     var_names: str | list[str],
     shock_name: str | None = None,
@@ -272,7 +213,7 @@ def plot_kateplot(
     ----------
     idata: az.InferenceData
         The InferenceData object returned by the model's simulate method.
-    initial_values: dict[str, np.ndarray]
+    initial_values: dict[str, np.array]
         The initial values of the variables in the model; those passed to the simulate method.
     mod: CGEModel
         The model object.
@@ -406,28 +347,19 @@ def _plot_one_bar(
     ] = "pct_change",
     legend=True,
     threshhold=1e-6,
+    labelsize=12,
+    xlabel_rotation=0,
 ):
-    if not data.dims:
-        try:
-            data = data.to_array()
-        except AttributeError:
-            pass
-    if not initial_data.dims:
-        try:
-            initial_data = initial_data.to_array()
-        except AttributeError:
-            pass
     try:
-        data = data.to_dataframe(name="data").droplevel(level=drop_vars, axis=0)
-        initial_data = initial_data.to_dataframe(name="data").droplevel(
-            level=drop_vars, axis=0
-        )
+        data = data.to_dataframe().droplevel(level=drop_vars, axis=0)
+        initial_data = initial_data.to_dataframe().droplevel(level=drop_vars, axis=0)
     except ValueError:
-        data = pd.DataFrame([data.to_dict()]).loc[:, ["data", "name"]].set_index("name")
+        data = data.to_dataarray().to_dataframe(name="data")
+        data.index.name = "name"
         initial_data = (
-            pd.DataFrame([initial_data.to_dict()])
-            .loc[:, ["data", "name"]]
-            .set_index("name")
+            initial_data.to_dataarray()
+            .to_dataframe(name="data")
+            .droplevel(level=drop_vars, axis=0)
         )
 
     if "step" in data.columns:
@@ -446,11 +378,9 @@ def _plot_one_bar(
     to_plot = _compute_bar_data(data, initial_data, metric, threshhold)
 
     if orientation == "v":
-        # to_plot.plot.bar(ax=ax, legend='', facecolor='none', edgecolor="black")
         to_plot.plot.bar(ax=ax, legend=legend)
         ax.axhline(0, color="black", lw=2.0)
     else:
-        # to_plot.plot.barh(ax=ax, legend='', facecolor='none', edgecolor="black")
         to_plot.plot.barh(ax=ax, legend=legend)
         ax.axvline(0, color="black", lw=2.0)
 
@@ -460,7 +390,8 @@ def _plot_one_bar(
             ax.yaxis.set_major_formatter(ticker)
         elif orientation == "h":
             ax.xaxis.set_major_formatter(ticker)
-    ax.tick_params(which="both", labelsize=6)
+    ax.tick_params(which="both", labelsize=labelsize)
+    ax.tick_params(which="major", axis="x", rotation=xlabel_rotation)
     return ax
 
 
@@ -478,6 +409,9 @@ def plot_bar(
         "pct_change", "change", "abs_change", "final", "initial", "both"
     ] = "pct_change",
     threshhold=1e-6,
+    labelsize=12,
+    xlabel_rotation=0,
+    legend=True,
     **figure_kwargs,
 ):
     data = None
@@ -543,7 +477,10 @@ def plot_bar(
                 drop_vars=drop_vars,
                 orientation=orientation,
                 metric=metric,
+                legend=legend,
                 threshhold=threshhold,
+                labelsize=labelsize,
+                xlabel_rotation=xlabel_rotation,
             )
             axis.set(title=var)
             if metric == "final_initial":
@@ -569,7 +506,6 @@ def plot_bar(
             raise ValueError(msg)
         fig, ax = plt.subplots(dpi=dpi, figsize=figsize, **figure_kwargs)
 
-        # labels = [label for label in [make_labels(var_name, mod) for var_name in var_names]]
         _ = _plot_one_bar(
             data,
             initial_values,
@@ -578,6 +514,9 @@ def plot_bar(
             drop_vars=drop_vars,
             orientation=orientation,
             metric=metric,
+            legend=legend,
+            labelsize=labelsize,
+            xlabel_rotation=xlabel_rotation,
         )
 
     return fig

@@ -2,7 +2,7 @@ pytest
 setuptools
 numba
 numpy
-sympy
+sympy<1.13
 scipy
 pandas
 joblib

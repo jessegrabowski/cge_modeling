@@ -26,7 +26,7 @@ def test_SAM_transformer():
 
 
 def test_cross_entropy_rebalance():
-    df = pd.read_csv("data/unbalanced_sam.csv", index_col=[0, 1], header=[0, 1])
+    df = pd.read_csv("tests/data/unbalanced_sam.csv", index_col=[0, 1], header=[0, 1])
     df2, optim_res = balance_SAM(df)
     assert optim_res.success
     assert np.allclose(df2.sum(axis=0), df2.sum(axis=1))
