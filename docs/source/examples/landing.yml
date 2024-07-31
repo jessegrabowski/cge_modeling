@@ -1,6 +1,0 @@
-- header: Getting Started
-  id: getting-started
-  links:
-    - img: ../_static/images/rbc.png
-      target: notebooks/generated/rbc.html
-      text: One-Sector RBC Model
