@@ -350,7 +350,8 @@ def test_dixit_stiglitz_computation(backend):
 
     if backend == "numba":
         eq = sp.parse_expr(eq_production, transformations="all", local_dict=local_dict)
-        f_eq = sp.lambdify(inputs, eq.rhs)
+
+        f_eq = sp.lambdify(inputs, eq.rhs.doit())
         k = len(coords["f"])
 
         sympy_out = f_eq(
@@ -604,7 +605,7 @@ def test_leonteif_1d_computation(backend):
 
     if backend == "numba":
         eq = sp.parse_expr(zero_profit, transformations="all", local_dict=local_dict)
-        f_eq = sp.lambdify(inputs, eq.rhs)
+        f_eq = sp.lambdify(inputs, eq.rhs.doit())
         k = len(coords["i"])
 
         sympy_out = f_eq(

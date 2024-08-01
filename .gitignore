@@ -170,3 +170,7 @@ cge_modeling/base/__pycache__/
 cge_modeling/pytensorf/__pycache__/
 cge_modeling/tools/__pycache__/
 tests/utilities/__pycache__/
+
+# Locally built docs
+docs/build/
+docs/jupyter_execute/

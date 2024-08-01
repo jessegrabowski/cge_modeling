@@ -3,7 +3,6 @@ from typing import Literal, cast
 import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from matplotlib.colors import Colormap
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import PercentFormatter
@@ -80,7 +79,7 @@ def plot_lines(
         The number of columns in the grid of plots.
     var_names: list of str, optional
         Name of the variables to plot. If None, all variables will be plotted.
-    initial_values: dict[str, np.ndarray], optional
+    initial_values: dict[str, np.array], optional
         The initial values of the variables in the model; those passed to the simulate method. If None, the initial
         values will be taken from the InferenceData object.
     plot_euler: bool, default True
@@ -169,12 +168,13 @@ def plot_lines(
 
             t0 = np.zeros_like(initial_value)
             T = np.ones_like(final_value)
+
             if plot_euler:
                 T = T * idata["euler"].variables.step.max().item()
 
             axis.scatter(
                 t0,
-                final_value,
+                initial_value,
                 marker="*",
                 color="tab:green",
                 zorder=10,
@@ -198,7 +198,7 @@ def plot_lines(
 
 def plot_kateplot(
     idata: az.InferenceData,
-    initial_values: dict[str, np.ndarray],
+    initial_values: dict[str, np.array],
     mod: CGEModel,
     var_names: str | list[str],
     shock_name: str | None = None,
@@ -213,7 +213,7 @@ def plot_kateplot(
     ----------
     idata: az.InferenceData
         The InferenceData object returned by the model's simulate method.
-    initial_values: dict[str, np.ndarray]
+    initial_values: dict[str, np.array]
         The initial values of the variables in the model; those passed to the simulate method.
     mod: CGEModel
         The model object.
@@ -347,17 +347,21 @@ def _plot_one_bar(
     ] = "pct_change",
     legend=True,
     threshhold=1e-6,
+    labelsize=12,
+    xlabel_rotation=0,
 ):
     try:
         data = data.to_dataframe().droplevel(level=drop_vars, axis=0)
         initial_data = initial_data.to_dataframe().droplevel(level=drop_vars, axis=0)
     except ValueError:
-        data = pd.DataFrame([data.to_dict()]).loc[:, ["data", "name"]].set_index("name")
+        data = data.to_dataarray().to_dataframe(name="data")
+        data.index.name = "name"
         initial_data = (
-            pd.DataFrame([initial_data.to_dict()])
-            .loc[:, ["data", "name"]]
-            .set_index("name")
+            initial_data.to_dataarray()
+            .to_dataframe(name="data")
+            .droplevel(level=drop_vars, axis=0)
         )
+
     if "step" in data.columns:
         data = data.drop(columns=["step"])
     if "step" in initial_data.columns:
@@ -374,11 +378,9 @@ def _plot_one_bar(
     to_plot = _compute_bar_data(data, initial_data, metric, threshhold)
 
     if orientation == "v":
-        # to_plot.plot.bar(ax=ax, legend='', facecolor='none', edgecolor="black")
         to_plot.plot.bar(ax=ax, legend=legend)
         ax.axhline(0, color="black", lw=2.0)
     else:
-        # to_plot.plot.barh(ax=ax, legend='', facecolor='none', edgecolor="black")
         to_plot.plot.barh(ax=ax, legend=legend)
         ax.axvline(0, color="black", lw=2.0)
 
@@ -388,7 +390,8 @@ def _plot_one_bar(
             ax.yaxis.set_major_formatter(ticker)
         elif orientation == "h":
             ax.xaxis.set_major_formatter(ticker)
-    ax.tick_params(which="both", labelsize=6)
+    ax.tick_params(which="both", labelsize=labelsize)
+    ax.tick_params(which="major", axis="x", rotation=xlabel_rotation)
     return ax
 
 
@@ -406,6 +409,9 @@ def plot_bar(
         "pct_change", "change", "abs_change", "final", "initial", "both"
     ] = "pct_change",
     threshhold=1e-6,
+    labelsize=12,
+    xlabel_rotation=0,
+    legend=True,
     **figure_kwargs,
 ):
     data = None
@@ -471,7 +477,10 @@ def plot_bar(
                 drop_vars=drop_vars,
                 orientation=orientation,
                 metric=metric,
+                legend=legend,
                 threshhold=threshhold,
+                labelsize=labelsize,
+                xlabel_rotation=xlabel_rotation,
             )
             axis.set(title=var)
             if metric == "final_initial":
@@ -497,7 +506,6 @@ def plot_bar(
             raise ValueError(msg)
         fig, ax = plt.subplots(dpi=dpi, figsize=figsize, **figure_kwargs)
 
-        # labels = [label for label in [make_labels(var_name, mod) for var_name in var_names]]
         _ = _plot_one_bar(
             data,
             initial_values,
@@ -506,6 +514,9 @@ def plot_bar(
             drop_vars=drop_vars,
             orientation=orientation,
             metric=metric,
+            legend=legend,
+            labelsize=labelsize,
+            xlabel_rotation=xlabel_rotation,
         )
 
     return fig

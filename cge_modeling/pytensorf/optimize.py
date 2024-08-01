@@ -18,13 +18,13 @@ def eval_func_maybe_exog(X, exog, f, has_exog):
     return out
 
 
-def _newton_step(flat_X, exog, F, J_inv, step_size, has_exog, shapes):
+def _newton_step(flat_X, exog, F, J, step_size, has_exog, shapes):
     X = flat_tensor_to_ragged_list(flat_X, shapes)
     F_X = eval_func_maybe_exog(X, exog, F, has_exog)
-    J_inv_X = eval_func_maybe_exog(X, exog, J_inv, has_exog)
+    J_X = eval_func_maybe_exog(X, exog, J, has_exog)
 
     flat_F_X = flatten_equations(F_X)
-    flat_new_X = flat_X - step_size * J_inv_X @ flat_F_X
+    flat_new_X = flat_X - step_size * pt.linalg.solve(J_X, flat_F_X)
 
     new_X = flat_tensor_to_ragged_list(flat_new_X, [x.type.shape for x in X])
     flat_F_new_X = eval_func_maybe_exog(new_X, exog, F, has_exog)
@@ -72,7 +72,7 @@ def backtrack_if_not_decreasing(is_decreasing, X, new_X):
     return pytensor.ifelse(is_decreasing, new_X, X)
 
 
-def scan_body(*args, F, J_inv, initial_step_size, tol, has_exog, n_endog, n_exog):
+def scan_body(*args, F, J, initial_step_size, tol, has_exog, n_endog, n_exog):
     X = args[:n_endog]
     converged, step_size, n_steps = args[n_endog : n_endog + 3]
     exog = args[-n_exog:]
@@ -83,7 +83,7 @@ def scan_body(*args, F, J_inv, initial_step_size, tol, has_exog, n_endog, n_exog
     out = pytensor.ifelse(
         converged,
         no_op(flat_X),
-        _newton_step(flat_X, exog, F, J_inv, step_size, has_exog, shapes),
+        _newton_step(flat_X, exog, F, J, step_size, has_exog, shapes),
     )
 
     flat_X, flat_new_X, flat_F_X, flat_F_new_X = (out[i] for i in range(4))
@@ -116,7 +116,7 @@ def _process_root_data(data: dict[str, np.ndarray] | None) -> list[pt.TensorLike
 
 def root(
     f: pt.Op,
-    f_jac_inv: pt.Op,
+    f_jac: pt.Op,
     initial_data: dict[str, np.ndarray | float],
     parameters: dict[str, np.ndarray | float] | None = None,
     step_size: int = 1,
@@ -133,7 +133,7 @@ def root(
     f: pytensor Op
         A pytensor Op, typically created by CGEModel.compile_equations_to_pytensor, that takes a ragged list of
         variables and parameters as input and returns a vector of residuls as output.
-    f_jac_inv: pytensor Op
+    f_jac: pytensor Op
         A pytensor Op, typically created by CGEModel.compile_equations_to_pytensor, that takes a ragged list of
         variables and parameters as input and returns the inverse of the Jacobian of the system of equations as output.
     initial_data: dict[str, np.ndarray]
@@ -179,7 +179,7 @@ def root(
     root_func = ft.partial(
         scan_body,
         F=f,
-        J_inv=f_jac_inv,
+        J=f_jac,
         initial_step_size=init_step_size,
         tol=tol,
         has_exog=has_exog,

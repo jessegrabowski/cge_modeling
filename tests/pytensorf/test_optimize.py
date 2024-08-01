@@ -33,16 +33,15 @@ def test_simple_root():
     eq2 = x - y**2 + 1
     system = pt.stack([eq1, eq2])
     jac = pt.stack(pytensor.gradient.jacobian(system, [x, y]))
-    jac_inv = pt.linalg.solve(jac, pt.identity_like(jac))
 
     f = pytensor.compile.builders.OpFromGraph([x, y], [system])
-    f_jac_inv = pytensor.compile.builders.OpFromGraph([x, y], [jac_inv])
+    f_jac = pytensor.compile.builders.OpFromGraph([x, y], [jac])
 
     x_val = 1.0
     y_val = 1.0
 
     root_histories, converged, step_size, n_steps = root(
-        f, f_jac_inv, {"x": x_val, "y": y_val}
+        f, f_jac, {"x": x_val, "y": y_val}
     )
     final_root = _postprocess_root_return(root_histories)
 
@@ -69,16 +68,15 @@ def test_small_model():
 
     equations = f_model(*variables, *params)
     jac = pt.stack(pytensor.gradient.jacobian(equations, variables)).T
-    jac_inv = pt.linalg.solve(jac, pt.identity_like(jac), check_finite=False)
-    f_jac_inv = pytensor.compile.builders.OpFromGraph(
-        variables + params, outputs=[jac_inv], inline=True
+    f_jac = pytensor.compile.builders.OpFromGraph(
+        variables + params, outputs=[jac], inline=True
     )
 
     x0 = {"Y": 11000, "C": 11000, "L_d": 7000, "K_d": 4000, "r": 1, "P": 1, "resid": 0}
     param_vals = {"K_s": 4000, "L_s": 7000, "A": 2, "alpha": 0.33, "w": 1}
 
     root_histories, converged, step_size, n_steps = root(
-        f_model, f_jac_inv, initial_data=x0, parameters=param_vals
+        f_model, f_jac, initial_data=x0, parameters=param_vals
     )
     root_eval = _postprocess_root_return(root_histories)
 
@@ -106,9 +104,7 @@ def test_small_model_from_compile():
     mod = load_model_1(
         parse_equations_to_sympy=False, backend="pytensor", compile=False
     )
-    (f_model, f_jac, f_jac_inv) = compile_cge_model_to_pytensor_Op(
-        mod, inverse_method="solve"
-    )
+    f_model, f_jac = compile_cge_model_to_pytensor_Op(mod)
     data = {
         "Y": 11000.0,
         "C": 11000.0,
@@ -136,7 +132,7 @@ def test_small_model_from_compile():
 
     root_histories, converged, step_size, n_steps = root(
         f_model,
-        f_jac_inv,
+        f_jac,
         initial_data=sorted_data,
         parameters=sorted_params,
         tol=1e-8,
@@ -174,12 +170,9 @@ def test_sector_model_from_compile():
     x0 = {var.name: calib_dict[var.name] for var in mod.variables}
     params = {param.name: calib_dict[param.name] for param in mod.parameters}
 
-    f_model, f_jac, f_jac_inv = compile_cge_model_to_pytensor_Op(
-        mod, inverse_method="solve"
-    )
-
+    f_model, f_jac = compile_cge_model_to_pytensor_Op(mod)
     root_history, converged, step_size, n_steps = root(
-        f_model, f_jac_inv, initial_data=x0, parameters=params, tol=1e-8, max_iter=500
+        f_model, f_jac, initial_data=x0, parameters=params, tol=1e-8, max_iter=500
     )
 
     root_eval = _postprocess_root_return(root_history)

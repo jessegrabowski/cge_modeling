@@ -33,11 +33,10 @@ def test_euler_approximation_2d():
 
     equations = pt.stack([v1**2 * v3 - 1, v1 + v2 - 2])
     A = make_jacobian(equations, variables)
-    A_inv = pt.linalg.solve(A, pt.identity_like(A))
     B = make_jacobian(equations, [parameters])
 
     theta_final, result = euler_approximation(
-        A_inv, B, variables=variables, parameters=[parameters], n_steps=n_steps
+        A, B, variables=variables, parameters=[parameters], n_steps=n_steps
     )
     f = pytensor.function(inputs + [theta_final, n_steps], result)
 
