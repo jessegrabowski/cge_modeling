@@ -891,13 +891,6 @@ class CGEModel:
                         current_variable_vals = current_step[: len(self.variable_names)]
                         current_parameter_vals = current_step[len(self.variable_names) :]
 
-                        # current_variable_vals = flat_current_step[
-                        #     : len(self.variable_names)
-                        # ]
-                        # current_parameter_vals = flat_current_step[
-                        #     len(self.variable_names) :
-                        # ]
-
                         current_variables = {
                             k: current_variable_vals[i] for i, k in enumerate(self.variable_names)
                         }
