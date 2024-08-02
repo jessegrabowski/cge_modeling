@@ -1,10 +1,10 @@
+import logging
+
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Equation, Parameter, Variable
 from cge_modeling.plotting import plot_kateplot, plot_lines
 from cge_modeling.pytensorf.rewrites import prod_to_no_zero_prod  # noqa: F401
 from cge_modeling.tools.output_tools import display_info_as_table, latex_print_equations
-
-import logging
 
 _log = logging.getLogger("cge_modeling")
 if not logging.root.handlers:

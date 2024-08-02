@@ -436,9 +436,7 @@ def test_backends_agree(
     if mode in ["JAX"]:
         pytest.importorskip(mode.lower())
     model_numba = model_function(backend="numba")
-    model_pytensor = model_function(
-        backend="pytensor", mode=mode, parse_equations_to_sympy=False
-    )
+    model_pytensor = model_function(backend="pytensor", mode=mode, parse_equations_to_sympy=False)
 
     def solver_agreement_checks(results: list, names: list):
         for res, name in zip(results, names):
