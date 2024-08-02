@@ -402,12 +402,19 @@ def jax_loss_grad_hessp(system, variables, parameters):
 
     f_loss = jax.jit(f_loss_wrapped)
 
-    grad = jax.grad(f_loss, 0)
+    grad = jax.grad(f_loss_wrapped, 0)
 
     def f_grad_jax(x, theta):
         return jnp.stack(grad(x, theta))
 
     f_grad = jax.jit(f_grad_jax)
+
+    _f_hess_jax = jax.jacfwd(f_grad_jax, argnums=0)
+
+    def f_hess_jax(x, theta):
+        return jnp.stack(_f_hess_jax(x, theta))
+
+    f_hess = jax.jit(f_hess_jax)
 
     def f_hessp_jax(x, p, theta):
         _, u = jax.jvp(lambda x: f_grad_jax(x, theta), (x,), (p,))
@@ -415,7 +422,7 @@ def jax_loss_grad_hessp(system, variables, parameters):
 
     f_hessp = jax.jit(f_hessp_jax)
 
-    return f_loss, f_grad, f_hessp
+    return f_loss, f_grad, f_hess, f_hessp
 
 
 def jax_euler_step(system, variables, parameters):
@@ -476,7 +483,7 @@ def jax_euler_step(system, variables, parameters):
         x_next = flat_tensor_to_ragged_list(x_next_vec, x_shapes)
         theta_next = flat_tensor_to_ragged_list(theta_next_vec, theta_shapes)
 
-        return x_next, theta_next
+        return [*x_next, *theta_next]
 
     f_step = jax.jit(step)
     return f_step
