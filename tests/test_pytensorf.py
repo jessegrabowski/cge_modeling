@@ -16,9 +16,7 @@ def test_euler_approximation_1d():
     A_inv = 1 / A
     B = make_jacobian(eq, [x])
 
-    x0_final, result = euler_approximation(
-        A_inv, B, variables=[y], parameters=[x], n_steps=n_steps
-    )
+    x0_final, result = euler_approximation(A_inv, B, variables=[y], parameters=[x], n_steps=n_steps)
     f = pytensor.function([x, y, x0_final, n_steps], result)
     y_values, x_values = f(0, 0, np.array([10.0]), 10_000)
     true = -np.cos(np.array([10])) + 1
@@ -29,7 +27,7 @@ def test_euler_approximation_2d():
     variables = v1, v2 = [pt.dscalar(name) for name in ["v1", "v2"]]
     parameters = v3 = pt.dscalar("v3")
     n_steps = pt.iscalar("n_steps")
-    inputs = variables + [parameters]
+    inputs = [*variables, parameters]
 
     equations = pt.stack([v1**2 * v3 - 1, v1 + v2 - 2])
     A = make_jacobian(equations, variables)
@@ -38,7 +36,7 @@ def test_euler_approximation_2d():
     theta_final, result = euler_approximation(
         A, B, variables=variables, parameters=[parameters], n_steps=n_steps
     )
-    f = pytensor.function(inputs + [theta_final, n_steps], result)
+    f = pytensor.function([*inputs, theta_final, n_steps], result)
 
     def f_analytic(v3):
         v1 = 1 / np.sqrt(v3)

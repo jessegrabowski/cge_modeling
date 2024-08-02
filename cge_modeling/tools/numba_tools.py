@@ -5,6 +5,7 @@ from collections.abc import Callable
 import numba as nb
 import numpy as np
 import sympy as sp
+
 from sympy.printing.numpy import NumPyPrinter, _known_functions_numpy
 
 _known_functions_numpy.update({"DiracDelta": lambda x: 0.0, "log": "log"})
@@ -131,7 +132,7 @@ def numba_lambdify(
         # Need to make the float substitutions so that numba can correctly interpret everything, but we have to handle
         # several cases:
         # Case 1: expr is just a single Sympy thing
-        if isinstance(expr, (sp.Matrix, sp.Expr)):
+        if isinstance(expr, sp.Matrix | sp.Expr):
             expr = expr.subs(FLOAT_SUBS)
 
         # Case 2: expr is a list. Items in the list are either lists of expressions (systems of equations),
@@ -140,11 +141,11 @@ def numba_lambdify(
             new_expr = []
             for item in expr:
                 # Case 2a: It's a simple list of sympy things
-                if isinstance(item, (sp.Matrix, sp.Expr)):
+                if isinstance(item, sp.Matrix | sp.Expr):
                     new_expr.append(item.subs(FLOAT_SUBS))
                 # Case 2b: It's a system of equations, List[List[sp.Expr]]
                 elif isinstance(item, list):
-                    if all([isinstance(x, (sp.Matrix, sp.Expr)) for x in item]):
+                    if all([isinstance(x, sp.Matrix | sp.Expr) for x in item]):
                         new_expr.append([x.subs(FLOAT_SUBS) for x in item])
                     else:
                         raise ValueError("Unexpected input type for expr")
@@ -202,10 +203,7 @@ def numba_lambdify(
         unpacked_inputs += "\n" + exog_unpacked
 
     assignments = "\n".join(
-        [
-            f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}"
-            for x, y in sub_dict
-        ]
+        [f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}" for x, y in sub_dict]
     )
     returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
     full_code = f"{decorator}\ndef f({input_signature}):\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"

@@ -1,6 +1,5 @@
 import functools as ft
 
-
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
@@ -53,9 +52,7 @@ def _check_convergence(norm_step, norm_root, tol):
 
 
 def check_convergence(norm_step, norm_root, converged, tol):
-    return pytensor.ifelse(
-        converged, np.array(True), _check_convergence(norm_step, norm_root, tol)
-    )
+    return pytensor.ifelse(converged, np.array(True), _check_convergence(norm_step, norm_root, tol))
 
 
 def check_stepsize(norm_root, norm_root_new, step_size, initial_step_size):
@@ -100,7 +97,7 @@ def scan_body(*args, F, J, initial_step_size, tol, has_exog, n_endog, n_exog):
     return_X = flat_tensor_to_ragged_list(flat_return_X, shapes)
     new_n_steps = n_steps + (1 - is_converged)
 
-    return return_X + [is_converged, new_step_size, new_n_steps]
+    return [*return_X, is_converged, new_step_size, new_n_steps]
 
 
 def _process_root_data(data: dict[str, np.ndarray] | None) -> list[pt.TensorLike]:
@@ -122,9 +119,7 @@ def root(
     step_size: int = 1,
     max_iter: int = 100,
     tol: float = 1e-8,
-) -> tuple[
-    list[pt.TensorVariable], pt.TensorVariable, pt.TensorVariable, pt.TensorVariable
-]:
+) -> tuple[list[pt.TensorVariable], pt.TensorVariable, pt.TensorVariable, pt.TensorVariable]:
     """
     Find the root of a system of equations using Newton's method with backtracking.
 
@@ -189,7 +184,7 @@ def root(
 
     outputs, updates = pytensor.scan(
         root_func,
-        outputs_info=x0 + [converged, init_step_size, n_steps],
+        outputs_info=[*x0, converged, init_step_size, n_steps],
         non_sequences=exog,
         n_steps=max_iter,
         strict=True,

@@ -72,9 +72,7 @@ def test_add_wrong_type_raises(cls, cls_type, model):
     other_type = Variable if cls is Parameter else Parameter
     x = other_type(name="x")
 
-    with pytest.raises(
-        ValueError, match=f"Expected instance of type {cls_type.capitalize()}"
-    ):
+    with pytest.raises(ValueError, match=f"Expected instance of type {cls_type.capitalize()}"):
         getattr(model, f"add_{cls_type}")(x)
 
 
@@ -108,9 +106,7 @@ def test_get_objects(cls, cls_type, get_args, model):
     assert y_out is y
 
 
-@pytest.mark.parametrize(
-    "args", [["x"], ["y"], ["x", "y"], None], ids=["x", "y", "x,y", "default"]
-)
+@pytest.mark.parametrize("args", [["x"], ["y"], ["x", "y"], None], ids=["x", "y", "x,y", "default"])
 def test_get(args, model):
     x = Variable(name="x")
     y = Parameter(name="y")
@@ -154,16 +150,12 @@ def test_unpack_equation(model):
     model._simplify_unpacked_sympy_representation()
 
     assert len(model.unpacked_equation_symbols) == 3
-    assert all(
-        [f"sum for group {i}" in model.unpacked_equation_names for i in ["A", "B", "C"]]
-    )
+    assert all([f"sum for group {i}" in model.unpacked_equation_names for i in ["A", "B", "C"]])
     for i, eq in zip(["A", "B", "C"], model.unpacked_equation_symbols):
         inputs = get_inputs(eq)
         f = sp.lambdify(inputs, eq)
         kwargs = {arg.name: np.random.normal() for arg in inputs}
-        np.testing.assert_allclose(
-            f(**kwargs), (kwargs[f"z_{i}"] - kwargs[f"x_{i}"] - kwargs["y"])
-        )
+        np.testing.assert_allclose(f(**kwargs), (kwargs[f"z_{i}"] - kwargs[f"x_{i}"] - kwargs["y"]))
 
 
 def test_unpack_equation_with_sum():
@@ -244,8 +236,7 @@ def test_unpack_double_index():
         "X_C_F = VC_F * psi_X_C_F",
     ]
     local_dict = {
-        x.name: x
-        for x in model.unpacked_variable_symbols + model.unpacked_parameter_symbols
+        x.name: x for x in model.unpacked_variable_symbols + model.unpacked_parameter_symbols
     }
     expected_output_sp = [
         sp.parse_expr(expr, local_dict=local_dict, transformations="all")
@@ -264,9 +255,7 @@ def test_tax_unpack():
     income = Variable(name="income")
     tau = Parameter("tau", dims=("i", "k"))
 
-    eq = Equation(
-        "tax income", "income = Sum(Sum((tau * P_X * X), (i, 0, 2)), (k, 0, 5))"
-    )
+    eq = Equation("tax income", "income = Sum(Sum((tau * P_X * X), (i, 0, 2)), (k, 0, 5))")
     model._initialize_group([X, P_X, income], "variables")
     model._initialize_group([tau], "parameters")
     model._initialize_group([eq], "equations")
@@ -386,9 +375,7 @@ def test_model_gradients(model_function, jac_function, backend, parse_to_sympy):
     ids=["simple_model", "3-goods simple"],
 )
 @pytest.mark.parametrize("sparse", [False, True], ids=["dense", "sparse"])
-def test_pytensor_from_sympy(
-    model_function, calibrate_model, f_expected_jac, data, sparse
-):
+def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, data, sparse):
     mod = model_function(
         equation_mode="numba",
         backend="pytensor",
@@ -452,9 +439,7 @@ def test_backends_agree(
     def solver_agreement_checks(results: list, names: list):
         for res, name in zip(results, names):
             if hasattr(res, "success"):
-                assert (
-                    res.success or res.fun < 1e-8
-                ), f"{name} solver failed to converge"
+                assert res.success or res.fun < 1e-8, f"{name} solver failed to converge"
             if hasattr(res, "x"):
                 assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
                 assert np.all(np.isfinite(res.x)), f"{name} solver returned Infs"
@@ -500,9 +485,7 @@ def test_backends_agree(
         labor_increase, model_numba.variables, model_numba.parameters
     )
 
-    res_numba = getattr(model_numba, method)(
-        calibated_data, theta_labor_increase, **solver_kwargs
-    )
+    res_numba = getattr(model_numba, method)(calibated_data, theta_labor_increase, **solver_kwargs)
     res_pytensor = getattr(model_pytensor, method)(
         calibated_data, theta_labor_increase, **solver_kwargs
     )

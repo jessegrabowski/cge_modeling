@@ -1,12 +1,13 @@
 import functools as ft
 import re
 import sys
+
+from collections.abc import Callable, Sequence
 from itertools import product
 from typing import Any, cast
 
-from collections.abc import Callable, Sequence
-
 import numpy as np
+
 from fastprogress.fastprogress import ProgressBar, progress_bar
 
 from cge_modeling.base.primitives import (
@@ -73,9 +74,7 @@ def _validate_input(obj: Any, cls: CGETypes):
     """
 
     if not isinstance(obj, cast(type, cls)):
-        raise ValueError(
-            f"Expected instance of type {cls.__name__}, found {type(obj).__name__}"
-        )
+        raise ValueError(f"Expected instance of type {cls.__name__}, found {type(obj).__name__}")
 
 
 def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
@@ -92,7 +91,7 @@ def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
     x: list[Any]
         A list containing the input, or the input itself if it is already a sequence
     """
-    if not isinstance(x, (list, tuple)):
+    if not isinstance(x, list | tuple):
         x = [x]
     return x
 
@@ -136,7 +135,7 @@ def _expand_var_by_index(
         #      x_{i=\text{Industrial}}
         #      x_{i=\text{Service}}
     """
-    if not isinstance(obj, (Variable, Parameter)):
+    if not isinstance(obj, Variable | Parameter):
         raise ValueError(f"Expected a model object for argument obj, got {type(obj)}")
 
     dims = list(coords.keys())
@@ -382,12 +381,8 @@ def variable_dict_to_flat_array(
     # TODO: This function cannot currently handle batch dimensions, but it should be able to.
     """
 
-    variables = np.concatenate(
-        [np.atleast_1d(d[var.name]).ravel() for var in variable_list]
-    )
-    parameters = np.concatenate(
-        [np.atleast_1d(d[var.name]).ravel() for var in parameter_list]
-    )
+    variables = np.concatenate([np.atleast_1d(d[var.name]).ravel() for var in variable_list])
+    parameters = np.concatenate([np.atleast_1d(d[var.name]).ravel() for var in parameter_list])
 
     return variables, parameters
 
@@ -439,7 +434,7 @@ def wrap_fixed_values(
             )
         data.update(fixed_values)
         res = f(**data)
-        if isinstance(res, (float, int)) or res.ndim == 0:
+        if isinstance(res, float | int) or res.ndim == 0:
             return res
 
         return_mask = make_flat_array_return_mask(res, variables, fixed_vars, coords)
@@ -484,9 +479,7 @@ def wrap_pytensor_func_for_scipy(
     def inner_f(x0, theta):
         # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
         inputs = np.r_[x0, theta]
-        data = flat_array_to_variable_dict(
-            inputs, variable_list + parameter_list, coords
-        )
+        data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
         return f(**data)
 
     return inner_f
@@ -582,9 +575,7 @@ class CostFuncWrapper:
         self.progress = None
 
         if progressbar:
-            self.progress = progress_bar(
-                range(maxeval), total=maxeval, display=progressbar
-            )
+            self.progress = progress_bar(range(maxeval), total=maxeval, display=progressbar)
             self.progress.update(0)
 
     def step(self, x):

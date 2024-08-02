@@ -123,9 +123,7 @@ def test_compile_euler_approximation_function():
         np.c_[f(*initial_point, v3_initial, np.array([v3_final]))[:2]].T
         for f in [f_1, f_10, f_100, f_10k]
     ]
-    errors = np.c_[
-        [solution[-1] - analytic_solution for solution in approximate_solutions]
-    ]
+    errors = np.c_[[solution[-1] - analytic_solution for solution in approximate_solutions]]
 
     # Test the errors are monotonically decreasing in the number of steps
     assert np.all(np.diff(np.abs(errors), axis=0) < 0)

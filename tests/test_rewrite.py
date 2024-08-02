@@ -8,9 +8,7 @@ def test_prod_to_no_zero_prod():
 
     assert not z.owner.op.no_zeros_in_input
     f = pytensor.function([x], z)
-    assert any(
-        [isinstance(node.op, pt.math.Prod) for node in f.maker.fgraph.toposort()]
-    )
+    assert any([isinstance(node.op, pt.math.Prod) for node in f.maker.fgraph.toposort()])
 
     for node in f.maker.fgraph.toposort():
         if isinstance(node.op, pt.math.Prod):

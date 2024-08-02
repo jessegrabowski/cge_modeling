@@ -1,6 +1,7 @@
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
+
 from numpy.testing import assert_allclose
 
 from cge_modeling.base.utilities import flat_array_to_variable_dict
@@ -40,9 +41,7 @@ def test_simple_root():
     x_val = 1.0
     y_val = 1.0
 
-    root_histories, converged, step_size, n_steps = root(
-        f, f_jac, {"x": x_val, "y": y_val}
-    )
+    root_histories, converged, step_size, n_steps = root(f, f_jac, {"x": x_val, "y": y_val})
     final_root = _postprocess_root_return(root_histories)
 
     assert_allclose(final_root, [0.0, 1.0], atol=1e-8)
@@ -68,9 +67,7 @@ def test_small_model():
 
     equations = f_model(*variables, *params)
     jac = pt.stack(pytensor.gradient.jacobian(equations, variables)).T
-    f_jac = pytensor.compile.builders.OpFromGraph(
-        variables + params, outputs=[jac], inline=True
-    )
+    f_jac = pytensor.compile.builders.OpFromGraph(variables + params, outputs=[jac], inline=True)
 
     x0 = {"Y": 11000, "C": 11000, "L_d": 7000, "K_d": 4000, "r": 1, "P": 1, "resid": 0}
     param_vals = {"K_s": 4000, "L_s": 7000, "A": 2, "alpha": 0.33, "w": 1}
@@ -95,15 +92,11 @@ def test_small_model():
     assert_allclose(root_eval[0], root_eval[1], atol=1e-8)
 
     # Check residuals are zero at the root
-    assert_allclose(
-        f_model_compiled(*root_eval, **param_vals).ravel(), np.zeros(7), atol=1e-8
-    )
+    assert_allclose(f_model_compiled(*root_eval, **param_vals).ravel(), np.zeros(7), atol=1e-8)
 
 
 def test_small_model_from_compile():
-    mod = load_model_1(
-        parse_equations_to_sympy=False, backend="pytensor", compile=False
-    )
+    mod = load_model_1(parse_equations_to_sympy=False, backend="pytensor", compile=False)
     f_model, f_jac = compile_cge_model_to_pytensor_Op(mod)
     data = {
         "Y": 11000.0,
@@ -155,16 +148,12 @@ def test_small_model_from_compile():
     assert_allclose(root_eval[Y_idx], root_eval[C_idx], atol=1e-8)
 
     # Check residuals are zero at the root
-    params = np.concatenate(
-        [np.atleast_1d(param_data[param]) for param in mod.parameter_names]
-    )
+    params = np.concatenate([np.atleast_1d(param_data[param]) for param in mod.parameter_names])
     assert_allclose(f_model(*root_eval, *params).eval(), np.zeros(8), atol=1e-8)
 
 
 def test_sector_model_from_compile():
-    mod = load_model_2(
-        parse_equations_to_sympy=False, mode="FAST_COMPILE", backend="pytensor"
-    )
+    mod = load_model_2(parse_equations_to_sympy=False, mode="FAST_COMPILE", backend="pytensor")
     calib_dict = calibrate_model_2(**model_2_data)
 
     x0 = {var.name: calib_dict[var.name] for var in mod.variables}

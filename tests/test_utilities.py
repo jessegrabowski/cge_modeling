@@ -3,6 +3,7 @@ from string import Template
 import numpy as np
 import pytest
 import sympy as sp
+
 from sympy.abc import a, b, x, y
 
 from cge_modeling.base.primitives import Parameter, Variable
@@ -17,9 +18,7 @@ from cge_modeling.base.utilities import (
 
 def test_expand_variable():
     coords = {"i": ["A", "B", "C"]}
-    x = Variable(
-        name="x", dims="i", description="Sector <dim:i> demand for good <dim:j>"
-    )
+    x = Variable(name="x", dims="i", description="Sector <dim:i> demand for good <dim:j>")
     vars = _expand_var_by_index(x, coords)
     assert len(vars) == len(coords["i"])
     for variable, coord in zip(vars, coords["i"]):
@@ -61,32 +60,20 @@ def test_pack_and_unpack_is_bijective():
 
     coords = {"i": ["A", "B", "C"], "j": ["Q", "R"]}
 
-    variable_array, param_array = variable_dict_to_flat_array(
-        data_dict, variables, parameters
-    )
+    variable_array, param_array = variable_dict_to_flat_array(data_dict, variables, parameters)
 
-    assert variable_array.shape[0] == sum(
-        np.prod(data_dict[x.name].shape) for x in variables
-    )
-    assert param_array.shape[0] == sum(
-        np.prod(data_dict[x.name].shape) for x in parameters
-    )
+    assert variable_array.shape[0] == sum(np.prod(data_dict[x.name].shape) for x in variables)
+    assert param_array.shape[0] == sum(np.prod(data_dict[x.name].shape) for x in parameters)
 
     data_dict_2 = flat_array_to_variable_dict(
         np.concatenate([variable_array, param_array]), variables + parameters, coords
     )
 
     assert all(
-        [
-            data_dict[x.name].shape == data_dict_2[x.name].shape
-            for x in variables + parameters
-        ]
+        [data_dict[x.name].shape == data_dict_2[x.name].shape for x in variables + parameters]
     )
     assert all(
-        [
-            np.allclose(data_dict[x.name], data_dict_2[x.name])
-            for x in variables + parameters
-        ]
+        [np.allclose(data_dict[x.name], data_dict_2[x.name]) for x in variables + parameters]
     )
 
 

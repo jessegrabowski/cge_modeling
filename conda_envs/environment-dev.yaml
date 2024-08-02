@@ -2,9 +2,9 @@ name: cge-dev
 channels:
   - conda-forge
 dependencies:
-  # Core dependencies
+  # Base dependencies
   - python=3.12
-  - jupyter<7
+  - jupyter
   - pip
   - numpy
   - scipy
@@ -35,11 +35,20 @@ dependencies:
 
 
   # For building docs
-  - sphinx>=5.1.0,<6
-  - sphinx_rtd_theme
-  - pygments
-  - pydot
   - ipython
+  - jupyter-sphinx
+  - myst-nb
+  - numpydoc
+  - pre-commit
+  - sphinx>=5
+  - sphinx-copybutton
+  - sphinx-design
+  - sphinx-notfound-page
+  - sphinx-sitemap
+  - sphinx-codeautolink
+  - sphinxcontrib-bibtex
+  - pydata-sphinx-theme
+  - watermark
 
   # developer tools
   - pre-commit

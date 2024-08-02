@@ -1,9 +1,11 @@
 import logging
+
 from typing import cast
 
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
+
 from pytensor.compile import Supervisor, mode
 from pytensor.compile.builders import OpFromGraph
 from pytensor.graph import FunctionGraph
@@ -28,12 +30,8 @@ _log = logging.getLogger(__name__)
 
 def pytensor_objects_from_CGEModel(cge_model):
     n_eq = len(cge_model.unpacked_variable_names)
-    variables = [
-        object_to_pytensor(var, cge_model.coords) for var in cge_model.variables
-    ]
-    parameters = [
-        object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters
-    ]
+    variables = [object_to_pytensor(var, cge_model.coords) for var in cge_model.variables]
+    parameters = [object_to_pytensor(param, cge_model.coords) for param in cge_model.parameters]
 
     cache = make_printer_cache(variables, parameters)
     unpacked_cache = {}
@@ -43,8 +41,7 @@ def pytensor_objects_from_CGEModel(cge_model):
         # This will be a flat list of equations with a unique variable for each unpacked object
         # We want to rewrite this graph so that it will accept the packed array inputs (held in the cache dictionary)
         pytensor_equations = [
-            as_tensor(eq, cache=unpacked_cache)
-            for eq in cge_model.unpacked_equation_symbols
+            as_tensor(eq, cache=unpacked_cache) for eq in cge_model.unpacked_equation_symbols
         ]
 
         # We need to replace the indexed variables with the unpacked variables
@@ -333,9 +330,7 @@ def euler_approximation(
 
     final_result = []
     for i, x in enumerate(x_list + theta_list):
-        x_with_initial = pt.concatenate(
-            [pt.atleast_Nd(x, n=result[i].ndim), result[i]], axis=0
-        )
+        x_with_initial = pt.concatenate([pt.atleast_Nd(x, n=result[i].ndim), result[i]], axis=0)
         final_result.append(x_with_initial)
 
     return theta_final, final_result
@@ -381,6 +376,7 @@ def pytensor_euler_step(system, A, B, variables, parameters):
 def jax_loss_grad_hessp(system, variables, parameters):
     import jax
     import jax.numpy as jnp
+
     from pytensor.link.jax.dispatch import jax_funcify
 
     loss = (system**2).sum()
@@ -425,6 +421,7 @@ def jax_loss_grad_hessp(system, variables, parameters):
 def jax_euler_step(system, variables, parameters):
     import jax
     import jax.numpy as jnp
+
     from pytensor.link.jax.dispatch import jax_funcify
 
     fgraph = FunctionGraph(inputs=variables + parameters, outputs=[system], clone=True)
@@ -485,12 +482,8 @@ def jax_euler_step(system, variables, parameters):
     return f_step
 
 
-def compile_euler_approximation_function(
-    A, B, variables, parameters, n_steps=100, mode=None
-):
-    theta_final, result = euler_approximation(
-        A, B, variables, parameters, n_steps=n_steps
-    )
+def compile_euler_approximation_function(A, B, variables, parameters, n_steps=100, mode=None):
+    theta_final, result = euler_approximation(A, B, variables, parameters, n_steps=n_steps)
     theta_final.name = "theta_final"
     inputs = variables + parameters + [theta_final]
 

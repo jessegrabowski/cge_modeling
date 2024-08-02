@@ -1,12 +1,13 @@
 import logging
-from functools import partial
 
 from collections.abc import Callable
+from functools import partial
 
 import numpy as np
 import pandas as pd
 import pytensor
 import pytensor.tensor as pt
+
 from scipy import optimize
 
 from cge_modeling.base.utilities import (
@@ -203,7 +204,7 @@ def balance_SAM(
         hess=objective.f_hess if use_hess else None,
         callback=objective.callback,
         hessp=f_jvp_ce,
-        constraints=[  # noqa
+        constraints=[
             {"type": "eq", "fun": f_1, "jac": f_1_grad},
             {"type": "eq", "fun": f_2, "jac": f_2_grad},
         ],
