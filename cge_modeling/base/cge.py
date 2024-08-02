@@ -765,7 +765,9 @@ class CGEModel:
             f_resid, f_grad, f_hess, f_hessp = None, None, None, None
 
             if mode == "JAX":
-                f_resid, f_grad, f_hessp = jax_loss_grad_hessp(system, variables, parameters)
+                f_resid, f_grad, f_hess, f_hessp = jax_loss_grad_hessp(
+                    system, variables, parameters
+                )
             else:
                 _log.info("Computing sum of squared errors")
                 resid = (system**2).mean()

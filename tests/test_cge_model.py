@@ -424,16 +424,20 @@ def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, da
     ],
     ids=["minimize", "root", "euler"],
 )
+@pytest.mark.parametrize("mode", ["FAST_RUN", "JAX"], ids=["FAST_RUN", "JAX"])
 def test_backends_agree(
     model_function: Callable,
     calibrate_model: Callable,
     data: dict,
     method: str,
     solver_kwargs: dict,
+    mode: str,
 ):
+    if mode in ["JAX"]:
+        pytest.importorskip(mode.lower())
     model_numba = model_function(backend="numba")
     model_pytensor = model_function(
-        backend="pytensor", mode="FAST_COMPILE", parse_equations_to_sympy=False
+        backend="pytensor", mode=mode, parse_equations_to_sympy=False
     )
 
     def solver_agreement_checks(results: list, names: list):
