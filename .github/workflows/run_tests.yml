@@ -11,13 +11,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
-        environment_file: ["cge_test", "cge_test_windows"]
-        exclude:
+        include:
           - os: ubuntu-latest
             python-version: "3.12"
             environment_file: cge_test
-
           - os: windows-latest
             python-version: "3.11"
             environment_file: cge_test_windows
