@@ -2,7 +2,7 @@ name: cge-modeling
 channels:
   - conda-forge
 dependencies:
-  # Core dependencies
+  # Base dependencies
   - python=3.12
   - pip
   - numpy
