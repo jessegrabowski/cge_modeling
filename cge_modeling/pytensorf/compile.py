@@ -472,10 +472,8 @@ def jax_euler_step(system, variables, parameters):
         step_size = (theta_final_vec - theta0_vec) / n_steps
 
         A = jax.jacobian(f_sys, 0)(x_vec, theta_vec)
-        A_inv = jax.scipy.linalg.solve(A, jnp.eye(A.shape[0]))
-
         _, Bv = jax.jvp(lambda theta: f_sys(x_vec, theta), (theta_vec,), (step_size,))
-        step = -A_inv @ Bv
+        step = -jax.scipy.linalg.solve(A, Bv)
 
         x_next_vec = x_vec + step
         theta_next_vec = theta_vec + step_size

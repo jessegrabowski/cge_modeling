@@ -13,10 +13,9 @@ def test_euler_approximation_1d():
     n_steps = pt.iscalar("n_steps")
 
     A = make_jacobian(eq, [y])
-    A_inv = 1 / A
     B = make_jacobian(eq, [x])
 
-    x0_final, result = euler_approximation(A_inv, B, variables=[y], parameters=[x], n_steps=n_steps)
+    x0_final, result = euler_approximation(A, B, variables=[y], parameters=[x], n_steps=n_steps)
     f = pytensor.function([x, y, x0_final, n_steps], result)
     y_values, x_values = f(0, 0, np.array([10.0]), 10_000)
     true = -np.cos(np.array([10])) + 1
