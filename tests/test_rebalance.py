@@ -13,9 +13,7 @@ def test_SAM_transformer():
     assert transformer.scale == 2
     assert np.all(
         transformer.negative_mask
-        == np.array(
-            [[False, False, False], [False, False, False], [False, True, False]]
-        )
+        == np.array([[False, False, False], [False, False, False], [False, True, False]])
     )
 
     transformed = transformer.transform(df)

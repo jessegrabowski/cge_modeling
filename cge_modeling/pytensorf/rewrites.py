@@ -15,7 +15,5 @@ def prod_to_no_zero_prod(fgraph, node):
     if isinstance(node.op, Prod) and not node.op.no_zeros_in_input:
         print("hi :)")
         (x,) = node.inputs
-        new_op = Prod(
-            dtype=node.op.dtype, acc_dtype=node.op.dtype, no_zeros_in_input=True
-        )
+        new_op = Prod(dtype=node.op.dtype, acc_dtype=node.op.dtype, no_zeros_in_input=True)
         return [new_op(x)]

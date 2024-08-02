@@ -13,23 +13,17 @@ def load_model_1(equation_mode: Literal["numba", "pytensor"] | None = None, **kw
         Variable(name="K_d", description="Capital demanded by firms"),
         # Household Variables
         Variable(name="C", description="Household consumption"),
-        Variable(
-            name="income", latex_name="Omega", description="Total household income"
-        ),
+        Variable(name="income", latex_name="Omega", description="Total household income"),
         # Prices
         Variable(name="r", description="Rental rate of capital"),
         Variable(name="P", description="Price level of the good"),
         # Other
-        Variable(
-            name="resid", latex_name=r"varepsilon", description="Walrasian residual"
-        ),
+        Variable(name="resid", latex_name=r"varepsilon", description="Walrasian residual"),
     ]
 
     param_info = [
         # Firm Parameters
-        Parameter(
-            name="alpha", description="Share of capital in the production process"
-        ),
+        Parameter(name="alpha", description="Share of capital in the production process"),
         Parameter(name="A", description="Total factor productivity"),
         # Exogenous variables
         Parameter(name="L_s", description="Exogenous household labor supply"),
@@ -91,9 +85,7 @@ def calibrate_model_1(L_s, K_s, P, r):
 model_1_data = {"L_s": 7000.0, "K_s": 4000.0, "P": 1.0, "r": 1.0}
 
 
-def expected_model_1_jacobian(
-    Y, L_d, K_d, C, income, r, P, resid, alpha, A, L_s, K_s, w
-):
+def expected_model_1_jacobian(Y, L_d, K_d, C, income, r, P, resid, alpha, A, L_s, K_s, w):
     d1_dL_d = -A * K_d**alpha * (1 - alpha) * L_d ** (-alpha)
     d1_dK_d = -A * alpha * K_d ** (alpha - 1) * L_d ** (1 - alpha)
 
@@ -155,12 +147,8 @@ def load_model_2(equation_mode: Literal["numba", "pytensor"] | None = None, **kw
         ),
         # Household Variables
         Variable(name="U", description="Household utility"),
-        Variable(
-            name="C", dims="i", description="Household consumption of good <dim:i>"
-        ),
-        Variable(
-            name="income", latex_name="Omega", description="Total household income"
-        ),
+        Variable(name="C", dims="i", description="Household consumption of good <dim:i>"),
+        Variable(name="income", latex_name="Omega", description="Total household income"),
         # Prices
         Variable(name="r", description="Rental rate of capital"),
         Variable(name="w", description="Wage level"),
@@ -182,9 +170,7 @@ def load_model_2(equation_mode: Literal["numba", "pytensor"] | None = None, **kw
             description="Price level of final goods in sector <dim:i>",
         ),
         # Other
-        Variable(
-            name="resid", latex_name=r"varepsilon", description="Walrasian residual"
-        ),
+        Variable(name="resid", latex_name=r"varepsilon", description="Walrasian residual"),
     ]
 
     param_info = [
@@ -242,12 +228,8 @@ def load_model_2(equation_mode: Literal["numba", "pytensor"] | None = None, **kw
     equations = [
         # # Firm Equations
         # Final Goods
-        Equation(
-            "Final good production of sector <dim:i>", "P * Y = P_VC * VC + P_VA * VA"
-        ),
-        Equation(
-            "Sector <dim:i> demand for intermediate goods bundle", "VC = psi_VC * Y"
-        ),
+        Equation("Final good production of sector <dim:i>", "P * Y = P_VC * VC + P_VA * VA"),
+        Equation("Sector <dim:i> demand for intermediate goods bundle", "VC = psi_VC * Y"),
         Equation("Sector <dim:i> demand for labor-capital", "VA = psi_VA * Y"),
         # Value chain bundle
         Equation(
@@ -259,9 +241,7 @@ def load_model_2(equation_mode: Literal["numba", "pytensor"] | None = None, **kw
         ),
         Equation(
             "Sector <dim:i> demand for sector <dim:j> intermediate input",
-            "X = psi_X * VC[None]"
-            if equation_mode == "pytensor"
-            else "X = psi_X * VC.subs({i:j})",
+            "X = psi_X * VC[None]" if equation_mode == "pytensor" else "X = psi_X * VC.subs({i:j})",
         ),
         # Value add bundle
         Equation(
@@ -307,9 +287,7 @@ def load_model_2(equation_mode: Literal["numba", "pytensor"] | None = None, **kw
         ),
         Equation(
             "Numeraire",
-            "P[0] = P_Ag_bar"
-            if equation_mode == "pytensor"
-            else "P.subs({i:0}) = P_Ag_bar",
+            "P[0] = P_Ag_bar" if equation_mode == "pytensor" else "P.subs({i:0}) = P_Ag_bar",
         ),
     ]
 
@@ -354,9 +332,7 @@ def calibrate_model_2(L_d, K_d, Y, X, P, P_VA, P_VC, r, w, phi_VA, P_Ag_bar):
     VA = (w * L_d + r * K_d) / P_VA
     VC = (P[:, None] * X).sum(axis=0) / P_VC
 
-    alpha = (
-        r * K_d ** (1 / phi_VA) / (r * K_d ** (1 / phi_VA) + w * L_d ** (1 / phi_VA))
-    )
+    alpha = r * K_d ** (1 / phi_VA) / (r * K_d ** (1 / phi_VA) + w * L_d ** (1 / phi_VA))
     A = VA * (alpha * K_d**rho_VA + (1 - alpha) * L_d**rho_VA) ** (-1 / rho_VA)
 
     psi_VA = VA / Y
@@ -387,9 +363,7 @@ def calibrate_model_2(L_d, K_d, Y, X, P, P_VA, P_VC, r, w, phi_VA, P_Ag_bar):
 model_2_data = {
     "L_d": np.array([1000.0, 2000.0, 4000.0]),
     "K_d": np.array([500.0, 2000.0, 500.0]),
-    "X": np.array(
-        [[1000.0, 1000.0, 1000.0], [2000.0, 3500.0, 3000.0], [500.0, 2500.0, 1000.0]]
-    ),
+    "X": np.array([[1000.0, 1000.0, 1000.0], [2000.0, 3500.0, 3000.0], [500.0, 2500.0, 1000.0]]),
     "Y": np.array([5000.0, 11000.0, 9500.0]),
     "phi_VA": np.array([3.0, 3.0, 3.0]),
     "P": np.array([1.0, 1.0, 1.0]),
@@ -488,20 +462,14 @@ def expected_model_2_jacobian(
     J[row_idx, VA_columns] = 1
     J[row_idx, K_d_columns] = (
         -A
-        * (
-            alpha * K_d ** ((phi_VA - 1) / phi_VA)
-            + (1 - alpha) * L_d ** ((phi_VA - 1) / phi_VA)
-        )
+        * (alpha * K_d ** ((phi_VA - 1) / phi_VA) + (1 - alpha) * L_d ** ((phi_VA - 1) / phi_VA))
         ** (1 / (phi_VA - 1))
         * alpha
         * K_d ** (-1 / phi_VA)
     )
     J[row_idx, L_d_columns] = (
         -A
-        * (
-            alpha * K_d ** ((phi_VA - 1) / phi_VA)
-            + (1 - alpha) * L_d ** ((phi_VA - 1) / phi_VA)
-        )
+        * (alpha * K_d ** ((phi_VA - 1) / phi_VA) + (1 - alpha) * L_d ** ((phi_VA - 1) / phi_VA))
         ** (1 / (phi_VA - 1))
         * (1 - alpha)
         * L_d ** (-1 / phi_VA)
@@ -515,14 +483,7 @@ def expected_model_2_jacobian(
         -VA / A * (alpha * P_VA * A / r) ** (phi_VA - 1) * alpha * A / r * phi_VA
     )
     J[row_idx, r_columns] = (
-        VA
-        / A
-        * (alpha * P_VA * A / r) ** (phi_VA - 1)
-        * alpha
-        * A
-        * phi_VA
-        * P_VA
-        / r**2
+        VA / A * (alpha * P_VA * A / r) ** (phi_VA - 1) * alpha * A * phi_VA * P_VA / r**2
     )
 
     # Equation 27-29: L_d = VA / A * ((1 - alpha) * A * P_VA / w) ** phi_VA
@@ -530,13 +491,7 @@ def expected_model_2_jacobian(
     J[row_idx, L_d_columns] = 1
     J[row_idx, VA_columns] = -1 / A * ((1 - alpha) * A * P_VA / w) ** phi_VA
     J[row_idx, P_VA_columns] = (
-        -VA
-        / A
-        * ((1 - alpha) * A * P_VA / w) ** (phi_VA - 1)
-        * (1 - alpha)
-        * A
-        / w
-        * phi_VA
+        -VA / A * ((1 - alpha) * A * P_VA / w) ** (phi_VA - 1) * (1 - alpha) * A / w * phi_VA
     )
     J[row_idx, w_columns] = (
         VA

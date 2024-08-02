@@ -42,10 +42,7 @@ def make_tokens_from_sheet_name(sheet, coords):
     if n_headers is None:
         return
     tokens = [
-        x.strip()
-        for token in sheet.split(",")
-        for x in token.split("by")
-        if len(x.strip()) > 0
+        x.strip() for token in sheet.split(",") for x in token.split("by") if len(x.strip()) > 0
     ]
     return tokens
 
@@ -88,9 +85,7 @@ def get_missing_indices(df, all_indices):
 
 
 def concatenate_group_stack(dfs):
-    all_indices = reduce(
-        lambda left, right: left.union(right), [set(x.index.names) for x in dfs]
-    )
+    all_indices = reduce(lambda left, right: left.union(right), [set(x.index.names) for x in dfs])
     missing_indices = [get_missing_indices(df, all_indices) for df in dfs]
 
     if all([len(x) == 0 for x in missing_indices]):

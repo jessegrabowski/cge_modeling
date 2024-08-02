@@ -1,10 +1,10 @@
+from collections.abc import Sequence
 from functools import reduce
 from itertools import product
 from typing import Any, Literal, cast
 
-from collections.abc import Sequence
-
 import sympy as sp
+
 from joblib import Parallel, delayed
 
 from cge_modeling.base.primitives import ModelObject
@@ -114,7 +114,7 @@ def make_indexed_name(obj: ModelObject, delimiter="_") -> str:
         The name of the object with the index values appended, separated by the delimiter.
     """
 
-    return "_".join([obj.name] + list(map(str, obj.dim_vals.values())))
+    return "_".join([obj.name, *list(map(str, obj.dim_vals.values()))])
 
 
 def indexed_variable_to_sympy_symbol(obj: ModelObject) -> sp.Symbol:
@@ -232,10 +232,7 @@ def info_to_symbols(var_info, assumptions):
     names, index_symbols = (list(t) for t in zip(*var_info))
     has_index = [len(idx) > 0 for idx in index_symbols]
 
-    base_vars = [
-        make_symbol(name, has_idx, assumptions)
-        for name, has_idx in zip(names, has_index)
-    ]
+    base_vars = [make_symbol(name, has_idx, assumptions) for name, has_idx in zip(names, has_index)]
 
     def inject_index(x, has_idx, idx):
         if not has_idx:
@@ -309,14 +306,9 @@ def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, Any]) -> sp.Expr:
     ):
         base, *idxs = indexed_expr.args
 
-        labels = [
-            coords[i.name] if i in used_idxs else [i] * len(coords[i.name])
-            for i in idxs
-        ]
+        labels = [coords[i.name] if i in used_idxs else [i] * len(coords[i.name]) for i in idxs]
         numeric_labels = [
-            range(len(coords[i.name]))
-            if i in used_indices
-            else [i] * len(coords[i.name])
+            range(len(coords[i.name])) if i in used_indices else [i] * len(coords[i.name])
             for i in idxs
         ]
 
@@ -338,9 +330,7 @@ def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, Any]) -> sp.Expr:
             expr, *index_infos = op.args
             used_indices = [info[0] for info in index_infos]
 
-            indexed_exprs = [
-                x for x in sp.preorder_traversal(expr) if isinstance(x, sp.Indexed)
-            ]
+            indexed_exprs = [x for x in sp.preorder_traversal(expr) if isinstance(x, sp.Indexed)]
 
             op_doit = op.doit()
             for var in indexed_exprs:
@@ -359,9 +349,7 @@ def substitute_reduce_ops(eq: sp.Expr, coords: dict[str, Any]) -> sp.Expr:
     return eq
 
 
-def _validate_dims(
-    obj: ModelObject, dims: list[str], on_unused_dim="raise"
-) -> list[str]:
+def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim="raise") -> list[str]:
     """
     Validate that the provided dims are associated with the provided object. If not, either raise an error or ignore
     the unused dims, based on the value of on_unused_dim.
@@ -499,7 +487,10 @@ def jacobian_as_dok_data(eqs: list[sp.Expr], variables: list[sp.Symbol]):
 
     Returns
     -------
-
+    shape: tuple
+        The shape of the jacobian matrix
+    dok: dict
+        A dictionary of non-zero elements of the jacobian matrix
     """
     dok = {}
     shape = (len(eqs), len(variables))

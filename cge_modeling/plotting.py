@@ -3,6 +3,7 @@ from typing import Literal, cast
 import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
+
 from matplotlib.colors import Colormap
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import PercentFormatter
@@ -16,15 +17,15 @@ def prepare_gridspec_figure(
     """
      Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
 
-     Parameters
-     ----------
+    Parameters
+    ----------
      n_cols : int
          The number of columns in the grid.
      n_plots : int
          The number of subplots in the grid.
 
-     Returns
-     -------
+    Returns
+    -------
      GridSpec
          A matplotlib GridSpec object representing the layout of the grid.
     list of tuple(slice, slice)
@@ -235,7 +236,7 @@ def plot_kateplot(
         The figure object containing the plot.
     """
     try:
-        import squarify  # noqa
+        import squarify
     except ImportError:
         raise ImportError(
             'Package "squarify" is required to make kateplots. '
@@ -257,35 +258,23 @@ def plot_kateplot(
 
     dims = [mod.get(var).dims for var in var_names]
     if not all([dim == dims[0] for dim in dims]):
-        raise ValueError(
-            "Not all variables have the same dimensions, cannot plot together"
-        )
+        raise ValueError("Not all variables have the same dimensions, cannot plot together")
 
     dims = list(dims[0])
 
     labels = [label for dim in dims for label in mod.coords[dim]]
     pretty_labels = [rename_dict.get(label, label) for label in labels]
     if len(pretty_labels) == 0:
-        raise ValueError(
-            "The selected variable is a scalar; cannot create an area plot."
-        )
+        raise ValueError("The selected variable is a scalar; cannot create an area plot.")
 
-    pre_data = np.concatenate(
-        [np.atleast_1d(initial_values[var]).ravel() for var in var_names]
-    )
+    pre_data = np.concatenate([np.atleast_1d(initial_values[var]).ravel() for var in var_names])
     if "optimizer" in idata:
         post_data = np.concatenate(
-            [
-                idata["optimizer"].isel(step=-1).variables[var].data.ravel()
-                for var in var_names
-            ]
+            [idata["optimizer"].isel(step=-1).variables[var].data.ravel() for var in var_names]
         )
     else:
         post_data = np.concatenate(
-            [
-                idata["euler"].isel(step=-1).variables[var].data.ravel()
-                for var in var_names
-            ]
+            [idata["euler"].isel(step=-1).variables[var].data.ravel() for var in var_names]
         )
 
     zero_mask = np.isclose(pre_data, 0) | np.isclose(post_data, 0)
@@ -357,9 +346,7 @@ def _plot_one_bar(
         data = data.to_dataarray().to_dataframe(name="data")
         data.index.name = "name"
         initial_data = (
-            initial_data.to_dataarray()
-            .to_dataframe(name="data")
-            .droplevel(level=drop_vars, axis=0)
+            initial_data.to_dataarray().to_dataframe(name="data").droplevel(level=drop_vars, axis=0)
         )
 
     if "step" in data.columns:
@@ -416,10 +403,7 @@ def plot_bar(
 ):
     data = None
     coords = coords if coords is not None else {}
-    coords = {
-        key: value if isinstance(value, list) else [value]
-        for key, value in coords.items()
-    }
+    coords = {key: value if isinstance(value, list) else [value] for key, value in coords.items()}
     drop_vars = [var for var in coords.keys() if len(coords[var]) == 1]
 
     if "optimizer" in idata:
@@ -496,9 +480,7 @@ def plot_bar(
         ]
         if not all([dim == var_dims[0] for dim in var_dims]):
             msg = "All variables must have the same dimensions to plot together. Found the following: \n"
-            msg += "\n".join(
-                f"{var_name}: {dim}" for var_name, dim in zip(var_names, var_dims)
-            )
+            msg += "\n".join(f"{var_name}: {dim}" for var_name, dim in zip(var_names, var_dims))
             msg += (
                 "\nUse the `coords` argument to select values for dimensions that are not shared across variables, "
                 "or set plot_together=False to plot separately."

@@ -1,5 +1,6 @@
 import re
 import time
+
 from abc import ABC
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -7,16 +8,14 @@ from datetime import datetime
 
 import pandas as pd
 import sympy as sp
+
 from sympy.abc import greeks
 from sympy.printing.latex import latex
 
-greeks = list(greeks) + ["varepsilon"]
+greeks = [*list(greeks), "varepsilon"]
 Greeks = [x.title() for x in greeks]
 GREEK_PATTERN = "|".join(
-    [
-        f"(((^{greek})|((?=[_^]){greek})|((?<=[_^]){greek})))"
-        for greek in greeks + Greeks
-    ]
+    [f"(((^{greek})|((?=[_^]){greek})|((?<=[_^]){greek})))" for greek in greeks + Greeks]
 )
 
 
@@ -25,7 +24,7 @@ def _pretty_print_dim_flags(s, dims, dim_vals):
         dim_val = dim_vals.get(dim, None)
         if dim_val is None:
             continue
-        pattern = f"<dim:{str(dim)}>"
+        pattern = f"<dim:{dim!s}>"
         s = re.sub(pattern, str(dim_val), s)
     return s
 
@@ -80,7 +79,7 @@ class ModelObject(ABC):
             return ()
 
         # Case 1: Index is empty (valid), or a tuple of strings (valid)
-        if isinstance(dims, (tuple, list)):
+        if isinstance(dims, tuple | list):
             if len(dims) == 0:
                 return dims
             # Convert to a tuple
@@ -88,9 +87,7 @@ class ModelObject(ABC):
             if all([isinstance(x, str) for x in dims]):
                 return dims
             else:
-                raise ValueError(
-                    f"dims must be a string or a tuple of strings, found {dims}"
-                )
+                raise ValueError(f"dims must be a string or a tuple of strings, found {dims}")
 
         # Case 2: Index is a single comma delimited string. Convert to a tuple
         elif isinstance(dims, str):
@@ -98,9 +95,7 @@ class ModelObject(ABC):
             return tuple(dim.strip() for dim in dims)
 
         else:
-            raise ValueError(
-                f"dims must be a string or a tuple of strings, found {dims}"
-            )
+            raise ValueError(f"dims must be a string or a tuple of strings, found {dims}")
 
     def _initialize_dim_vals(self):
         dims = self.dims
@@ -157,13 +152,9 @@ class ModelObject(ABC):
 
     def _initialize_description(self):
         if self.description is not None:
-            self.description = _pretty_print_dim_flags(
-                self.description, self.dims, self.dim_vals
-            )
+            self.description = _pretty_print_dim_flags(self.description, self.dims, self.dim_vals)
             return self.description
-        return (
-            f"{self._full_latex_name}, Positive = {self.positive}, Real = {self.real}"
-        )
+        return f"{self._full_latex_name}, Positive = {self.positive}, Real = {self.real}"
 
     def __getitem__(self, item: str):
         return getattr(self, item)
@@ -246,7 +237,7 @@ class _SympyEquation(Equation):
 
     def _repr_latex_(self):
         s = latex(self.symbolic_eq, mode="plain")
-        return "$\\displaystyle %s$" % s
+        return f"$\\displaystyle {s}$"
 
     def copy(self):
         return deepcopy(self)

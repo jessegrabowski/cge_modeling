@@ -57,9 +57,7 @@ def test_double_sum(op):
         j: sp.Idx(j) for j in ascii_lowercase[:4]
     }
     expected = sp.parse_expr(
-        operator.join(
-            f"x[{i}, {j}]" for j in ascii_lowercase[:4] for i in ascii_lowercase[:10]
-        ),
+        operator.join(f"x[{i}, {j}]" for j in ascii_lowercase[:4] for i in ascii_lowercase[:10]),
         transformations="all",
         local_dict={"x": x} | index_dict,
     )

@@ -1,4 +1,5 @@
 import numpy as np
+
 from scipy import stats
 
 from cge_modeling import Parameter, Variable
@@ -34,9 +35,7 @@ DISTRIBUTION_FACTORY = {
 }
 
 
-def generate_data(
-    objects: list[Variable | Parameter], coords: dict[str, list[str, ...]]
-):
+def generate_data(objects: list[Variable | Parameter], coords: dict[str, list[str, ...]]):
     data_dict = {}
     for obj in objects:
         if obj.name in DISTRIBUTION_FACTORY:

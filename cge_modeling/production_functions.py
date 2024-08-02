@@ -1,9 +1,9 @@
 import string
+
+from collections.abc import Sequence
 from itertools import combinations, product
 from string import Template
 from typing import Literal, cast
-
-from collections.abc import Sequence
 
 from cge_modeling.tools.pytensor_tools import at_least_list
 
@@ -16,9 +16,7 @@ def _check_pairwise_lengths_match(names, args):
     name_pairs = combinations(names, 2)
     for name_pair, arg_pair in zip(name_pairs, arg_pairs):
         if len(arg_pair[0]) != len(arg_pair[1]):
-            raise ValueError(
-                f"Lengths of {name_pair[0]} and {name_pair[1]} do not match"
-            )
+            raise ValueError(f"Lengths of {name_pair[0]} and {name_pair[1]} do not match")
 
 
 def unwrap_singleton_list(x):
@@ -77,14 +75,12 @@ def unpack_string_inputs(
         label_list = [x for x in labels]
 
         for i, input in enumerate(inputs):
-            outputs[i].append("_".join([input] + label_list))
+            outputs[i].append("_".join([input, *label_list]))
 
     return outputs
 
 
-def _add_second_alpha(
-    alpha: str | list[str, ...], factors: str | list[str, ...]
-) -> list[str, ...]:
+def _add_second_alpha(alpha: str | list[str, ...], factors: str | list[str, ...]) -> list[str, ...]:
     if not isinstance(factors, list) or len(factors) != 2:
         # If there are not exactly two factors, we don't need to add a second alpha. It will either be unpacked
         # later, or it will be an error.
@@ -171,9 +167,7 @@ def cobb_douglass(
     if not use_value_definition:
         production_inner_template = Template("$factor ** ($factor_share)")
         production_inner = [
-            production_inner_template.safe_substitute(
-                factor=factor, factor_share=factor_share
-            )
+            production_inner_template.safe_substitute(factor=factor, factor_share=factor_share)
             for factor, factor_share in zip(factors, factor_shares)
         ]
 
@@ -182,10 +176,7 @@ def cobb_douglass(
         ).safe_substitute(output=output, TFP=TFP)
     else:
         total_factor_value = " + ".join(
-            [
-                f"{factor_price} * {factor}"
-                for factor_price, factor in zip(factor_prices, factors)
-            ]
+            [f"{factor_price} * {factor}" for factor_price, factor in zip(factor_prices, factors)]
         )
         eq_production = Template(
             "$output * $output_price = $total_factor_value",
@@ -208,12 +199,10 @@ def cobb_douglass(
             factor_share=factor_share,
             TFP=TFP,
         )
-        for factor, factor_price, factor_share in zip(
-            factors, factor_prices, factor_shares
-        )
+        for factor, factor_price, factor_share in zip(factors, factor_prices, factor_shares)
     ]
 
-    return (eq_production,) + tuple(eq_fac_demands)
+    return (eq_production, *tuple(eq_fac_demands))
 
 
 def CES(
@@ -309,10 +298,7 @@ def CES(
         )
     else:
         total_factor_value = " + ".join(
-            [
-                f"{factor_price} * {factor}"
-                for factor_price, factor in zip(factor_prices, factors)
-            ]
+            [f"{factor_price} * {factor}" for factor_price, factor in zip(factor_prices, factors)]
         )
         eq_production = Template(
             "$output * $output_price = $total_factor_value",
@@ -342,12 +328,10 @@ def CES(
             TFP=TFP,
             epsilon=epsilon,
         )
-        for factor, factor_price, factor_share in zip(
-            factors, factor_prices, factor_shares
-        )
+        for factor, factor_price, factor_share in zip(factors, factor_prices, factor_shares)
     ]
 
-    return (eq_production,) + tuple(eq_fac_demands)
+    return (eq_production, *tuple(eq_fac_demands))
 
 
 def dixit_stiglitz(
@@ -456,9 +440,7 @@ def dixit_stiglitz(
     elif backend == "pytensor":
         rhs_str = "($kernel).sum() ** ($epsilon / ($epsilon - 1))"
     else:
-        raise ValueError(
-            f"backend must be one of 'numba' or 'pytensor', found {backend}"
-        )
+        raise ValueError(f"backend must be one of 'numba' or 'pytensor', found {backend}")
 
     if not use_value_definition:
         production_function = Template(f"$output = {TFP_str}{rhs_str}").safe_substitute(
@@ -507,17 +489,14 @@ def _1d_leontief(
     Helper function to generate Leontief production equaitons for the case where ndim == 1.
 
     """
-    zp_rhs = " + ".join(
-        [f"{price} * {factor}" for factor, price in zip(factors, factor_prices)]
-    )
+    zp_rhs = " + ".join([f"{price} * {factor}" for factor, price in zip(factors, factor_prices)])
     zero_profit = f"{output} = ({zp_rhs}) / ({output_price})"
 
     factor_demands = (
-        f"{factor} = {output} * {share}"
-        for factor, share in zip(factors, factor_shares)
+        f"{factor} = {output} * {share}" for factor, share in zip(factors, factor_shares)
     )
 
-    return (zero_profit,) + tuple(factor_demands)
+    return (zero_profit, *tuple(factor_demands))
 
 
 def _2d_leontief(
@@ -610,9 +589,7 @@ def _2d_leontief(
         factor_demands = f"{factors} = {factor_shares} * {output}[None]"
 
     else:
-        raise ValueError(
-            f"backend must be one of 'numba' or 'pytensor', found {backend}"
-        )
+        raise ValueError(f"backend must be one of 'numba' or 'pytensor', found {backend}")
 
     return zero_profit, factor_demands
 

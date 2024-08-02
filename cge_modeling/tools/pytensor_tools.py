@@ -4,6 +4,7 @@ import numpy as np
 import pytensor
 import pytensor.tensor as pt
 import sympy as sp
+
 from pytensor.compile.sharedvalue import SharedVariable
 from pytensor.graph import rewrite_graph
 from pytensor.graph.basic import graph_inputs
@@ -57,9 +58,7 @@ def object_to_pytensor(obj: Parameter | Variable, coords: dict[str, list[str, ..
     return pt.tensor(name, shape=shape)
 
 
-def make_printer_cache(
-    variables: list[pt.TensorLike], parameters: list[pt.TensorLike]
-) -> dict:
+def make_printer_cache(variables: list[pt.TensorLike], parameters: list[pt.TensorLike]) -> dict:
     """
     Create a cache of PyTensor functions for printing sympy equations to pytensor.
 
@@ -134,17 +133,13 @@ def unpacked_graph_to_packed_graph(
     unpacked_to_indexed_dict = {}
 
     for info, var in unpacked_cache.items():
-        name, *_ = (
-            info  # info is a tuple of (name, sympy_class, broadcastable, dtype, shape)
-        )
+        name, *_ = info  # info is a tuple of (name, sympy_class, broadcastable, dtype, shape)
         parent_obj = cge_model.get_unpacked_parent_object(name)
         parent_pt = pt_vars[cache_var_names.index(parent_obj.base_name)]
 
         # Map named indices to integer indices
         dims = parent_obj.dims
-        dim_idx = [
-            cge_model.coords[dim].index(parent_obj.dim_vals[dim]) for dim in dims
-        ]
+        dim_idx = [cge_model.coords[dim].index(parent_obj.dim_vals[dim]) for dim in dims]
 
         if len(dim_idx) == 0:
             unpacked_to_indexed_dict[var] = parent_pt
@@ -187,9 +182,7 @@ def make_jacobian_from_sympy(
         cge_model.symbolic_solution_matrices["B_matrix"] = jac
 
     unpacked_jac = as_tensor(jac, cache=unpacked_cache)
-    packed_jac = unpacked_graph_to_packed_graph(
-        unpacked_jac, cge_model, cache, unpacked_cache
-    )
+    packed_jac = unpacked_graph_to_packed_graph(unpacked_jac, cge_model, cache, unpacked_cache)
 
     return packed_jac
 
@@ -241,9 +234,7 @@ def make_jacobian(
 
     column_list = pytensor.gradient.jacobian(system, x)
 
-    jac = pt.concatenate(
-        [pt.atleast_2d(x).reshape((n_eq, -1)) for x in column_list], axis=-1
-    )
+    jac = pt.concatenate([pt.atleast_2d(x).reshape((n_eq, -1)) for x in column_list], axis=-1)
     jac = pt.specify_shape(jac, shape=(n_eq, n_vars))
 
     return jac

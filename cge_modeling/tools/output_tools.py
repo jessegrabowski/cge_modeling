@@ -1,5 +1,6 @@
 import re
 import warnings
+
 from collections import defaultdict
 from copy import deepcopy
 
@@ -7,6 +8,7 @@ import arviz as az
 import numpy as np
 import sympy as sp
 import xarray as xr
+
 from IPython.display import Latex, display
 from latextable import draw_latex
 from sympy.printing.latex import LatexPrinter
@@ -34,17 +36,12 @@ def get_n_descendents(node, total=0):
 def get_n_generations(node, total=0):
     if node.n_children == 0:
         return total
-    return int(node.n_children > 0) + sum(
-        get_n_generations(child, 0) for child in node.children
-    )
+    return int(node.n_children > 0) + sum(get_n_generations(child, 0) for child in node.children)
 
 
 def compute_padding(node):
     pad = max(0, node.n_descendents - 1)
-    pad -= sum(
-        max(0, descendent.n_descendents - 1)
-        for descendent in node.get_all_descendents()
-    )
+    pad -= sum(max(0, descendent.n_descendents - 1) for descendent in node.get_all_descendents())
 
     return pad
 
@@ -145,10 +142,10 @@ class Tree:
 
     def get_family_trees(self):
         roots = [node for node in self.nodes if node.parent is None]
-        return [Tree([root] + root.get_all_descendents()) for root in roots]
+        return [Tree([root, *root.get_all_descendents()]) for root in roots]
 
     def get_subtree(self, node):
-        family = [node] + node.get_all_descendents()
+        family = [node, *node.get_all_descendents()]
         return Tree(family)
 
     def split_tree(self, cut_level):
@@ -183,18 +180,14 @@ class Tree:
                     headings[level].extend([None] * n_leaves)
                 elif level == 0:
                     for node in family_level:
-                        headings[level].extend(
-                            [node.name] + [None] * compute_padding(node)
-                        )
+                        headings[level].extend([node.name] + [None] * compute_padding(node))
                 else:
                     for parent in parent_level:
                         if parent.n_children == 0:
                             headings[level].extend([None])
                         else:
                             for node in parent.children:
-                                headings[level].extend(
-                                    [node.name] + [None] * compute_padding(node)
-                                )
+                                headings[level].extend([node.name] + [None] * compute_padding(node))
         return list(headings.values())
 
 
@@ -241,14 +234,14 @@ def heading_to_latex(s):
 def parse_data(x):
     if isinstance(x, ModelObject):
         return x._full_latex_name
-    elif isinstance(x, (float, int)):
+    elif isinstance(x, float | int):
         return x
     elif isinstance(x, str):
         if x.isnumeric():
             return x
         else:
             return r"\text{" + x + "}"
-    elif isinstance(x, (sp.Eq, sp.Symbol, sp.Add, sp.Mul, sp.Expr)):
+    elif isinstance(x, sp.Eq | sp.Symbol | sp.Add | sp.Mul | sp.Expr):
         return LatexPrinter().doprint(x)
     else:
         raise ValueError(f"Unexpected type {type(x)} in table data")
@@ -258,8 +251,7 @@ def make_table(info_dict):
     tree = build_tree(info_dict)
     headings = tree.make_headings()
     headings = [
-        [heading_to_latex(s) if s is not None else "" for s in heading]
-        for heading in headings
+        [heading_to_latex(s) if s is not None else "" for s in heading] for heading in headings
     ]
 
     leaves = tree.get_leaves()
@@ -270,9 +262,7 @@ def make_table(info_dict):
     assert all([data_len == data_lens[0] for data_len in data_lens])
 
     n_data = data_lens[0]
-    data_rows = [
-        [parse_data(datas[i][row]) for i in range(n_cols)] for row in range(n_data)
-    ]
+    data_rows = [[parse_data(datas[i][row]) for i in range(n_cols)] for row in range(n_data)]
 
     equation_table = Texttable()
     equation_table.set_cols_align(["c"] * n_cols)
@@ -295,9 +285,7 @@ def make_summary_table(variables, values=None):
     summary_table.set_cols_valign(["m"] * (2 + int(values is not None)))
 
     if values is None:
-        data_rows = [
-            [d["latex_name"], "\\text{" + d["description"] + "}"] for d in variables
-        ]
+        data_rows = [[d["latex_name"], "\\text{" + d["description"] + "}"] for d in variables]
     else:
         data_rows = [
             [d["latex_name"], "\\text{" + d["description"] + "}", value]
@@ -378,16 +366,10 @@ def sub_info_dicts(info, sub_dict):
             latex_name_subbed = re.sub(
                 r"([\^_,{])" + str(idx), r"\g<1>" + str(value), latex_name_subbed
             )
-            latex_name_subbed = re.sub(
-                str(idx) + r"}", str(value) + "}", latex_name_subbed
-            )
+            latex_name_subbed = re.sub(str(idx) + r"}", str(value) + "}", latex_name_subbed)
 
-            description_subbed = re.sub(
-                f" {str(idx)}$", f" {str(value)}", description_subbed
-            )
-            description_subbed = re.sub(
-                f" {str(idx)} ", f" {str(value)} ", description_subbed
-            )
+            description_subbed = re.sub(f" {idx!s}$", f" {value!s}", description_subbed)
+            description_subbed = re.sub(f" {idx!s} ", f" {value!s} ", description_subbed)
 
         out.append(
             {
@@ -456,11 +438,10 @@ def list_of_array_to_idata(list_of_arrays: list, cge_model):
     coords.update({"step": range(len(list_of_arrays[0]))})
 
     xr_var_dict = {
-        obj.name: (("step",) + obj.dims, list_of_arrays[i])
-        for i, obj in enumerate(variables)
+        obj.name: (("step", *obj.dims), list_of_arrays[i]) for i, obj in enumerate(variables)
     }
     xr_param_dict = {
-        obj.name: (("step",) + obj.dims, list_of_arrays[i + n_variables])
+        obj.name: (("step", *obj.dims), list_of_arrays[i + n_variables])
         for i, obj in enumerate(parameters)
     }
 
@@ -484,7 +465,7 @@ def optimizer_result_to_idata(res, theta, initial_values, mod):
         warnings.simplefilter("ignore")
         optim_var_dict = {
             obj.name: (
-                ("step",) + obj.dims,
+                ("step", *obj.dims),
                 np.stack([initial_values[obj.name], result[obj.name]]),
             )
             for obj in mod.variables
@@ -492,7 +473,7 @@ def optimizer_result_to_idata(res, theta, initial_values, mod):
         # optim_param_dict = {obj.name: (obj.dims, result[obj.name]) for obj in mod.parameters}
         optim_param_dict = {
             obj.name: (
-                ("step",) + obj.dims,
+                ("step", *obj.dims),
                 np.stack([initial_values[obj.name], result[obj.name]]),
             )
             for obj in mod.parameters
