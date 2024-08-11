@@ -103,7 +103,6 @@ class CGEModel:
         apply_sympy_simplify: bool = False,
         backend: Literal["pytensor", "numba"] | None = "pytensor",
         mode: str | None = None,
-        inverse_method: str = "solve",
         use_sparse_matrices: bool = False,
         compile: list[CompiledFunctions] | None = "all",
         use_scan_euler: bool = False,
@@ -148,10 +147,6 @@ class CGEModel:
         mode: str, optional
             Compilation mode for the pytensor backend. One of None, "JAX", or "NUMBA". Defaults to None. Note that this
             argument is ignored if the backend is not "pytensor".
-
-        inverse_method: str, optional
-            Method to use to compute the inverse of the Jacobian matrix. One of "solve", "pinv", or "SGD".
-            Defaults to "solve". Ignored if the backend is not "pytensor".
 
         use_sparse_matrices: bool, optional
             Whether to use sparse matrices to represent matrices associated with the system (e.g. the Jacobian matrix).

@@ -359,7 +359,7 @@ def pytensor_euler_step(system, A, B, variables, parameters):
         v = flatten_equations(step_size)
         Bv = B @ v
 
-    step = pt.linalg.solve(-A, Bv)
+    step = -pt.linalg.solve(A, Bv)
     step.name = "euler_step"
 
     delta_x = flat_tensor_to_ragged_list(step, x_shapes)
