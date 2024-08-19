@@ -412,17 +412,27 @@ def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, da
                 "method": "trust-exact",
                 "use_hess": True,
                 "use_hessp": False,
-                "niter": 10_000,
+                "maxiter": 10_000,
+                "tol": 1e-16,
+            },
+        ),
+        (
+            "_solve_with_minimize",
+            {
+                "method": "trust-ncg",
+                "use_hess": False,
+                "use_hessp": True,
+                "maxiter": 10_000,
                 "tol": 1e-16,
             },
         ),
         (
             "_solve_with_root",
-            {"method": "hybr", "use_jac": True, "niter": 10_000, "tol": 1e-16},
+            {"method": "hybr", "use_jac": True, "maxiter": 10_000, "tol": 1e-16},
         ),
         ("_solve_with_euler_approximation", {"n_steps": 500}),
     ],
-    ids=["minimize", "root", "euler"],
+    ids=["minimize_hess", "minimize_hessp", "root", "euler"],
 )
 @pytest.mark.parametrize("mode", ["FAST_RUN", "JAX"], ids=["FAST_RUN", "JAX"])
 def test_backends_agree(
@@ -441,7 +451,9 @@ def test_backends_agree(
     def solver_agreement_checks(results: list, names: list):
         for res, name in zip(results, names):
             if hasattr(res, "success"):
-                assert res.success or res.fun < 1e-8, f"{name} solver failed to converge"
+                assert res.success or np.allclose(
+                    res.fun, 0.0, rtol=1e-8, atol=1e-8
+                ), f"{name} solver failed to converge"
             if hasattr(res, "x"):
                 assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
                 assert np.all(np.isfinite(res.x)), f"{name} solver returned Infs"
