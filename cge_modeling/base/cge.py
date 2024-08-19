@@ -20,10 +20,11 @@ import sympy as sp
 import xarray as xr
 
 from arviz import InferenceData
+from better_optimize import minimize, root
+from better_optimize.constants import minimize_method
 from cloudpickle import cloudpickle
 from fastprogress import progress_bar
 from numba_progress import ProgressBar as NumbaProgressBar
-from scipy import optimize
 from scipy.optimize import OptimizeResult
 
 from cge_modeling.base.primitives import (
@@ -34,12 +35,11 @@ from cge_modeling.base.primitives import (
     _SympyEquation,
 )
 from cge_modeling.base.utilities import (
-    CostFuncWrapper,
-    _optimzer_early_stopping_wrapper,
     _replace_dim_marker_with_dim_name,
     _validate_input,
     ensure_input_is_sequence,
     flat_array_to_variable_dict,
+    get_method_defaults,
     infer_object_shape_from_coords,
     unpack_equation_strings,
     variable_dict_to_flat_array,
@@ -684,16 +684,29 @@ class CGEModel:
             resid = sum(eq**2 for eq in equations)
             grad = sp.Matrix([resid.diff(x) for x in variables])
             hess = grad.jacobian(variables)
+            p = sp.IndexedBase("hess_point", shape=self.n_variables)
+
+            hessp = [
+                sum([hess[i, j] * p[j] for j in range(self.n_variables)])
+                for i in range(self.n_variables)
+            ]
 
             self.symbolic_solution_matrices["loss_function"] = resid
             self.symbolic_solution_matrices["gradient"] = grad
             self.symbolic_solution_matrices["hessian"] = hess
+            self.symbolic_solution_matrices["hessp"] = hessp
 
             # Functions used by optimize.minimize to solve the system of equations by minimizing the loss function
             # Save these as member functions so they can be reused by optimizers
             self.f_resid = numba_lambdify(variables, resid, parameters)
             self.f_grad = numba_lambdify(variables, grad, parameters, ravel_outputs=True)
             self.f_hess = numba_lambdify(variables, hess, parameters)
+            _f_hessp = numba_lambdify([*variables, p], hessp, parameters)
+
+            def f_hessp(x, p, parameters):
+                return np.r_[_f_hessp([*x.tolist(), p], parameters)].ravel()
+
+            self.f_hessp = f_hessp
 
         if "euler" in functions_to_compile:
             # Compile the one-step linear approximation function used by the iterative Euler approximation
@@ -749,16 +762,10 @@ class CGEModel:
                     [x] = _f_jac.vm.jit_fn(*args, **kwargs)
                     return np.asarray(x)
 
-                self.f_system = f_system
-                self.f_jac = f_jac
-
-            else:
-                self.f_system = f_system
-                self.f_jac = f_jac
+            self.f_system = f_system
+            self.f_jac = f_jac
 
         if "minimize" in functions_to_compile:
-            f_resid, f_grad, f_hess, f_hessp = None, None, None, None
-
             if mode == "JAX":
                 f_resid, f_grad, f_hess, f_hessp = jax_loss_grad_hessp(
                     system, variables, parameters
@@ -777,24 +784,13 @@ class CGEModel:
 
                 # View grad as the function, compute jvp instead  (hessp)
                 # _log.info("Computing SSE Jacobian")
-                # hessp, p = make_jacobian(grad, variables, return_jvp=True)
+
+                hessp, p = make_jacobian(grad, variables, return_jvp=True)
                 hess = make_jacobian(grad, variables)
 
                 _log.info(
                     f"Compiling SSE functions (sse, gradient, jacobian) into {text_mode} function"
                 )
-
-                # f_resid_grad_hess = pytensor.function(inputs=inputs, outputs=[resid, grad, hess], mode=mode)
-                # f_resid_grad_hess.trust_inputs = True
-                #
-                # def f_resid(*args, **kwargs):
-                #     return f_resid_grad_hess(*args, **kwargs)[0]
-                #
-                # def f_grad(*args, **kwargs):
-                #     return f_resid_grad_hess(*args, **kwargs)[1]
-                #
-                # def f_hess(*args, **kwargs):
-                #     return f_resid_grad_hess(*args, **kwargs)[2]
 
                 f_resid = pytensor.function(inputs=inputs, outputs=resid, mode=mode)
                 f_resid.trust_inputs = True
@@ -802,20 +798,16 @@ class CGEModel:
                 f_grad = pytensor.function(inputs=inputs, outputs=grad, mode=mode)
                 f_grad.trust_inputs = True
 
-                # f_hessp = pytensor.function(inputs=inputs, outputs=hessp, mode=mode)
-                # f_hessp.trust_inputs = True
-
                 f_hess = pytensor.function(inputs=inputs, outputs=hess, mode=mode)
                 f_hess.trust_inputs = True
 
-                # f_resid_grad = pytensor.function(inputs=inputs, outputs=[resid, grad], mode=mode)
-                # f_resid_grad.trust_inputs = True
+                f_hessp = pytensor.function(inputs=[*inputs, p], outputs=hessp, mode=mode)
+                f_hessp.trust_inputs = True
 
             self.f_resid = f_resid
             self.f_grad = f_grad
             self.f_hess = f_hess
             self.f_hessp = f_hessp
-            # self.f_resid_grad = f_resid_grad
 
         if "euler" in functions_to_compile:
             _log.info("Compiling euler approximation function")
@@ -1103,6 +1095,7 @@ class CGEModel:
         use_jac=True,
         fixed_values=None,
         progressbar=True,
+        verbose: bool = True,
         **optimizer_kwargs,
     ):
         f_system = self.f_system
@@ -1110,8 +1103,6 @@ class CGEModel:
         free_variables = self.variables
 
         use_hess = optimizer_kwargs.pop("use_hess", None)
-        method = optimizer_kwargs.pop("method", "hybr")
-        tol = optimizer_kwargs.pop("tol", 1e-6)
         _ = optimizer_kwargs.pop("use_hessp", None)
 
         if use_hess:
@@ -1140,27 +1131,17 @@ class CGEModel:
             f_jac = wrap_pytensor_func_for_scipy(f_jac, free_variables, parameters, coords)
 
         x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
-        maxeval = optimizer_kwargs.pop("niter", 5000)
-        objective = CostFuncWrapper(
-            maxeval=maxeval,
-            f=f_system,
-            args=theta_final,
-            f_jac=f_jac if use_jac else None,
-            progressbar=progressbar,
-            tol=tol,
-            backend=self._compile_backend,
-        )
 
-        f_optim = ft.partial(
-            optimize.root,
-            objective,
+        res = root(
+            f=f_system,
             x0=x0,
-            method=method,
-            jac=use_jac or None,
-            # callback=objective.callback, # Callbacks don't work with root
+            args=(theta_final,),
+            jac=f_jac if use_jac else None,
+            progressbar=progressbar,
+            verbose=verbose,
             **optimizer_kwargs,
         )
-        res = _optimzer_early_stopping_wrapper(f_optim)
+
         return res
 
     def _solve_with_minimize(
@@ -1171,11 +1152,16 @@ class CGEModel:
         use_hess: bool = False,
         use_hessp: bool = True,
         progressbar: bool = True,
-        fixed_values: dict[str, int | float | np.ndarray] | None = None,
+        verbose: bool = True,
         **optimizer_kwargs,
     ):
         if "minimize" not in self._compiled:
             raise ValueError("Minimization functions have not been compiled.")
+
+        method: minimize_method = optimizer_kwargs.pop("method", "trust-ncg")
+        use_jac, use_hess, use_hessp = get_method_defaults(use_jac, use_hess, use_hessp, method)
+
+        print(use_jac, use_hess, use_hessp)
 
         f_resid = self.f_resid
         f_grad = self.f_grad
@@ -1183,22 +1169,11 @@ class CGEModel:
         f_hessp = self.f_hessp
         free_variables = self.variables
 
+        print(f_hessp)
+
         if not use_jac and use_hess:
             use_hess = False
             _log.warning("use_hess is ignored when use_jac=False. Setting use_hess=False.")
-
-        if fixed_values is not None:
-            if any(x in self.parameter_names for x in fixed_values.keys()):
-                raise ValueError(
-                    "The following parameters were requested to be fixed via the fixed_values argument, "
-                    "but parameters are always fixed and should not be included in the fixed_values dict: "
-                    f"{[x for x in fixed_values.keys() if x in self.parameter_names]}"
-                )
-
-            free_variables = [x for x in self.variables if x.name not in fixed_values]
-            f_resid = wrap_fixed_values(f_resid, fixed_values, self.variables, self.coords)
-            f_grad = wrap_fixed_values(f_grad, fixed_values, self.variables, self.coords)
-            f_hess = wrap_fixed_values(f_hess, fixed_values, self.variables, self.coords)
 
         if self._compile_backend == "pytensor" and self.mode != "JAX":
             parameters = self.parameters
@@ -1207,34 +1182,24 @@ class CGEModel:
             f_resid = wrap_pytensor_func_for_scipy(f_resid, free_variables, parameters, coords)
             f_grad = wrap_pytensor_func_for_scipy(f_grad, free_variables, parameters, coords)
             f_hess = wrap_pytensor_func_for_scipy(f_hess, free_variables, parameters, coords)
+            f_hessp = wrap_pytensor_func_for_scipy(
+                f_hessp, free_variables, parameters, coords, include_p=True
+            )
 
         x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
-        maxeval = optimizer_kwargs.pop("niter", 5000)
-        tol = optimizer_kwargs.pop("tol", 1e-6)
 
-        objective = CostFuncWrapper(
-            maxeval=maxeval,
+        res = minimize(
             f=f_resid,
-            args=theta_final,
-            f_jac=f_grad if use_jac else None,
-            f_hess=f_hess if use_hess else None,
+            x0=x0,
+            args=(theta_final,),
+            jac=f_grad if use_jac else None,
+            hess=f_hess if use_hess else None,
+            hessp=f_hessp if use_hessp else None,
             progressbar=progressbar,
-            tol=tol,
-            backend=self._compile_backend,
-        )
-
-        f_optim = ft.partial(
-            optimize.minimize,
-            objective,
-            x0,
-            jac=use_jac or None,
-            hess=objective.f_hess if use_hess else None,
-            hessp=None if not use_hessp else lambda x, p: f_hessp(x, p, theta_final),
-            callback=objective.callback,
+            verbose=verbose,
+            method=method,
             **optimizer_kwargs,
         )
-
-        res = _optimzer_early_stopping_wrapper(f_optim)
         return res
 
     def generate_SAM(

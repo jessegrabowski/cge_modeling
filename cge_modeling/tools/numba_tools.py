@@ -10,6 +10,9 @@ from sympy.printing.numpy import NumPyPrinter, _known_functions_numpy
 
 _known_functions_numpy.update({"DiracDelta": lambda x: 0.0, "log": "log"})
 
+FLOAT_INDEX_PATTERN = re.compile(r"(\w+)\[(\d+)\.0\]")
+ZERO_PATTERN = re.compile(r"(?<![\.\w])0([ ,\]])")
+
 
 class NumbaFriendlyNumPyPrinter(NumPyPrinter):
     _kf = _known_functions_numpy
@@ -99,7 +102,6 @@ def numba_lambdify(
     -----
     The function returned by this function is pickleable.
     """
-    ZERO_PATTERN = re.compile(r"(?<![\.\w])0([ ,\]])")
     FLOAT_SUBS = {
         sp.core.numbers.One(): sp.Float(1),
         sp.core.numbers.NegativeOne(): sp.Float(-1),
@@ -176,6 +178,11 @@ def numba_lambdify(
 
             # Handle conversion of 0 to 0.0
             code = re.sub(ZERO_PATTERN, r"0.0\g<1>", code)
+
+            # Its possible there were indexed values like x[0], which were rewritten to x[0.0], creating invalid code.
+            # For these, we need to undo the int to float rewrites
+            code = re.sub(FLOAT_INDEX_PATTERN, r"\1[\2]", code)
+
             code_name = f"retval_{i}"
             retvals.append(code_name)
             code = f"    {code_name} = np.array(\n{code}\n    )"
@@ -205,7 +212,10 @@ def numba_lambdify(
     assignments = "\n".join(
         [f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}" for x, y in sub_dict]
     )
+    assignments = re.sub(FLOAT_INDEX_PATTERN, r"\1[\2]", assignments)
+
     returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
+    returns = re.sub(FLOAT_INDEX_PATTERN, r"\1[\2]", returns)
     full_code = f"{decorator}\ndef f({input_signature}):\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"
 
     docstring = f"'''Automatically generated code:\n{full_code}'''"
