@@ -118,7 +118,6 @@ def compile_cge_model_to_pytensor(
     ) = pytensor_objects_from_CGEModel(cge_model)
     cache, unpacked_cache = sympy_to_pytensor_caches
 
-    # n_eq = flat_equations.type.shape[0]
     inputs = (variables, parameters)
 
     if not all([x in cache.values() for x in inputs[0] + inputs[1]]):
@@ -171,23 +170,6 @@ def compile_cge_model_to_pytensor(
 
     jac.name = "jacobian"
     B.name = "B"
-
-    # _log.info("Inverting jacobian")
-    # if inverse_method == "pinv":
-    #     jac_inv = pt.linalg.pinv(jac)
-    # elif inverse_method == "solve":
-    #     jac_inv = pt.linalg.solve(jac, pt.eye(jac.shape[0]), check_finite=False)
-    # elif inverse_method == "svd":
-    #     U, S, V = pt.linalg.svd(jac)
-    #     S_inv = pt.where(pt.gt(S, 1e-8), 1 / S, 0)
-    #     jac_inv = V @ pt.diag(S_inv) @ U.T
-    # else:
-    #     raise ValueError(
-    #         f'Invalid inverse method {inverse_method}, expected one of "pinv", "solve", "svd"'
-    #     )
-
-    # jac_inv = pt.specify_shape(jac_inv, (n_eq, n_eq))
-    # jac_inv.name = "inverse_jacobian"
 
     outputs = (flat_equations, jac, B)
 
