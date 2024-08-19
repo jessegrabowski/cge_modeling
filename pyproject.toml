@@ -1,3 +1,56 @@
+[project]
+name = "cge_modeling"
+dynamic = ['version']
+requires-python = ">=3.10, <3.13"
+authors = [{name="Jesse Grabowski", email='jessegrabowski@gmail.com'}]
+description = "Computable general equlibrium models and policy simulation via autodiff with Pytensor"
+readme = 'README.md'
+license = { file = 'LICENSE.txt'}
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python",
+  "Topic :: Scientific/Engineering :: Economics",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX",
+  "Operating System :: Unix",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+keywords = [
+    "computable general equlibrium",
+    "partial general equlibrium",
+    "economics",
+    "macroeconomics",
+    "numerical",
+    "simulation",
+    "autodiff",
+
+]
+
+dependencies = [
+ "setuptools",
+ "numba",
+ "numpy<2",
+ "sympy<1.13",
+ "scipy<1.14",
+ "pandas",
+ "joblib",
+ "pytensor",
+ "latextable",
+ "texttable",
+ "sympytensor",
+ "xarray",
+ "arviz",
+ "fastprogress",
+ "numba-progress",
+ "matplotlib"
+  ]
+
 [tool.pytest.ini_options]
 minversion = "6.0"
 xfail_strict = true
