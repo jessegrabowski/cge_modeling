@@ -191,7 +191,6 @@ def make_jacobian(
     system: pt.TensorLike,
     x: list[pt.TensorLike],
     return_jvp: bool = False,
-    p: None | pt.TensorVariable = None,
 ) -> pt.TensorVariable | tuple[pt.TensorVariable, pt.TensorVariable]:
     """
     Make a Jacobian matrix from a system of equations and a list of variables.
@@ -204,15 +203,12 @@ def make_jacobian(
         A list of variables
     return_jvp: bool
         If true, compute only a jacobian-vector product with respect to an arbitray vectory p
-    p: TensorVariable, optional
-        Symbolic variable used in the computation of the JVP. Ignored if return_jvp is False. If None, a variable will
-        be created.
 
     Returns
     -------
     jac: pytensor.tensor.TensorVariable
         The Jacobian matrix of the system of equations with respect to the variables
-    p: pytensor.tensor.TensorVariable
+    p: list of pytensor.tensor.TensorVariable
         The symbolic variable used in the computation of the JVP. Only returned if return_jvp is True.
 
     Notes
@@ -227,10 +223,15 @@ def make_jacobian(
     rewrite_pregrad(system)
 
     if return_jvp:
-        if p is None:
-            p = [var.clone(name=f"{var.name}_point") for var in x]
-        jvp = pytensor.gradient.Rop(system, x, p)
-        return jvp, p
+        p_vars = [var.type(name=f"{var.name}_point") for var in x]
+        p = pt.concatenate([v.ravel() for v in p_vars], axis=0)
+
+        # Assume system is itself the gradient of a loss function
+        jvp_chunks = pt.grad(pt.sum(system * p), x)
+        jvp = pt.concatenate([x.ravel() for x in jvp_chunks], axis=-1)
+        jvp = pt.specify_shape(jvp, shape=(n_eq,))
+
+        return jvp, p_vars
 
     column_list = pytensor.gradient.jacobian(system, x)
 

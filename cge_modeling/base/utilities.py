@@ -1,14 +1,14 @@
 import functools as ft
 import re
-import sys
 
 from collections.abc import Callable, Sequence
 from itertools import product
 from typing import Any, cast
 
 import numpy as np
+import pytensor.compile.function.types
 
-from fastprogress.fastprogress import ProgressBar, progress_bar
+from better_optimize.constants import MINIMIZE_MODE_KWARGS
 
 from cge_modeling.base.primitives import (
     Equation,
@@ -446,10 +446,11 @@ def wrap_fixed_values(
 
 
 def wrap_pytensor_func_for_scipy(
-    f: Callable,
+    f: pytensor.compile.function.types.Function,
     variable_list: list[Variable],
     parameter_list: list[Parameter],
     coords: dict[str, list[str | int, ...]],
+    include_p: bool = False,
 ) -> Callable:
     """
     Wrap a PyTensor function for use with scipy.optimize.root or scipy.optimize.minimize.
@@ -466,6 +467,8 @@ def wrap_pytensor_func_for_scipy(
         List of model parameters
     coords: dict[str, list[str, ...]]
         Dictionary of coordinates mapping dimension names to lists of labels associated with that dimension.
+    include_p: bool
+        If true, a 3rd argument is included in the inner function (useful
 
     Returns
     -------
@@ -474,13 +477,29 @@ def wrap_pytensor_func_for_scipy(
         long vector of parameters as second input. The wrapped function will unpack these vectors into a dictionary of
         variables and parameters, and then unpack that dictionary into keyword arguments to the original function.
     """
+    if not include_p:
 
-    @ft.wraps(f)
-    def inner_f(x0, theta):
-        # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
-        inputs = np.r_[x0, theta]
-        data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
-        return f(**data)
+        @ft.wraps(f)
+        def inner_f(x0, theta):
+            # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
+            inputs = np.r_[x0, theta]
+            data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
+            return f(**data)
+
+    else:
+
+        @ft.wraps(f)
+        def inner_f(x0, p, theta):
+            # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
+            inputs = np.r_[x0, theta]
+
+            data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
+            point_dict = flat_array_to_variable_dict(p, variable_list, coords)
+
+            point_dict = {f"{name}_point": point for name, point in point_dict.items()}
+            data.update(point_dict)
+
+            return f(**data)
 
     return inner_f
 
@@ -508,150 +527,12 @@ def flat_mask_from_param_names(param_dict, names):
     return mask
 
 
-def _optimzer_early_stopping_wrapper(f_optim):
-    objective: CostFuncWrapper = f_optim.args[0]
-    progressbar = objective.progressbar
+def get_method_defaults(use_grad, use_hess, use_hessp, method):
+    use_grad, use_hess, use_hessp = (
+        MINIMIZE_MODE_KWARGS[method][f"uses_{name}"] if arg is None else arg
+        for name, arg in zip(["grad", "hess", "hessp"], [use_grad, use_hess, use_hessp])
+    )
+    if use_hess and use_hessp:
+        use_hess = False
 
-    res = f_optim()
-    res.args = objective.args
-    total_iters = objective.n_eval
-
-    if progressbar:
-        out = objective.step(res.x)
-
-        if not isinstance(out, tuple):
-            out = (out,)
-        if objective.use_hess:
-            out += (objective.f_hess(res.x),)
-
-        objective.update_progress_desc(*out)
-        objective.progress.total = total_iters
-        objective.progress.update(total_iters)
-
-        print(file=sys.stdout)
-
-    return res
-
-
-class CostFuncWrapper:
-    def __init__(
-        self,
-        f: Callable,
-        args: tuple | None,
-        f_jac: Callable | None = None,
-        f_hess: Callable | None = None,
-        maxeval: int = 5000,
-        tol: float = 1e-6,
-        progressbar: bool = True,
-        update_every: int = 10,
-        backend="numba",
-    ):
-        kwargs = dict(theta=args) if backend == "pytensor" else dict(endog_inputs=args)
-
-        self.n_eval = 0
-        self.maxeval = maxeval
-        self.tol = tol
-        self.f = f if args is None else ft.partial(f, **kwargs)
-        self.args = args
-
-        self.use_jac = False
-        self.use_hess = False
-        self.update_every = update_every
-        self.interrupted = False
-        self.desc = "f = {:,.5g}"
-
-        if f_jac is not None:
-            self.desc += ", ||grad|| = {:,.5g}"
-            self.use_jac = True
-            self.f_jac = f_jac if args is None else ft.partial(f_jac, **kwargs)
-
-        if f_hess is not None:
-            self.desc += ", ||hess|| = {:,.5g}"
-            self.use_hess = True
-            self.f_hess = f_hess if args is None else ft.partial(f_hess, **kwargs)
-
-        self.previous_x = None
-        self.progressbar = progressbar
-        self.progress = None
-
-        if progressbar:
-            self.progress = progress_bar(range(maxeval), total=maxeval, display=progressbar)
-            self.progress.update(0)
-
-    def step(self, x):
-        grad = None
-        hess = None
-        value = self.f(x)
-
-        if self.use_jac:
-            grad = self.f_jac(x)
-            if self.use_hess:
-                hess = self.f_hess(x)
-            if np.all(np.isfinite(x)):
-                self.previous_x = x
-        else:
-            self.previous_x = x
-
-        if self.n_eval % self.update_every == 0:
-            self.update_progress_desc(value, grad, hess)
-
-        if self.n_eval > self.maxeval:
-            self.update_progress_desc(value, grad, hess)
-            self.interrupted = True
-            if self.use_jac:
-                return value, grad
-            return np.array(value)
-
-        self.n_eval += 1
-        if self.progressbar:
-            assert isinstance(self.progress, ProgressBar)
-            self.progress.update_bar(self.n_eval)
-
-        if self.use_jac:
-            if self.use_hess:
-                return value, grad  # , hess
-            else:
-                return value, grad
-        else:
-            return np.array(value)
-
-    def __call__(self, x):
-        try:
-            new_x = self.step(x)
-            value = np.array(new_x[0]) if isinstance(new_x, tuple) else np.array(new_x)
-            self.interrupted = (self.n_eval > self.maxeval) or (value < self.tol)
-            return new_x
-
-        except (KeyboardInterrupt, StopIteration):
-            self.interrupted = True
-            # Call step again so there's a chance for the callback to trigger before we just raise StopIteration
-            # In optimize.minimize, this lets us break out and keep the optimizer state
-            return self.step(x)
-
-    def callback(self, x):
-        if self.interrupted:
-            raise StopIteration
-
-    def update_progress_desc(
-        self,
-        value: float,
-        grad: np.ndarray | None = None,
-        hess: np.ndarray | None = None,
-    ) -> None:
-        if not self.progressbar:
-            return
-
-        value = np.array(value)
-        if value.shape != ():
-            value = (value**2).sum() / min(1, int(np.prod(value.shape)))
-
-        if grad is None:
-            self.progress.comment = self.desc.format(value)
-        else:
-            if hess is None:
-                norm_grad = np.linalg.norm(grad)
-                self.progress.comment = self.desc.format(value, norm_grad)
-            else:
-                norm_grad = np.linalg.norm(grad)
-                norm_hess = np.linalg.norm(hess)
-                self.progress.comment = self.desc.format(value, norm_grad, norm_hess)
+    return use_grad, use_hess, use_hessp

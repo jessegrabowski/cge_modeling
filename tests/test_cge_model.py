@@ -520,13 +520,22 @@ def test_generate_SAM():
         "K_s": 5000,
         "w": 1.0,
     }
-    initial_guess = {"C": 10000, "Y": 10000, "income": 10000, "K_d": 5000, "L_d": 1000}
+    initial_guess = {
+        "C": 10000,
+        "Y": 10000,
+        "income": 10000,
+        "K_d": 5000,
+        "L_d": 1000,
+        "r": 1.0,
+        "P": 1.0,
+        "resid": 0.0,
+    }
+    # fixed_values = {"r": 1.0, "P": 1.0, "resid": 0.0}
 
-    fixed_values = {"r": 1.0, "P": 1.0, "resid": 0.0}
     mod.generate_SAM(
         param_dict=param_dict,
         initial_variable_guess=initial_guess,
-        fixed_values=fixed_values,
+        # fixed_values=fixed_values,
         solve_method="minimize",
         method="nelder-mead",
         use_jac=False,

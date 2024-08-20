@@ -21,7 +21,7 @@ import xarray as xr
 
 from arviz import InferenceData
 from better_optimize import minimize, root
-from better_optimize.constants import minimize_method
+from better_optimize.constants import minimize_method, root_method
 from cloudpickle import cloudpickle
 from fastprogress import progress_bar
 from numba_progress import ProgressBar as NumbaProgressBar
@@ -785,7 +785,7 @@ class CGEModel:
                 # View grad as the function, compute jvp instead  (hessp)
                 # _log.info("Computing SSE Jacobian")
 
-                hessp, p = make_jacobian(grad, variables, return_jvp=True)
+                hessp, p_vars = make_jacobian(grad, variables, return_jvp=True)
                 hess = make_jacobian(grad, variables)
 
                 _log.info(
@@ -801,7 +801,7 @@ class CGEModel:
                 f_hess = pytensor.function(inputs=inputs, outputs=hess, mode=mode)
                 f_hess.trust_inputs = True
 
-                f_hessp = pytensor.function(inputs=[*inputs, p], outputs=hessp, mode=mode)
+                f_hessp = pytensor.function(inputs=[*inputs, *p_vars], outputs=hessp, mode=mode)
                 f_hessp.trust_inputs = True
 
             self.f_resid = f_resid
@@ -1098,6 +1098,8 @@ class CGEModel:
         verbose: bool = True,
         **optimizer_kwargs,
     ):
+        method: root_method = optimizer_kwargs.pop("method", "hybr")
+
         f_system = self.f_system
         f_jac = self.f_jac
         free_variables = self.variables
@@ -1139,6 +1141,7 @@ class CGEModel:
             jac=f_jac if use_jac else None,
             progressbar=progressbar,
             verbose=verbose,
+            method=method,
             **optimizer_kwargs,
         )
 
@@ -1161,15 +1164,11 @@ class CGEModel:
         method: minimize_method = optimizer_kwargs.pop("method", "trust-ncg")
         use_jac, use_hess, use_hessp = get_method_defaults(use_jac, use_hess, use_hessp, method)
 
-        print(use_jac, use_hess, use_hessp)
-
         f_resid = self.f_resid
         f_grad = self.f_grad
         f_hess = self.f_hess
         f_hessp = self.f_hessp
         free_variables = self.variables
-
-        print(f_hessp)
 
         if not use_jac and use_hess:
             use_hess = False
@@ -1279,6 +1278,7 @@ class CGEModel:
             raise ValueError(
                 f"Unknown method {solve_method}. Must be one of {list(SOLVER_FACTORY.keys())}"
             )
+        fixed_values = [] if fixed_values is None else fixed_values
 
         joint_dict = {**param_dict, **initial_variable_guess}
         free_variables = [var for var in self.variables if var.name not in fixed_values]
@@ -1288,7 +1288,6 @@ class CGEModel:
         res = f_solver(
             data=joint_dict,
             theta_final=flat_params,
-            fixed_values=fixed_values,
             **solver_kwargs,
         )
 
@@ -1298,7 +1297,6 @@ class CGEModel:
                     "Solver did not converge. Results do not represent a valid SAM, and are returned for "
                     "diagnostic purposes only"
                 )
-
             result_dict = flat_array_to_variable_dict(res.x, free_variables, self.coords)
         else:
             result_dict = res
