@@ -8,12 +8,8 @@ import pandas as pd
 import pytensor
 import pytensor.tensor as pt
 
-from scipy import optimize
+from better_optimize import minimize
 
-from cge_modeling.base.utilities import (
-    CostFuncWrapper,
-    _optimzer_early_stopping_wrapper,
-)
 from cge_modeling.tools.pytensor_tools import rewrite_pregrad
 
 _log = logging.getLogger(__name__)
@@ -179,42 +175,22 @@ def balance_SAM(
 
     nonzero_values = get_flat_nonzero_values(normalized_sam)
     x0 = np.random.dirichlet(alpha=np.ones_like(nonzero_values))
-
     x0 = minimize_kwargs.pop("x0", x0)
-    tol = minimize_kwargs.pop("tol", 1e-12)
-    options = minimize_kwargs.pop("options", {})
-    maxiter = options.pop("maxiter", 25_000)
-    options.update(maxiter=maxiter)
 
-    objective = CostFuncWrapper(
+    res = minimize(
         f_ce,
-        args=None,
-        f_jac=f_grad,
-        f_hess=f_hess,
-        maxeval=maxiter,
-        progressbar=progressbar,
-        update_every=10,
-    )
-
-    f_optim = partial(
-        optimize.minimize,
-        objective,
         x0,
-        jac=use_grad,
-        hess=objective.f_hess if use_hess else None,
-        callback=objective.callback,
-        hessp=f_jvp_ce,
+        method=method,
+        jac=None if not use_grad else f_grad,
+        hess=None if not use_hess else f_hess,
+        hessp=None if not use_hessp else f_jvp_ce,
         constraints=[
             {"type": "eq", "fun": f_1, "jac": f_1_grad},
             {"type": "eq", "fun": f_2, "jac": f_2_grad},
         ],
         bounds=[(0, 1)] * nonzero_values.shape[0],
-        tol=tol,
-        method=method,
-        options=options,
         **minimize_kwargs,
     )
-    res = _optimzer_early_stopping_wrapper(f_optim)
 
     if not res.success:
         _log.info("Optimization failed. Return values may not represent a balanced SAM")
