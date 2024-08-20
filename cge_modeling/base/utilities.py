@@ -1,12 +1,10 @@
-import functools as ft
 import re
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from itertools import product
 from typing import Any, cast
 
 import numpy as np
-import pytensor.compile.function.types
 
 from better_optimize.constants import MINIMIZE_MODE_KWARGS
 
@@ -385,123 +383,6 @@ def variable_dict_to_flat_array(
     parameters = np.concatenate([np.atleast_1d(d[var.name]).ravel() for var in parameter_list])
 
     return variables, parameters
-
-
-def wrap_fixed_values(
-    f: Callable,
-    fixed_values: dict[str, float | int | np.ndarray],
-    variables: list[Variable],
-    coords: dict[str, list[str | int, ...]],
-) -> Callable:
-    """
-    Wrap a CGE function to require only a subset of its inputs. Useful when optimizing under a constraint that
-    certain variables are fixed at initial values.
-
-    Parameters
-    ----------
-    f: Callable
-        A compiled CGE function with signature f(**variables, **parameters)
-
-    fixed_values: dict[str, Union[float, int, np.ndarray]]
-        Dictionary mapping variable names to numpy arrays containing the fixed values of those variables. Keys should
-        be a subset of the variable names accepted by the function f.
-
-    variables: list[Variable]
-        List of model variables
-
-    coords: dict[str, list[str, ...]]
-        Dictionary of coordinates mapping dimension names to lists of labels associated with that dimension.
-
-    Returns
-    -------
-    inner: Callable
-        A wrapped version of the input function that accepts only the variables not in fixed_values as keyword arguments.
-    """
-    var_names = [var.name for var in variables]
-    if any(var not in var_names for var in fixed_values.keys()):
-        raise ValueError(
-            "User asked to fix the following variables, but these variables are not in the model: "
-            f"{set(fixed_values.keys()) - set(var_names)}"
-        )
-    fixed_vars = [var.name for var in variables if var.name in fixed_values.keys()]
-
-    @ft.wraps(f)
-    def inner(**data):
-        if any(var in fixed_vars for var in data.keys()):
-            raise ValueError(
-                f"Values for the following variables were passed to a function that expected them to be "
-                f"fixed: {set(fixed_vars) & set(data.keys())}"
-            )
-        data.update(fixed_values)
-        res = f(**data)
-        if isinstance(res, float | int) or res.ndim == 0:
-            return res
-
-        return_mask = make_flat_array_return_mask(res, variables, fixed_vars, coords)
-        if res.ndim == 1:
-            return res[return_mask]
-        return res[return_mask, :][:, return_mask]
-
-    return inner
-
-
-def wrap_pytensor_func_for_scipy(
-    f: pytensor.compile.function.types.Function,
-    variable_list: list[Variable],
-    parameter_list: list[Parameter],
-    coords: dict[str, list[str | int, ...]],
-    include_p: bool = False,
-) -> Callable:
-    """
-    Wrap a PyTensor function for use with scipy.optimize.root or scipy.optimize.minimize.
-
-    Parameters
-    ----------
-    f: Callable
-        A compiled PyTensor function with an input signature f(**data), where data is a dictionary mapping variable
-        and parameter names to numpy arrays containing the values of those variables and parameters.
-
-    variable_list: list[Variable]
-        List of model variables
-    parameter_list: list[Parameter]
-        List of model parameters
-    coords: dict[str, list[str, ...]]
-        Dictionary of coordinates mapping dimension names to lists of labels associated with that dimension.
-    include_p: bool
-        If true, a 3rd argument is included in the inner function (useful
-
-    Returns
-    -------
-    inner_f: Callable
-        A wrapped version of the input function that accepts a single long vector of variables as input, and a single
-        long vector of parameters as second input. The wrapped function will unpack these vectors into a dictionary of
-        variables and parameters, and then unpack that dictionary into keyword arguments to the original function.
-    """
-    if not include_p:
-
-        @ft.wraps(f)
-        def inner_f(x0, theta):
-            # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
-            inputs = np.r_[x0, theta]
-            data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
-            return f(**data)
-
-    else:
-
-        @ft.wraps(f)
-        def inner_f(x0, p, theta):
-            # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
-            inputs = np.r_[x0, theta]
-
-            data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
-            point_dict = flat_array_to_variable_dict(p, variable_list, coords)
-
-            point_dict = {f"{name}_point": point for name, point in point_dict.items()}
-            data.update(point_dict)
-
-            return f(**data)
-
-    return inner_f
 
 
 def flat_mask_from_param_names(param_dict, names):

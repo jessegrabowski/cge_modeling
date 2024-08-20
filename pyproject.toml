@@ -109,3 +109,6 @@ lines-between-types = 1
   'F401', # Unused import warning for test files -- this check removes imports of fixtures
   'F811',  # Redefine while unused -- this check fails on imported fixtures
 ]
+'cge_modeling/compile/numba_tools.py' = [
+      'F401', # Unused import warning -- imports are used in generated code strings
+]

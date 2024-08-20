@@ -1,7 +1,7 @@
 import numpy as np
 import sympy as sp
 
-from cge_modeling.tools.numba_tools import numba_lambdify
+from cge_modeling.compile.numba_tools import numba_lambdify
 
 
 def test_numba_lambdify_single_output():

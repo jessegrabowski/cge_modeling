@@ -2,10 +2,10 @@ from typing import Literal
 
 import numpy as np
 
-from cge_modeling import CGEModel, Equation, Parameter, Variable
+from cge_modeling import Equation, Parameter, Variable, cge_model
 
 
-def load_model_1(equation_mode: Literal["numba", "pytensor"] | None = None, **kwargs):
+def load_model_1(**kwargs):
     variable_info = [
         # Firm Variables
         Variable(name="Y", description="Total output of goods"),
@@ -45,7 +45,7 @@ def load_model_1(equation_mode: Literal["numba", "pytensor"] | None = None, **kw
         Equation("Sector <dim:i> goods market clearing", "Y = C"),
     ]
 
-    return CGEModel(
+    return cge_model(
         variables=variable_info,
         parameters=param_info,
         equations=equations,
@@ -106,10 +106,8 @@ def expected_model_1_jacobian(Y, L_d, K_d, C, income, r, P, resid, alpha, A, L_s
     # @formatter:on
 
 
-def load_model_2(equation_mode: Literal["numba", "pytensor"] | None = None, **kwargs):
+def load_model_2(**kwargs):
     backend = kwargs.get("backend", "numba")
-    if equation_mode is None:
-        equation_mode = backend
 
     sectors = ["0", "1", "2"]
     coords = {"i": sectors, "j": sectors}
@@ -235,13 +233,13 @@ def load_model_2(equation_mode: Literal["numba", "pytensor"] | None = None, **kw
         Equation(
             "Sector <dim:i> production of intermediate goods bundle",
             "VC * P_VC = (P[:, None] * X).sum(axis=0).ravel()"
-            if equation_mode == "pytensor"
+            if backend == "pytensor"
             else "VC * P_VC = Sum(P.subs({i:j}) * X.subs([(i,k), (j,i), (k,j)]), "
             + f"(j, 0, {n_sectors - 1}))",
         ),
         Equation(
             "Sector <dim:i> demand for sector <dim:j> intermediate input",
-            "X = psi_X * VC[None]" if equation_mode == "pytensor" else "X = psi_X * VC.subs({i:j})",
+            "X = psi_X * VC[None]" if backend == "pytensor" else "X = psi_X * VC.subs({i:j})",
         ),
         # Value add bundle
         Equation(
@@ -262,7 +260,7 @@ def load_model_2(equation_mode: Literal["numba", "pytensor"] | None = None, **kw
         Equation(
             "Household utility",
             "U = (C**gamma).prod()"
-            if equation_mode == "pytensor"
+            if backend == "pytensor"
             else "U = Product(C**gamma, " + f"(i, 0, {n_sectors - 1}))",
         ),
         Equation("Household demand for good <dim:i>", "C = gamma * income / P"),
@@ -270,28 +268,28 @@ def load_model_2(equation_mode: Literal["numba", "pytensor"] | None = None, **kw
         Equation(
             "Labor market clearing",
             "L_s = L_d.sum() + resid"
-            if equation_mode == "pytensor"
+            if backend == "pytensor"
             else "L_s = resid + Sum(L_d, " + f"(i, 0, {n_sectors - 1}))",
         ),
         Equation(
             "Capital market clearing",
             "K_s = K_d.sum()"
-            if equation_mode == "pytensor"
+            if backend == "pytensor"
             else f"K_s = Sum(K_d, (i, 0, {n_sectors - 1}))",
         ),
         Equation(
             "Sector <dim:i> goods market clearing",
             "Y = C + X.sum(axis=1)"
-            if equation_mode == "pytensor"
+            if backend == "pytensor"
             else f"Y = C + Sum(X, (j, 0, {n_sectors - 1}))",
         ),
         Equation(
             "Numeraire",
-            "P[0] = P_Ag_bar" if equation_mode == "pytensor" else "P.subs({i:0}) = P_Ag_bar",
+            "P[0] = P_Ag_bar" if backend == "pytensor" else "P.subs({i:0}) = P_Ag_bar",
         ),
     ]
 
-    return CGEModel(
+    return cge_model(
         variables=variable_info,
         parameters=param_info,
         equations=equations,

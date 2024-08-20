@@ -5,7 +5,7 @@ from itertools import combinations, product
 from string import Template
 from typing import Literal, cast
 
-from cge_modeling.tools.pytensor_tools import at_least_list
+from cge_modeling.tools.utils import at_least_list
 
 BACKEND_TYPE = Literal["numba", "pytensor"]
 

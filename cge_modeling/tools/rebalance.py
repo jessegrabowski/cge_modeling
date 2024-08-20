@@ -10,7 +10,7 @@ import pytensor.tensor as pt
 
 from better_optimize import minimize
 
-from cge_modeling.tools.pytensor_tools import rewrite_pregrad
+from cge_modeling.compile.pytensor_tools import rewrite_pregrad
 
 _log = logging.getLogger(__name__)
 

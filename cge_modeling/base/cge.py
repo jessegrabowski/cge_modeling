@@ -3,19 +3,15 @@ import inspect
 import logging
 import os.path
 import re
-import time
 import warnings
 
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import datetime
-from typing import Literal, cast
+from typing import Literal
 
-import numba as nb
 import numpy as np
 import pandas as pd
-import pytensor
-import pytensor.tensor as pt
 import sympy as sp
 import xarray as xr
 
@@ -23,10 +19,9 @@ from arviz import InferenceData
 from better_optimize import minimize, root
 from better_optimize.constants import minimize_method, root_method
 from cloudpickle import cloudpickle
-from fastprogress import progress_bar
-from numba_progress import ProgressBar as NumbaProgressBar
 from scipy.optimize import OptimizeResult
 
+from cge_modeling.base.function_wrappers import wrap_pytensor_func_for_scipy
 from cge_modeling.base.primitives import (
     Equation,
     Parameter,
@@ -40,42 +35,26 @@ from cge_modeling.base.utilities import (
     ensure_input_is_sequence,
     flat_array_to_variable_dict,
     get_method_defaults,
-    infer_object_shape_from_coords,
     unpack_equation_strings,
     variable_dict_to_flat_array,
-    wrap_fixed_values,
-    wrap_pytensor_func_for_scipy,
 )
-from cge_modeling.pytensorf.compile import (
-    compile_cge_model_to_pytensor,
-    compile_euler_approximation_function,
-    euler_approximation,
-    jax_euler_step,
-    jax_loss_grad_hessp,
-    pytensor_euler_step,
-    pytensor_objects_from_CGEModel,
-)
-from cge_modeling.tools.numba_tools import euler_approx, numba_lambdify
 from cge_modeling.tools.output_tools import (
     display_latex_table,
     list_of_array_to_idata,
     optimizer_result_to_idata,
 )
-from cge_modeling.tools.pytensor_tools import (
-    make_jacobian,
-    rewrite_pregrad,
-)
 from cge_modeling.tools.sympy_tools import (
-    enumerate_indexbase,
     expand_obj_by_indices,
     find_equation_dims,
-    indexed_var_to_symbol,
     indexed_variables_to_sub_dict,
-    make_indexbase_sub_dict,
     make_indexed_name,
+    recursive_solve_symbolic,
     sub_all_eqs,
     substitute_reduce_ops,
 )
+
+_log = logging.getLogger(__name__)
+
 
 ValidGroups = Literal[
     "variables",
@@ -86,26 +65,16 @@ ValidGroups = Literal[
     "_unpacked_equations",
 ]
 
-CompiledFunctions = Literal["root", "mininimze", "euler", "all"]
-
-_log = logging.getLogger(__name__)
-
 
 class CGEModel:
     def __init__(
         self,
-        coords: dict[str, list[str, ...]] | None = None,
+        coords: dict[str, list[str]] | None = None,
         variables: list[Variable] | dict[str, Variable] | None = None,
         parameters: list[Parameter] | dict[str, Parameter] | None = None,
         equations: list[Equation] | dict[str, Equation] | None = None,
         numeraire: Variable | None = None,
         parse_equations_to_sympy: bool = True,
-        apply_sympy_simplify: bool = False,
-        backend: Literal["pytensor", "numba"] | None = "pytensor",
-        mode: str | None = None,
-        use_sparse_matrices: bool = False,
-        compile: list[CompiledFunctions] | None = "all",
-        use_scan_euler: bool = False,
     ):
         """
         Main interface for interacting with the a CGE model.
@@ -138,24 +107,6 @@ class CGEModel:
             the "numba" backend. If False, the equations will be converted to symbolic pytensor expressions.
             This is required for the model to be compiled to the "pytensor" backend. Defaults to True.
 
-        apply_sympy_simplify: bool, default False
-            If True, `.simplify()` will be called elementwise on the
-
-        backend: str, optional
-            Computational backend to compile the model to. One of "pytensor" or "numba". Defaults to "numba".
-
-        mode: str, optional
-            Compilation mode for the pytensor backend. One of None, "JAX", or "NUMBA". Defaults to None. Note that this
-            argument is ignored if the backend is not "pytensor".
-
-        use_sparse_matrices: bool, optional
-            Whether to use sparse matrices to represent matrices associated with the system (e.g. the Jacobian matrix).
-            Defaults to False. Ignored if the backend is not "pytensor".
-
-        compile: bool, optional
-            Whether to compile the model during initialization. Defaults to True.
-
-
         Notes
         -----
         Computable General Equilibrium models are used to study the change in economic equilibria following shifts in model
@@ -186,7 +137,6 @@ class CGEModel:
         self.numeraire = None
         self.coords: dict[str, list[str, ...]] = {} if coords is None else coords
         self.parse_equations_to_sympy = parse_equations_to_sympy
-        self.sparse = use_sparse_matrices
 
         self._sympy_cache = {}
         self._pytensor_cache = {}
@@ -234,6 +184,7 @@ class CGEModel:
 
         self._compiled: list[str] = []
         self._compile_backend: Literal["pytensor", "numba"] | None = None
+        self.mode = None
 
         self.f_system: Callable | None = None
         self.f_resid: Callable | None = None
@@ -241,33 +192,7 @@ class CGEModel:
         self.f_hess: Callable | None = None
         self.f_hessp: Callable | None = None
         self.f_jac: Callable | None = None
-        self.f_dX: Callable | None = None
-
-        self.symbolic_solution_matrices = {}
-
-        if compile is not None:
-            if compile in ["all", True]:
-                compile = ["root", "minimize", "euler"]
-            else:
-                compile = [compile] if not isinstance(compile, list) else compile
-
-            compile = cast(list[CompiledFunctions], compile)
-            msg = f"Beginning compilation using {backend} backend"
-            if backend == "pytensor":
-                text_mode = "C (FAST_RUN)" if mode is None else mode
-                msg += f" using {text_mode} mode"
-
-            _log.info(msg)
-            self._compile(
-                backend=backend,
-                mode=mode,
-                functions_to_compile=compile,
-                use_scan_euler=use_scan_euler,
-            )
-            self.mode = mode
-
-        else:
-            _log.info("Model equations parsed and loaded. Skipping model compilation")
+        self.f_euler: Callable | None = None
 
     def check_initialization(self):
         if self.n_variables != self.n_equations:
@@ -632,27 +557,6 @@ class CGEModel:
 
         return out
 
-    def _euler_wrapper(self, f_dX, *, theta_final, n_steps, mode=None, **data):
-        x0 = np.concatenate([np.atleast_1d(data[x]).ravel() for x in self.variable_names], axis=0)
-        theta0 = np.concatenate(
-            [np.atleast_1d(data[x]).ravel() for x in self.parameter_names], axis=0
-        )
-
-        with NumbaProgressBar(total=n_steps) as progress:
-            result = euler_approx(f_dX, x0, theta0, theta_final, n_steps, progress)
-        # Decompose the result back to a list of numpy arrays
-        shapes = [
-            infer_object_shape_from_coords(x, self.coords) for x in self.variables + self.parameters
-        ]
-        out = []
-        cursor = 0
-        for shape in shapes:
-            s = int(np.prod(shape))
-            out.append(result[:, cursor : cursor + s].reshape(-1, *shape))
-            cursor += s
-
-        return out
-
     def get_unpacked_parent_object(self, name):
         if name in self.unpacked_variable_names:
             return self._unpacked_variables[name]["modelobj"]
@@ -660,325 +564,6 @@ class CGEModel:
             return self._unpacked_parameters[name]["modelobj"]
         else:
             raise ValueError(f"Object {name} not found in model")
-
-    def _compile_numba(self, functions_to_compile: list[CompiledFunctions]):
-        equations = self.unpacked_equation_symbols
-        variables = self.unpacked_variable_symbols
-        parameters = self.unpacked_parameter_symbols
-
-        # Always compile the system -- used to check residuals
-        self.f_system = numba_lambdify(
-            variables, sp.Matrix(equations), parameters, ravel_outputs=True
-        )
-
-        if "root" in functions_to_compile:
-            # Functions used by optimize.root to directly solve the system of equations
-            # Compute Jacobian of the nonlinear system
-            jac = sp.Matrix(equations).jacobian(variables)
-            self.symbolic_solution_matrices["jacobian"] = jac
-
-            self.f_jac = numba_lambdify(variables, jac, parameters)
-
-        if "minimize" in functions_to_compile:
-            # Symbolically compute loss function and derivatives
-            resid = sum(eq**2 for eq in equations)
-            grad = sp.Matrix([resid.diff(x) for x in variables])
-            hess = grad.jacobian(variables)
-            p = sp.IndexedBase("hess_point", shape=self.n_variables)
-
-            hessp = [
-                sum([hess[i, j] * p[j] for j in range(self.n_variables)])
-                for i in range(self.n_variables)
-            ]
-
-            self.symbolic_solution_matrices["loss_function"] = resid
-            self.symbolic_solution_matrices["gradient"] = grad
-            self.symbolic_solution_matrices["hessian"] = hess
-            self.symbolic_solution_matrices["hessp"] = hessp
-
-            # Functions used by optimize.minimize to solve the system of equations by minimizing the loss function
-            # Save these as member functions so they can be reused by optimizers
-            self.f_resid = numba_lambdify(variables, resid, parameters)
-            self.f_grad = numba_lambdify(variables, grad, parameters, ravel_outputs=True)
-            self.f_hess = numba_lambdify(variables, hess, parameters)
-            _f_hessp = numba_lambdify([*variables, p], hessp, parameters)
-
-            def f_hessp(x, p, parameters):
-                return np.r_[_f_hessp([*x.tolist(), p], parameters)].ravel()
-
-            self.f_hessp = f_hessp
-
-        if "euler" in functions_to_compile:
-            # Compile the one-step linear approximation function used by the iterative Euler approximation
-            # We don't need to save this because it's only used internally by the euler_approx function
-            f_dX = numba_linearize_cge_func(self)
-
-            self.f_euler = ft.partial(self._euler_wrapper, f_dX)
-
-        self._compiled = functions_to_compile
-
-    def _compile_pytensor(
-        self,
-        mode,
-        functions_to_compile: list[CompiledFunctions],
-        sparse: bool = False,
-        use_scan_euler: bool = True,
-    ):
-        _log.info("Compiling model equations into pytensor graph")
-        (variables, parameters), (system, jac, B) = compile_cge_model_to_pytensor(
-            self, sparse=sparse
-        )
-        inputs = variables + parameters
-        text_mode = "C" if mode is None else mode
-        _log.info(f"Compiling CGE equations into {text_mode} function")
-
-        # Always compile the system function, so we can compute residuals from calibration
-        f_system = pytensor.function(
-            inputs=inputs, outputs=system, mode=mode, on_unused_input="raise"
-        )
-        f_system.trust_inputs = True
-        self.f_system = f_system
-
-        if "root" in functions_to_compile:
-            _log.info(f"Compiling Jacobian equations into {text_mode} function")
-
-            # It's possible that certain variables/parameters don't influence the jacobian at all (for example if they
-            # enter as additive constants in the equations). In this case, we still want to be able to pass them as
-            # inputs, but they will be unused.
-            f_jac = pytensor.function(
-                inputs=inputs, outputs=jac, mode=mode, on_unused_input="ignore"
-            )
-            f_jac.trust_inputs = True
-
-            if mode in ["JAX", "NUMBA"]:
-                _f_system = f_system.copy()
-                _f_jac = f_jac.copy()
-
-                def f_system(*args, **kwargs):
-                    [x] = _f_system.vm.jit_fn(*args, **kwargs)
-                    return np.asarray(x)
-
-                def f_jac(*args, **kwargs):
-                    [x] = _f_jac.vm.jit_fn(*args, **kwargs)
-                    return np.asarray(x)
-
-            self.f_system = f_system
-            self.f_jac = f_jac
-
-        if "minimize" in functions_to_compile:
-            if mode == "JAX":
-                f_resid, f_grad, f_hess, f_hessp = jax_loss_grad_hessp(
-                    system, variables, parameters
-                )
-            else:
-                _log.info("Computing sum of squared errors")
-                resid = (system**2).mean()
-                rewrite_pregrad(resid)
-
-                _log.info("Computing SSE gradient")
-                grad = pytensor.grad(resid, variables)
-                grad = pt.specify_shape(
-                    pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]),
-                    self.n_variables,
-                )
-
-                # View grad as the function, compute jvp instead  (hessp)
-                # _log.info("Computing SSE Jacobian")
-
-                hessp, p_vars = make_jacobian(grad, variables, return_jvp=True)
-                hess = make_jacobian(grad, variables)
-
-                _log.info(
-                    f"Compiling SSE functions (sse, gradient, jacobian) into {text_mode} function"
-                )
-
-                f_resid = pytensor.function(inputs=inputs, outputs=resid, mode=mode)
-                f_resid.trust_inputs = True
-
-                f_grad = pytensor.function(inputs=inputs, outputs=grad, mode=mode)
-                f_grad.trust_inputs = True
-
-                f_hess = pytensor.function(inputs=inputs, outputs=hess, mode=mode)
-                f_hess.trust_inputs = True
-
-                f_hessp = pytensor.function(inputs=[*inputs, *p_vars], outputs=hessp, mode=mode)
-                f_hessp.trust_inputs = True
-
-            self.f_resid = f_resid
-            self.f_grad = f_grad
-            self.f_hess = f_hess
-            self.f_hessp = f_hessp
-
-        if "euler" in functions_to_compile:
-            _log.info("Compiling euler approximation function")
-            if use_scan_euler:
-
-                def __pytensor_euler_helper(*args, n_steps=100, **kwargs):
-                    if n_steps == self.__last_n_steps:
-                        _log.info("Re-using compiled euler approximation")
-                        return self.__compiled_f_euler(*args, **kwargs)
-                    else:
-                        _log.info(
-                            f"n_steps has changed ({n_steps} != {self.__last_n_steps}). Compiling euler approximation"
-                        )
-                        self.__last_n_steps = n_steps
-                        self.__compiled_f_euler = compile_euler_approximation_function(
-                            jac,
-                            B,
-                            variables,
-                            parameters,
-                            n_steps=n_steps,
-                            mode=self.mode,
-                        )
-
-                        return self.__compiled_f_euler(*args, **kwargs)
-
-                self.__last_n_steps = 0
-                self.f_euler = __pytensor_euler_helper
-
-            else:
-                if mode == "JAX":
-                    f_step = jax_euler_step(system, variables, parameters)
-                else:
-                    inputs, outputs = pytensor_euler_step(system, jac, B, variables, parameters)
-                    # inputs = get_required_inputs(outputs)
-                    f_step = pytensor.function(inputs, outputs, mode=mode)
-                    f_step.trust_inputs = True
-                    self.f_step = f_step
-
-                def f_euler(theta_final, n_steps, progressbar=True, update_freq=1, **data):
-                    current_params = {k: v for k, v in data.items() if k in self.parameter_names}
-                    current_variables = {k: v for k, v in data.items() if k in self.variable_names}
-                    theta_final = flat_array_to_variable_dict(
-                        theta_final, self.parameters, self.coords
-                    )
-                    theta_final = {f"{k}_final": v for k, v in theta_final.items()}
-                    theta_initial = {
-                        f"{k}_initial": v for k, v in data.items() if k in self.parameter_names
-                    }
-
-                    results = {
-                        k: np.empty((n_steps, *getattr(data[k], "shape", ())))
-                        for k in self.variable_names + self.parameter_names
-                    }
-                    progress = progress_bar(range(n_steps), total=n_steps, display=progressbar)
-                    progress.update(0)
-                    desc = "{:,.2f} {}, f = {:,.5g}"
-
-                    for t in progress:
-                        start = time.time()
-                        current_step = f_step(
-                            **current_params,
-                            **current_variables,
-                            **theta_final,
-                            **theta_initial,
-                            n_steps=n_steps,
-                        )
-
-                        current_variable_vals = current_step[: len(self.variable_names)]
-                        current_parameter_vals = current_step[len(self.variable_names) :]
-
-                        current_variables = {
-                            k: current_variable_vals[i] for i, k in enumerate(self.variable_names)
-                        }
-                        current_params = {
-                            k: current_parameter_vals[i] for i, k in enumerate(self.parameter_names)
-                        }
-
-                        errors = self.f_system(**current_variables, **current_params)
-
-                        rmse = (errors**2).sum() / min(1, int(np.prod(errors.shape)))
-                        end = time.time()
-                        elapsed = end - start
-                        unit = "s/it"
-                        if elapsed < 1:
-                            # if elapsed is exactly zero just put a big number
-                            elapsed = 1 / elapsed if elapsed != 0 else 1000000
-                            unit = "it/s"
-
-                        progress.comment = desc.format(elapsed, unit, rmse)
-
-                        for k in data.keys():
-                            results[k][t] = (
-                                current_variables[k]
-                                if k in self.variable_names
-                                else current_params[k]
-                            )
-
-                    errors = self.f_system(**current_variables, **current_params)
-                    rmse = (errors**2).sum() / min(1, int(np.prod(errors.shape)))
-                    progress.update_bar(n_steps)
-                    progress.comment = desc.format(elapsed, unit, rmse)
-
-                    return list(results.values())
-
-                self.f_euler = f_euler
-
-        self._compiled = functions_to_compile
-
-    def _compile(
-        self,
-        backend: Literal["pytensor", "numba"] | None = "pytensor",
-        mode=None,
-        functions_to_compile: list[CompiledFunctions] = "all",
-        use_scan_euler: bool = True,
-    ):
-        """
-        Compile the model to a backend.
-
-        Parameters
-        ----------
-        backend: str
-            The backend to compile to. One of 'pytensor' or 'numba'.
-        mode: str
-            Pytensor compile mode. Ignored if mode is not 'pytensor'.
-        functions_to_compile: list of str
-            A list of functions to compile. Valid choices are 'root', 'minimum', 'euler', or 'all'. Defaults to 'all'.
-        use_scan_euler: bool
-            Whether to directly compile the loop over iterations of the euler approximation using pytensor's scan Op.
-            If False, the inner function will be compiled, but the outer loop will be done in Python. Defaults to True.
-            Ignored if backend is not 'pytensor'.
-
-        Returns
-        -------
-        None
-        """
-        if functions_to_compile is None or not functions_to_compile:
-            _log.info("Skipping model compilation")
-            return
-
-        if functions_to_compile in ["all", True]:
-            functions_to_compile = ["root", "minimize", "euler"]
-        functions_to_compile = (
-            [functions_to_compile]
-            if not isinstance(functions_to_compile, list)
-            else functions_to_compile
-        )
-        functions_to_compile = cast(list[CompiledFunctions], functions_to_compile)
-
-        if all([fn in self._compiled for fn in functions_to_compile]):
-            _log.info(f"Model already compiled with {functions_to_compile} functions")
-            return
-
-        else:
-            functions_to_compile = [fn for fn in functions_to_compile if fn not in self._compiled]
-            _log.info(f"Compiling model with {functions_to_compile} functions")
-
-        if backend == "numba":
-            self._compile_numba(functions_to_compile=functions_to_compile)
-        elif backend == "pytensor":
-            self._compile_pytensor(
-                mode=mode,
-                functions_to_compile=functions_to_compile,
-                use_scan_euler=use_scan_euler,
-                sparse=self.sparse,
-            )
-        else:
-            raise NotImplementedError(
-                f'Only "numba" and "pytensor" backends are supported, got {backend}'
-            )
-
-        self._compile_backend = backend
 
     def summary(
         self,
@@ -1073,27 +658,11 @@ class CGEModel:
         result = self.f_euler(**data, theta_final=theta_final, n_steps=n_steps)
         return list_of_array_to_idata(result, self)
 
-    def _euler_approximation_Op(self, n_steps=100):
-        if not self._compile_backend == "pytensor":
-            raise ValueError('Can only create an fgraph when mode is "pytensor"')
-
-        flat_equations, variables, parameters, _ = pytensor_objects_from_CGEModel(self)
-        theta_final, result = euler_approximation(
-            flat_equations, variables, parameters, n_steps=n_steps
-        )
-        theta_final.name = "theta_final"
-
-        inputs = variables + parameters + [theta_final]
-
-        euler_op = pytensor.compile.builders.OpFromGraph(inputs, result, inline=True)
-        return euler_op
-
     def _solve_with_root(
         self,
         data,
         theta_final,
         use_jac=True,
-        fixed_values=None,
         progressbar=True,
         verbose: bool = True,
         **optimizer_kwargs,
@@ -1114,18 +683,7 @@ class CGEModel:
         if use_jac and "root" not in self._compiled:
             raise ValueError("Jacobian has not been compiled.")
 
-        if fixed_values is not None:
-            if any(x in self.parameter_names for x in fixed_values.keys()):
-                raise ValueError(
-                    "The following parameters were requested to be fixed via the fixed_values argument, "
-                    "but parameters are always fixed and should not be included in the fixed_values dict: "
-                    f"{[x for x in fixed_values.keys() if x in self.parameter_names]}"
-                )
-            free_variables = [x for x in self.variables if x.name not in fixed_values]
-            f_system = wrap_fixed_values(f_system, fixed_values, self.variables, self.coords)
-            f_jac = wrap_fixed_values(f_jac, fixed_values, self.variables, self.coords)
-
-        if self._compile_backend == "pytensor":
+        if self._compile_backend in ["pytensor", "sympytensor"]:
             parameters = self.parameters
             coords = self.coords
 
@@ -1174,7 +732,7 @@ class CGEModel:
             use_hess = False
             _log.warning("use_hess is ignored when use_jac=False. Setting use_hess=False.")
 
-        if self._compile_backend == "pytensor" and self.mode != "JAX":
+        if self._compile_backend in ["pytensor", "sympytensor"] and self.mode != "JAX":
             parameters = self.parameters
             coords = self.coords
 
@@ -1318,6 +876,7 @@ class CGEModel:
         overwrite: bool = False,
         output_path: str = "results/",
         simulation_name: str | None = None,
+        verbose: bool = True,
         **optimizer_kwargs,
     ):
         """
@@ -1389,6 +948,9 @@ class CGEModel:
         simulation_name: str, optional
             The name of the simulation. Defaults to '{date}-{time}'. Used to name the saved result object.
 
+        verbose: bool, default True
+            If True, display status messages about the simulation.
+
         Returns
         -------
         result: Result or InferenceData
@@ -1404,7 +966,7 @@ class CGEModel:
             if use_optimizer:
                 simulation_name += f'_{optimizer_mode}[{",".join([f"{k}={v}" for k, v in optimizer_kwargs.items()])}]'
         if not overwrite and os.path.exists(os.path.join(output_path, simulation_name + ".pkl")):
-            res = read_results(output_path, simulation_name)
+            res = read_results(output_path, simulation_name, verbose=verbose)
             return res
 
         if not self._compiled:
@@ -1461,9 +1023,21 @@ class CGEModel:
                 x0_var_param, theta_simulation, n_steps=n_iter_euler
             )
             return_values["euler"] = idata_euler
+            idata_euler.variables = idata_euler.variables.dropna(dim="step")
+            idata_euler.parameters = idata_euler.parameters.dropna(dim="step")
+            last_step = min(
+                idata_euler.variables.coords["step"].max().item(),
+                idata_euler.parameters.coords["step"].max().item(),
+            )
+            if last_step != (n_iter_euler - 1):
+                _log.warning(
+                    f"NaNs were encountered in the euler approximation. Backing up to step {last_step} "
+                    f"(the last non-NaN step) for the optimizer started point."
+                )
+
             x0_var_param = (
-                idata_euler.isel(step=-1).to_dict()["variables"]
-                | idata_euler.isel(step=-1).to_dict()["parameters"]
+                idata_euler.isel(step=last_step).to_dict()["variables"]
+                | idata_euler.isel(step=last_step).to_dict()["parameters"]
             )
 
         if use_optimizer:
@@ -1613,7 +1187,7 @@ class CGEModel:
         return np.full(size, value)
 
 
-def write_results(results, output_path, filename=None, overwrite=False):
+def write_results(results, output_path, filename=None, overwrite=False, verbose=True):
     # Check if the output path exists, create it if it doesn't
     if not os.path.exists(output_path):
         os.makedirs(output_path)
@@ -1633,7 +1207,7 @@ def write_results(results, output_path, filename=None, overwrite=False):
             new_filename = f"{base_filename}({counter}){ext}"
             counter += 1
     else:
-        if os.path.exists(os.path.join(output_path, new_filename)):
+        if os.path.exists(os.path.join(output_path, new_filename)) and verbose:
             _log.warning(
                 f"Overwriting existing file found at {os.path.join(output_path, new_filename)}"
             )
@@ -1641,10 +1215,11 @@ def write_results(results, output_path, filename=None, overwrite=False):
     with open(os.path.join(output_path, new_filename), "wb") as f:
         cloudpickle.dump(results, f)
 
-    _log.info(f"Results saved to {os.path.join(output_path, new_filename)}")
+    if verbose:
+        _log.info(f"Results saved to {os.path.join(output_path, new_filename)}")
 
 
-def read_results(output_path, filename):
+def read_results(output_path, filename, verbose=True):
     ext = "pkl"
     if not filename.endswith(ext):
         base_filename = filename
@@ -1668,200 +1243,6 @@ def read_results(output_path, filename):
     with open(os.path.join(output_path, filename), "rb") as f:
         results = cloudpickle.load(f)
 
-    _log.info(f"Results loaded from {os.path.join(output_path, filename)}")
+    if verbose:
+        _log.info(f"Results loaded from {os.path.join(output_path, filename)}")
     return results
-
-
-def recursive_solve_symbolic(equations, known_values=None, max_iter=100):
-    """
-    Solve a system of symbolic equations iteratively, given known initial values
-
-    Parameters
-    ----------
-    equations : list of Sympy expressions
-        List of symbolic equations to be solved.
-    known_values : dict of symbol, float; optional
-        Dictionary of known initial values for symbols (default is an empty dictionary).
-    max_iter : int, optional
-        Maximum number of iterations (default is 100).
-
-    Returns
-    -------
-    known_values : dict of symbol, float; optional
-        Dictionary of solved values for symbols.
-    """
-
-    if known_values is None:
-        known_values = {}
-    unsolved = equations.copy()
-
-    for _ in range(max_iter):
-        new_solution_found = False
-        simplified_equations = [sp.simplify(eq.subs(known_values)) for eq in unsolved]
-        remove = []
-        for i, eq in enumerate(simplified_equations):
-            unknowns = [var for var in eq.free_symbols]
-            if len(unknowns) == 1:
-                unknown = unknowns[0]
-                solution = sp.solve(eq, unknown)
-
-                if isinstance(solution, list):
-                    if len(solution) == 0:
-                        solution = sp.core.numbers.Zero()
-                    else:
-                        solution = solution[0]
-
-                known_values[unknown] = solution.subs(known_values).evalf()
-                new_solution_found = True
-                remove.append(eq)
-            elif len(unknowns) == 0:
-                remove.append(eq)
-        for eq in remove:
-            simplified_equations.remove(eq)
-        unsolved = simplified_equations.copy()
-
-        # Break if the system is solved, or if we're stuck
-        if len(known_values) == len(equations):
-            break
-        if not new_solution_found:
-            break
-
-    if len(unsolved) > 0:
-        msg = "The following equations were not solvable given the provided initial values:\n"
-        msg += "\n".join([str(eq) for eq in unsolved])
-        raise ValueError(msg)
-
-    return known_values
-
-
-def expand_compact_system(
-    compact_equations,
-    compact_variables,
-    compact_params,
-    index_dict,
-    numeraire_dict=None,
-    check_square=True,
-):
-    if numeraire_dict is None:
-        numeraire_dict = {}
-        numeraires = []
-    else:
-        numeraires = list(numeraire_dict.keys())
-
-    index_symbols = list(index_dict.keys())
-    index_dicts = [{k: v for k, v in enumerate(index_dict[idx])} for idx in index_symbols]
-
-    compact_equations = [eq.doit() for eq in compact_equations]
-    variables = enumerate_indexbase(
-        compact_variables, index_symbols, index_dicts, expand_using="index"
-    )
-    named_variables = enumerate_indexbase(
-        compact_variables, index_symbols, index_dicts, expand_using="name"
-    )
-    named_variables = [indexed_var_to_symbol(x) for x in named_variables]
-
-    parameters = enumerate_indexbase(
-        compact_params, index_symbols, index_dicts, expand_using="index"
-    )
-    named_parameters = enumerate_indexbase(
-        compact_params, index_symbols, index_dicts, expand_using="name"
-    )
-    named_parameters = [indexed_var_to_symbol(x) for x in named_parameters]
-
-    idx_equations = enumerate_indexbase(
-        compact_equations, index_symbols, index_dicts, expand_using="index"
-    )
-
-    var_sub_dict = make_indexbase_sub_dict(variables)
-    param_sub_dict = make_indexbase_sub_dict(parameters)
-
-    named_var_sub_dict = make_indexbase_sub_dict(named_variables)
-    named_param_sub_dict = make_indexbase_sub_dict(named_parameters)
-
-    idx_var_to_named_var = dict(zip(var_sub_dict.values(), named_var_sub_dict.values()))
-    idx_param_to_named_param = dict(zip(param_sub_dict.values(), named_param_sub_dict.values()))
-
-    numeraires = [idx_var_to_named_var.get(var_sub_dict.get(x)) for x in numeraires]
-    numeraire_dict = {k: v for k, v in zip(numeraires, numeraire_dict.values())}
-
-    equations = sub_all_eqs(
-        sub_all_eqs(idx_equations, var_sub_dict | param_sub_dict),
-        idx_var_to_named_var | idx_param_to_named_param,
-    )
-    equations = sub_all_eqs(equations, numeraire_dict)
-
-    [named_variables.remove(x) for x in numeraires]
-
-    n_eq = len(equations)
-    n_vars = len(named_variables)
-
-    if check_square:
-        if n_eq != n_vars:
-            names = [x.name for x in numeraires]
-            msg = "After expanding index sets"
-            if len(names) > 0:
-                msg += f' and removing {", ".join(names)},'
-            msg += f" system is not square. Found {n_eq} equations and {n_vars} variables."
-            raise ValueError(msg)
-
-    return equations, named_variables, named_parameters
-
-
-def compile_cge_to_numba(
-    compact_equations,
-    compact_variables,
-    compact_params,
-    index_dict,
-    numeraire_dict=None,
-):
-    equations, variables, parameters = expand_compact_system(
-        compact_equations, compact_variables, compact_params, index_dict, numeraire_dict
-    )
-
-    resid = sum(eq**2 for eq in equations)
-    grad = sp.Matrix([resid.diff(x) for x in variables])
-    jac = sp.Matrix(equations).jacobian(variables)
-    hess = grad.jacobian(variables)
-
-    f_system = numba_lambdify(variables, sp.Matrix(equations), parameters, ravel_outputs=True)
-    f_resid = numba_lambdify(variables, resid, parameters)
-    f_grad = numba_lambdify(variables, grad, parameters, ravel_outputs=True)
-    f_hess = numba_lambdify(variables, hess, parameters)
-    f_jac = numba_lambdify(variables, jac, parameters)
-
-    return (f_resid, f_grad, f_hess), (f_system, f_jac), (variables, parameters)
-
-
-def numba_linearize_cge_func(model: CGEModel):
-    # equations, variables, parameters = expand_compact_system(
-    #     compact_equations, compact_variables, compact_params, index_dict
-    # )
-
-    variables = model.unpacked_variable_symbols
-    parameters = model.unpacked_parameter_symbols
-    equations = model.unpacked_equation_symbols
-
-    if "Jacobian" in model.symbolic_solution_matrices:
-        A_mat = model.symbolic_solution_matrices["Jacobian"].copy()
-    else:
-        A_mat = sp.Matrix([[eq.diff(x) for x in variables] for eq in equations])
-
-    B_mat = sp.Matrix([[eq.diff(x) for x in parameters] for eq in equations])
-    model.symbolic_solution_matrices["B_matirx"] = B_mat
-
-    sub_dict = {x: sp.Symbol(f"{x.name}_0", **x.assumptions0) for x in variables + parameters}
-
-    A_sub = A_mat.subs(sub_dict)
-    Bv = B_mat.subs(sub_dict) @ sp.Matrix([[x] for x in parameters])
-
-    nb_A_sub = numba_lambdify(exog_vars=parameters, expr=A_sub, endog_vars=list(sub_dict.values()))
-    nb_B_sub = numba_lambdify(exog_vars=parameters, expr=Bv, endog_vars=list(sub_dict.values()))
-
-    @nb.njit
-    def f_dX(endog, exog):
-        A = nb_A_sub(endog, exog)
-        B = nb_B_sub(endog, exog)
-
-        return -np.linalg.solve(A, np.identity(A.shape[0])) @ B
-
-    return f_dX

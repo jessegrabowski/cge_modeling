@@ -503,7 +503,7 @@ def jacobian_as_dok_data(eqs: list[sp.Expr], variables: list[sp.Symbol]):
     return shape, dok
 
 
-def sparse_jacobian(eqs: list[sp.Expr], variables: list[sp.Symbol]):
+def sparse_jacobian(eqs: list[sp.Expr] | sp.Matrix, variables: list[sp.Symbol]):
     """
     Compute the jacobian of a system of equations with respect to a set of variables, and return the result as a sympy
     SparseMatrix object.
@@ -520,6 +520,72 @@ def sparse_jacobian(eqs: list[sp.Expr], variables: list[sp.Symbol]):
     jacobian: sympy SparseMatrix
         A sparse matrix representation of the jacobian matrix
     """
+    if isinstance(eqs, sp.Matrix):
+        if not eqs.shape[-1] == 1:
+            raise ValueError("If in a matrix, the equations must be a column vector")
+        eqs = [eqs[i] for i in range(eqs.shape[0])]
 
     shape, dok_data = jacobian_as_dok_data(eqs, variables)
     return sp.SparseMatrix(*shape, dok_data)
+
+
+def recursive_solve_symbolic(equations, known_values=None, max_iter=100):
+    """
+    Solve a system of symbolic equations iteratively, given known initial values
+
+    Parameters
+    ----------
+    equations : list of Sympy expressions
+        List of symbolic equations to be solved.
+    known_values : dict of symbol, float; optional
+        Dictionary of known initial values for symbols (default is an empty dictionary).
+    max_iter : int, optional
+        Maximum number of iterations (default is 100).
+
+    Returns
+    -------
+    known_values : dict of symbol, float; optional
+        Dictionary of solved values for symbols.
+    """
+
+    if known_values is None:
+        known_values = {}
+    unsolved = equations.copy()
+
+    for _ in range(max_iter):
+        new_solution_found = False
+        simplified_equations = [sp.simplify(eq.subs(known_values)) for eq in unsolved]
+        remove = []
+        for i, eq in enumerate(simplified_equations):
+            unknowns = [var for var in eq.free_symbols]
+            if len(unknowns) == 1:
+                unknown = unknowns[0]
+                solution = sp.solve(eq, unknown)
+
+                if isinstance(solution, list):
+                    if len(solution) == 0:
+                        solution = sp.core.numbers.Zero()
+                    else:
+                        solution = solution[0]
+
+                known_values[unknown] = solution.subs(known_values).evalf()
+                new_solution_found = True
+                remove.append(eq)
+            elif len(unknowns) == 0:
+                remove.append(eq)
+        for eq in remove:
+            simplified_equations.remove(eq)
+        unsolved = simplified_equations.copy()
+
+        # Break if the system is solved, or if we're stuck
+        if len(known_values) == len(equations):
+            break
+        if not new_solution_found:
+            break
+
+    if len(unsolved) > 0:
+        msg = "The following equations were not solvable given the provided initial values:\n"
+        msg += "\n".join([str(eq) for eq in unsolved])
+        raise ValueError(msg)
+
+    return known_values
