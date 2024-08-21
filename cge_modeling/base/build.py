@@ -1,9 +1,10 @@
+import importlib.util
+
 from typing import Literal, cast
 
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Equation, Parameter, Variable
 from cge_modeling.compile.constants import CompiledFunctions
-from cge_modeling.compile.jax import compile_jax_cge_functions
 from cge_modeling.compile.numba import compile_numba_cge_functions
 from cge_modeling.compile.pytensor import compile_pytensor_cge_functions
 from cge_modeling.compile.sympytensor import compile_sympytensor_cge_functions
@@ -48,8 +49,9 @@ def compile_model(
     functions_to_compile: list[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
 ) -> CGEModel:
-    if backend == "pytensor" and mode == "jax":
-        # Special override for jax mode to use their gradients. TODO: Add a flag to request pytensor or JAX gradients
+    if backend == "pytensor" and mode == "jax" and importlib.util.find_spec("jax") is not None:
+        from cge_modeling.compile.jax import compile_jax_cge_functions
+
         func_maker = compile_jax_cge_functions
     else:
         func_maker = COMPILE_FUNC_FACTORY[backend]

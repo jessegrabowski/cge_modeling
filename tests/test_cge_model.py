@@ -1,4 +1,7 @@
+import sys
+
 from collections.abc import Callable
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -551,3 +554,13 @@ def test_generate_SAM():
         use_jac=False,
         use_hess=False,
     )
+
+
+def test_can_compile_without_jax_installed():
+    with patch.dict(sys.modules, {"jax": None}):
+        with pytest.raises(ImportError):
+            load_model_1(backend="pytensor", mode="JAX")
+
+        mod = load_model_1(backend="pytensor")
+        inital_data = calibrate_model_1(**model_1_data)
+        mod.simulate(inital_data, final_delta_pct={"L_s": 0.5})
