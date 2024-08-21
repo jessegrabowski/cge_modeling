@@ -1,7 +1,7 @@
+import versioneer
+
 from setuptools import find_packages, setup
 from setuptools.dist import Distribution
-
-import versioneer
 
 dist = Distribution()
 dist.parse_config_files()
