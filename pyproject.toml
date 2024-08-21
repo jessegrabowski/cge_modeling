@@ -112,3 +112,7 @@ lines-between-types = 1
 'cge_modeling/compile/numba_tools.py' = [
       'F401', # Unused import warning -- imports are used in generated code strings
 ]
+'cge_modeling/__init__.py' = [
+        'F401', # Unused import warning -- need to import (but not use) pytensor rewrite
+        'I001' # Import order matters to avoid circular imports
+]
