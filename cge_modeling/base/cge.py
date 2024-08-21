@@ -150,21 +150,16 @@ class CGEModel:
         self._unpacked_parameters = {}
         self._unpacked_equations = {}
 
-        _log.info("Initializing variables")
         self._initialize_group(variables, "variables")
         if numeraire is not None:
             if numeraire not in self.variable_names:
                 raise ValueError("Requested numeraire not found among supplied variables")
             self.numeraire = self._variables[numeraire]
 
-        _log.info("Initializing parameters")
         self._initialize_group(parameters, "parameters")
-
-        _log.info("Initializing equations")
         self._initialize_group(equations, "equations")
 
         if self.parse_equations_to_sympy:
-            _log.info("Expanding reduction Ops (Sum, Prod)")
             self._simplify_unpacked_sympy_representation()
 
         if numeraire:
@@ -221,13 +216,8 @@ class CGEModel:
             self.unpacked_variables + self.unpacked_parameters
         )
 
-        _log.info("Post-processing sympy equations")
         equations = sub_all_eqs(equations, remove_indices_subdict, n_jobs)
-
-        _log.info("Post-processing sympy variables")
         variables = sub_all_eqs(variables, remove_indices_subdict, n_jobs)
-
-        _log.info("Post-processing sympy parameters")
         parameters = sub_all_eqs(parameters, remove_indices_subdict, n_jobs)
 
         for group, simplified_symbols in zip(
@@ -1130,7 +1120,7 @@ class CGEModel:
             parameters = flat_array_to_variable_dict(data.args, self.parameters, self.coords)
             data = {**variables, **parameters}
 
-        if self._compile_backend == "pytensor":
+        if self._compile_backend in ["pytensor", "sympytensor"]:
             errors = self.f_system(**data)
         else:
             var_inputs, param_inputs = variable_dict_to_flat_array(

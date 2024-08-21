@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 import sympy as sp
 
-from cge_modeling.base.build import cge_model
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Equation, Parameter, Variable
 from cge_modeling.base.utilities import flat_array_to_variable_dict, variable_dict_to_flat_array

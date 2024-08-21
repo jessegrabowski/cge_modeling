@@ -15,6 +15,19 @@ COMPILE_FUNC_FACTORY = {
 }
 
 
+def determine_default_backend(equations):
+    # Check for Sum/Prod in the equations, if found, use sympytensor
+    if any("Sum(" in eq.equation or "Prod(" in eq.equation for eq in equations):
+        return "sympytensor"
+
+    # Alternatively, if we find broadcasting logic in the equations, use pytensor
+    if any("[:, None]" in eq.equation or "[None, :]" in eq.equation for eq in equations):
+        return "pytensor"
+
+    # Default to sympytensor if there is no info
+    return "sympytensor"
+
+
 def _parse_compile_kwarg(compile: list[str] | str | None = None) -> list[CompiledFunctions]:
     if compile is not None:
         if compile in ["all", True]:
@@ -29,7 +42,7 @@ def _parse_compile_kwarg(compile: list[str] | str | None = None) -> list[Compile
 
 def compile_model(
     model: CGEModel,
-    backend: Literal["pytensor", "numba"] | None = "pytensor",
+    backend: Literal["pytensor", "numba", "sympytensor"] | None = None,
     mode: str | None = None,
     use_sparse_matrices: bool = False,
     functions_to_compile: list[CompiledFunctions] | None = "all",
@@ -70,12 +83,15 @@ def cge_model(
     equations: list[Equation] | dict[str, Equation] | None = None,
     numeraire: Variable | None = None,
     apply_sympy_simplify: bool = False,
-    backend: Literal["pytensor", "numba"] | None = "pytensor",
+    backend: Literal["pytensor", "numba"] | None = None,
     mode: str | None = None,
     use_sparse_matrices: bool = False,
     functions_to_compile: list[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
 ) -> CGEModel:
+    if backend is None:
+        backend = determine_default_backend(equations)
+
     model = CGEModel(
         coords=coords,
         variables=variables,
