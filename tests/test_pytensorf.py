@@ -2,7 +2,8 @@ import numpy as np
 import pytensor
 import pytensor.tensor as pt
 
-from cge_modeling.compile.pytensor import make_jacobian, symbolic_euler_approximation
+from cge_modeling.compile.euler import symbolic_euler_approximation
+from cge_modeling.compile.pytensor_tools import make_jacobian
 
 
 def test_euler_approximation_1d():

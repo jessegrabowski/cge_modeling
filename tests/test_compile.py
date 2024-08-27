@@ -4,12 +4,11 @@ import pytensor.tensor as pt
 import pytest
 
 from cge_modeling.base.primitives import Parameter, Variable
+from cge_modeling.compile.euler import symbolic_euler_approximation
 from cge_modeling.compile.pytensor import (
     cge_primitives_to_pytensor,
-    make_jacobian,
-    symbolic_euler_approximation,
 )
-from cge_modeling.compile.pytensor_tools import object_to_pytensor
+from cge_modeling.compile.pytensor_tools import make_jacobian, object_to_pytensor
 from tests.utilities.models import load_model_1, load_model_2
 
 test_cases = [

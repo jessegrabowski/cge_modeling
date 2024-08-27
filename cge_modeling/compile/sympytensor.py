@@ -13,10 +13,12 @@ from sympytensor import as_tensor
 from cge_modeling import CGEModel
 from cge_modeling.base.function_wrappers import return_array_from_jax_wrapper
 from cge_modeling.compile.constants import CompiledFunctions
-from cge_modeling.compile.pytensor import (
+from cge_modeling.compile.euler import (
     pytensor_euler_function_with_python_loop,
-    pytensor_euler_step,
     symbolic_euler_approximation,
+)
+from cge_modeling.compile.pytensor import (
+    pytensor_euler_step,
     validate_pytensor_parsing_result,
     vars_and_params_to_pytensor,
 )

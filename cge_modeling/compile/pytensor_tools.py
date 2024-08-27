@@ -220,3 +220,40 @@ def unpacked_graph_to_packed_graph(
 ) -> pt.TensorVariable | list[pt.TensorVariable]:
     packed_graph = pytensor.clone_replace(unpacked_graph, unpacked_to_indexed_dict)
     return packed_graph
+
+
+def make_jacobian(
+    system: pt.TensorLike,
+    x: list[pt.TensorLike],
+) -> pt.TensorVariable:
+    """
+    Make a Jacobian matrix from a system of equations and a list of variables.
+
+    Parameters
+    ----------
+    system: pytensor.tensor.TensorVariable
+        A vector of equations
+    x: list[pytensor.tensor.TensorVariable]
+        A list of variables
+
+    Returns
+    -------
+    jac: pytensor.tensor.TensorVariable
+        The Jacobian matrix of the system of equations with respect to the variables
+
+    Notes
+    -----
+    The Jacobian of the system of equations is the matrix of partial derivatives of each equation with respect to each
+    variable. The rows of the matrix correspond to the equations in the system, while the columns correspond to the
+    variables. This function computes the Jacobian matrix from a vector of equations and a list of variables.
+    """
+    n_eq = system.type.shape[0]
+    n_vars = int(np.sum([np.prod(var.type.shape) for var in x]))
+
+    rewrite_pregrad(system)
+    column_list = pytensor.gradient.jacobian(system, x)
+
+    jac = pt.concatenate([pt.atleast_2d(x).reshape((n_eq, -1)) for x in column_list], axis=-1)
+    jac = pt.specify_shape(jac, shape=(n_eq, n_vars))
+
+    return jac

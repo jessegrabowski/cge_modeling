@@ -1,3 +1,5 @@
+import logging
+
 from functools import partial, wraps
 from typing import cast
 
@@ -10,6 +12,8 @@ from cge_modeling.base.function_wrappers import wrap_numba_euler_function
 from cge_modeling.compile.constants import CompiledFunctions
 from cge_modeling.compile.numba_tools import numba_lambdify
 from cge_modeling.compile.sympy import make_sympy_gradient, make_sympy_hessp, make_sympy_jacobian
+
+_log = logging.getLogger(__name__)
 
 
 def compile_numba_jacobian_function(
@@ -161,6 +165,8 @@ def compile_numba_euler_func(variables, parameters, equations, jacobian=None):
 def compile_numba_cge_functions(
     cge_model: CGEModel, functions_to_compile: list[CompiledFunctions], *args, **kwargs
 ):
+    _log.info("Compiling model to numba")
+
     unpacked_equation_symbols = cge_model.unpacked_equation_symbols
     unpacked_variable_symbols = cge_model.unpacked_variable_symbols
     unpacked_parameter_symbols = cge_model.unpacked_parameter_symbols
