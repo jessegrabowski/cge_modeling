@@ -74,6 +74,19 @@ def wrap_pytensor_func_for_scipy(
     return inner_f
 
 
+def wrap_scipy_func_for_pytensor(
+    f: pytensor.compile.function.types.Function,
+    variable_list: list[Variable],
+    parameter_list: list[Parameter],
+):
+    @ft.wraps(f)
+    def inner(**kwargs):
+        x, theta = variable_dict_to_flat_array(kwargs, variable_list, parameter_list)
+        return f(x, theta)
+
+    return inner
+
+
 def wrap_fixed_values(
     f: Callable,
     fixed_values: dict[str, float | int | np.ndarray],
