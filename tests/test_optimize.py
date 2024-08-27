@@ -5,10 +5,8 @@ import pytensor.tensor as pt
 from numpy.testing import assert_allclose
 
 from cge_modeling.base.utilities import flat_array_to_variable_dict
-from cge_modeling.pytensorf.compile import (
-    compile_cge_model_to_pytensor_Op,
-)
-from cge_modeling.pytensorf.optimize import root
+from cge_modeling.compile.pytensor import compile_cge_model_to_pytensor_Op
+from cge_modeling.optimize import root
 from tests.utilities.models import (
     calibrate_model_2,
     load_model_1,
@@ -96,7 +94,7 @@ def test_small_model():
 
 
 def test_small_model_from_compile():
-    mod = load_model_1(parse_equations_to_sympy=False, backend="pytensor", compile=False)
+    mod = load_model_1(backend="pytensor")
     f_model, f_jac = compile_cge_model_to_pytensor_Op(mod)
     data = {
         "Y": 11000.0,
@@ -153,7 +151,7 @@ def test_small_model_from_compile():
 
 
 def test_sector_model_from_compile():
-    mod = load_model_2(parse_equations_to_sympy=False, mode="FAST_COMPILE", backend="pytensor")
+    mod = load_model_2(mode="FAST_COMPILE", backend="pytensor")
     calib_dict = calibrate_model_2(**model_2_data)
 
     x0 = {var.name: calib_dict[var.name] for var in mod.variables}

@@ -1,4 +1,7 @@
+import sys
+
 from collections.abc import Callable
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -6,7 +9,7 @@ import sympy as sp
 
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Equation, Parameter, Variable
-from cge_modeling.base.utilities import variable_dict_to_flat_array
+from cge_modeling.base.utilities import flat_array_to_variable_dict, variable_dict_to_flat_array
 from cge_modeling.tools.sympy_tools import get_inputs
 from tests.utilities.fake_data import generate_data
 from tests.utilities.models import (
@@ -23,7 +26,7 @@ from tests.utilities.models import (
 
 @pytest.fixture()
 def model():
-    return CGEModel(coords={"i": ["A", "B", "C"]}, compile=None)
+    return CGEModel(coords={"i": ["A", "B", "C"]})
 
 
 @pytest.mark.parametrize(
@@ -161,7 +164,6 @@ def test_unpack_equation(model):
 def test_unpack_equation_with_sum():
     model = CGEModel(
         coords={"i": ["A", "B", "C"], "j": ["A", "B"]},
-        compile=None,
         parse_equations_to_sympy=True,
     )
 
@@ -189,7 +191,7 @@ def test_unpack_equation_with_sum():
 
 def test_unpack_equation_with_many_sums():
     coords = {"i": ["A", "B", "C"], "j": ["A", "B"]}
-    model = CGEModel(coords=coords, compile=None, parse_equations_to_sympy=True)
+    model = CGEModel(coords=coords, parse_equations_to_sympy=True)
 
     z = Variable(name="z")
     x = Variable(name="x", dims=("j",))
@@ -216,7 +218,7 @@ def test_unpack_equation_with_many_sums():
 
 def test_unpack_double_index():
     coords = {"i": ["A", "B", "C"], "j": ["E", "F"]}
-    model = CGEModel(coords=coords, compile=None, parse_equations_to_sympy=True)
+    model = CGEModel(coords=coords, parse_equations_to_sympy=True)
     X = Variable(name="X", dims=("i", "j"))
     VC = Variable(name="VC", dims=("j",))
     psi_X = Parameter("psi_X", dims=("i", "j"))
@@ -249,7 +251,7 @@ def test_unpack_double_index():
 
 def test_tax_unpack():
     coords = {"i": ["A", "B", "C"], "k": ["E", "F", "G", "H", "I", "J"]}
-    model = CGEModel(coords=coords, compile=None, parse_equations_to_sympy=True)
+    model = CGEModel(coords=coords, parse_equations_to_sympy=True)
     X = Variable(name="X", dims=("i", "k"))
     P_X = Variable(name="P_X", dims=("i", "k"))
     income = Variable(name="income")
@@ -274,7 +276,7 @@ def test_long_unpack():
         "k": ["E", "F", "G", "H", "I", "J", "K", "L", "M"],
     }
 
-    model = CGEModel(coords=coords, compile=None, parse_equations_to_sympy=True)
+    model = CGEModel(coords=coords, parse_equations_to_sympy=True)
 
     P_Y = Variable("P_Y", dims=("i",))
     P_M = Variable("P_M", dims=("i",))
@@ -334,36 +336,47 @@ def test_long_unpack():
 @pytest.mark.parametrize(
     "model_function, jac_function",
     [
-        (load_model_1, expected_model_1_jacobian),
-        (load_model_2, expected_model_2_jacobian),
+        (
+            load_model_1,
+            expected_model_1_jacobian,
+        ),  # expected_model_1_grad, expected_model_1_hessian),
+        (
+            load_model_2,
+            expected_model_2_jacobian,
+        ),  # expected_model_2_grad, expected_model_2_hessian),
     ],
     ids=["simple_model", "3-goods simple"],
 )
 @pytest.mark.parametrize(
-    "backend, parse_to_sympy",
-    [("numba", True), ("pytensor", True), ("pytensor", False)],
-    ids=["numba", "pytensor-from-sympy", "pytensor"],
+    "backend", ["numba", "sympytensor", "pytensor"], ids=["numba", "sympytensor", "pytensor"]
 )
-def test_model_gradients(model_function, jac_function, backend, parse_to_sympy):
-    mode = "FAST_COMPILE" if backend == "pytensor" else None
+def test_model_gradients(model_function, jac_function, backend):
+    mode = "FAST_COMPILE" if backend in ["pytensor", "sympytensor"] else None
     mod = model_function(
         backend=backend,
-        parse_equations_to_sympy=parse_to_sympy,
-        equation_mode=backend if not parse_to_sympy else "numba",
         mode=mode,
     )
-
     data = generate_data(mod.variables + mod.parameters, mod.coords)
+    p = np.eye(mod.n_equations)[:, 0]
 
     J_expected = jac_function(**data)
 
     if backend == "numba":
         x, theta = variable_dict_to_flat_array(data, mod.variables, mod.parameters)
+
         J_actual = mod.f_jac(x, theta)
+        H_actual = mod.f_hess(x, theta)
+        Hp_actual = mod.f_hessp(x, p, theta)
     else:
         J_actual = mod.f_jac(**data)
+        H_actual = mod.f_hess(**data)
+        p_vals = flat_array_to_variable_dict(p, mod.variables, mod.coords).values()
+
+        points = {f"{var.name}_point": value for var, value in zip(mod.variables, p_vals)}
+        Hp_actual = mod.f_hessp(**data, **points)
 
     np.testing.assert_allclose(J_expected, J_actual, atol=1e-8)
+    np.testing.assert_allclose(H_actual[:, 0], Hp_actual.ravel())
 
 
 @pytest.mark.parametrize(
@@ -377,9 +390,7 @@ def test_model_gradients(model_function, jac_function, backend, parse_to_sympy):
 @pytest.mark.parametrize("sparse", [False, True], ids=["dense", "sparse"])
 def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, data, sparse):
     mod = model_function(
-        equation_mode="numba",
-        backend="pytensor",
-        parse_equations_to_sympy=True,
+        backend="sympytensor",
         mode="FAST_COMPILE",
         use_sparse_matrices=sparse,
     )
@@ -412,19 +423,30 @@ def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, da
                 "method": "trust-exact",
                 "use_hess": True,
                 "use_hessp": False,
-                "niter": 10_000,
+                "maxiter": 10_000,
+                "tol": 1e-16,
+            },
+        ),
+        (
+            "_solve_with_minimize",
+            {
+                "method": "trust-ncg",
+                "use_hess": False,
+                "use_hessp": True,
+                "maxiter": 10_000,
                 "tol": 1e-16,
             },
         ),
         (
             "_solve_with_root",
-            {"method": "hybr", "use_jac": True, "niter": 10_000, "tol": 1e-16},
+            {"method": "hybr", "use_jac": True, "maxiter": 10_000, "tol": 1e-16},
         ),
         ("_solve_with_euler_approximation", {"n_steps": 500}),
     ],
-    ids=["minimize", "root", "euler"],
+    ids=["minimize_hess", "minimize_hessp", "root", "euler"],
 )
 @pytest.mark.parametrize("mode", ["FAST_RUN", "JAX"], ids=["FAST_RUN", "JAX"])
+@pytest.mark.parametrize("pt_backend", ["pytensor", "sympytensor"], ids=["pytensor", "sympytensor"])
 def test_backends_agree(
     model_function: Callable,
     calibrate_model: Callable,
@@ -432,16 +454,19 @@ def test_backends_agree(
     method: str,
     solver_kwargs: dict,
     mode: str,
+    pt_backend: str,
 ):
     if mode in ["JAX"]:
         pytest.importorskip(mode.lower())
     model_numba = model_function(backend="numba")
-    model_pytensor = model_function(backend="pytensor", mode=mode, parse_equations_to_sympy=False)
+    model_pytensor = model_function(backend=pt_backend, mode=mode)
 
     def solver_agreement_checks(results: list, names: list):
         for res, name in zip(results, names):
             if hasattr(res, "success"):
-                assert res.success or res.fun < 1e-8, f"{name} solver failed to converge"
+                assert res.success or np.allclose(
+                    res.fun, 0.0, rtol=1e-8, atol=1e-8
+                ), f"{name} solver failed to converge"
             if hasattr(res, "x"):
                 assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
                 assert np.all(np.isfinite(res.x)), f"{name} solver returned Infs"
@@ -508,15 +533,34 @@ def test_generate_SAM():
         "K_s": 5000,
         "w": 1.0,
     }
-    initial_guess = {"C": 10000, "Y": 10000, "income": 10000, "K_d": 5000, "L_d": 1000}
+    initial_guess = {
+        "C": 10000,
+        "Y": 10000,
+        "income": 10000,
+        "K_d": 5000,
+        "L_d": 1000,
+        "r": 1.0,
+        "P": 1.0,
+        "resid": 0.0,
+    }
+    # fixed_values = {"r": 1.0, "P": 1.0, "resid": 0.0}
 
-    fixed_values = {"r": 1.0, "P": 1.0, "resid": 0.0}
     mod.generate_SAM(
         param_dict=param_dict,
         initial_variable_guess=initial_guess,
-        fixed_values=fixed_values,
+        # fixed_values=fixed_values,
         solve_method="minimize",
         method="nelder-mead",
         use_jac=False,
         use_hess=False,
     )
+
+
+def test_can_compile_without_jax_installed():
+    with patch.dict(sys.modules, {"jax": None}):
+        with pytest.raises(ImportError):
+            load_model_1(backend="pytensor", mode="JAX")
+
+        mod = load_model_1(backend="pytensor")
+        inital_data = calibrate_model_1(**model_1_data)
+        mod.simulate(inital_data, final_delta_pct={"L_s": 0.5})

@@ -4,8 +4,7 @@ import numpy as np
 import pytensor
 import pytensor.tensor as pt
 
-from cge_modeling.pytensorf.compile import flat_tensor_to_ragged_list
-from cge_modeling.tools.pytensor_tools import flatten_equations
+from cge_modeling.compile.pytensor_tools import flat_tensor_to_ragged_list, flatten_equations
 
 
 def eval_func_maybe_exog(X, exog, f, has_exog):

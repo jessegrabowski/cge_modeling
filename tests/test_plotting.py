@@ -6,7 +6,7 @@ from tests.utilities.models import calibrate_model_2, load_model_2, model_2_data
 
 @pytest.fixture(scope="session")
 def test_data():
-    mod = load_model_2()
+    mod = load_model_2(backend="numba")
     calibrated_data = calibrate_model_2(**model_2_data)
     idata = mod.simulate(calibrated_data, final_delta_pct={"L_s": 0.5})
 

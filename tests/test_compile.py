@@ -1,14 +1,14 @@
 import numpy as np
+import pytensor
 import pytensor.tensor as pt
 import pytest
 
 from cge_modeling.base.primitives import Parameter, Variable
-from cge_modeling.pytensorf.compile import (
-    compile_cge_model_to_pytensor,
-    compile_euler_approximation_function,
-    object_to_pytensor,
+from cge_modeling.compile.euler import symbolic_euler_approximation
+from cge_modeling.compile.pytensor import (
+    cge_primitives_to_pytensor,
 )
-from cge_modeling.tools.pytensor_tools import make_jacobian
+from cge_modeling.compile.pytensor_tools import make_jacobian, object_to_pytensor
 from tests.utilities.models import load_model_1, load_model_2
 
 test_cases = [
@@ -40,14 +40,12 @@ def test_object_to_pytensor(cls, name, coords):
     [
         (
             load_model_1,
-            {"backend": "pytensor", "compile": False, "parse_equations_to_sympy": True},
+            {"backend": "sympytensor"},
         ),
         (
             load_model_2,
             {
                 "backend": "pytensor",
-                "compile": False,
-                "parse_equations_to_sympy": False,
             },
         ),
     ],
@@ -58,9 +56,11 @@ def test_compile_to_pytensor(model_func, kwargs):
     n_variables = n_eq = len(cge_model.unpacked_variable_names)
     n_params = len(cge_model.unpacked_parameter_names)
 
-    (variables, parameters), (model, jac, B) = compile_cge_model_to_pytensor(cge_model)
+    system, variables, parameters, _ = cge_primitives_to_pytensor(cge_model)
+    jac = make_jacobian(system, variables)
+    B = make_jacobian(system, parameters)
 
-    assert model.type.shape == (n_eq,)
+    assert system.type.shape == (n_eq,)
     assert jac.type.shape == (n_eq, n_variables)
     assert B.type.shape == (n_eq, n_params)
 
@@ -79,50 +79,18 @@ def test_compile_euler_approximation_function():
 
     mode = "FAST_COMPILE"
 
-    A = make_jacobian(equations, variables)
-    B = make_jacobian(equations, [parameters])
-    f_1 = compile_euler_approximation_function(
-        A=A,
-        B=B,
-        variables=variables,
-        parameters=[parameters],
-        n_steps=1,
-        mode=mode,
+    theta_final, n_steps, result = symbolic_euler_approximation(
+        equations, variables=variables, parameters=[parameters]
     )
-    f_10 = compile_euler_approximation_function(
-        A=A,
-        B=B,
-        variables=variables,
-        parameters=[parameters],
-        n_steps=10,
-        mode=mode,
-    )
-    f_100 = compile_euler_approximation_function(
-        A=A,
-        B=B,
-        variables=variables,
-        parameters=[parameters],
-        n_steps=100,
-        mode=mode,
-    )
-    f_10k = compile_euler_approximation_function(
-        A=A,
-        B=B,
-        variables=variables,
-        parameters=[parameters],
-        n_steps=10_000,
-        mode=mode,
-    )
+    f = pytensor.function([*variables, parameters, theta_final, n_steps], result, mode=mode)
 
+    steps = [1, 10, 100, 10_000]
     initial_point = [1, 1]
     v3_initial = 1
     v3_final = 2
 
     analytic_solution = f_analytic(v3_final)
-    approximate_solutions = [
-        np.c_[f(*initial_point, v3_initial, np.array([v3_final]))[:2]].T
-        for f in [f_1, f_10, f_100, f_10k]
-    ]
+    approximate_solutions = [np.c_[f(*initial_point, v3_initial, v3_final, n)[:2]].T for n in steps]
     errors = np.c_[[solution[-1] - analytic_solution for solution in approximate_solutions]]
 
     # Test the errors are monotonically decreasing in the number of steps

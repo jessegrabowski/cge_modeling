@@ -10,6 +10,9 @@ from sympy.printing.numpy import NumPyPrinter, _known_functions_numpy
 
 _known_functions_numpy.update({"DiracDelta": lambda x: 0.0, "log": "log"})
 
+FLOAT_INDEX_PATTERN = re.compile(r"(\w+)\[(\d+)\.0\]")
+ZERO_PATTERN = re.compile(r"(?<![\.\w])0([ ,\]])")
+
 
 class NumbaFriendlyNumPyPrinter(NumPyPrinter):
     _kf = _known_functions_numpy
@@ -60,7 +63,7 @@ class NumbaFriendlyNumPyPrinter(NumPyPrinter):
 
 def numba_lambdify(
     exog_vars: list[sp.Symbol],
-    expr: list[sp.Expr] | sp.Matrix | list[sp.Matrix],
+    expr: sp.Expr | list[sp.Expr] | sp.Matrix | list[sp.Matrix],
     endog_vars: list[sp.Symbol] | None = None,
     func_signature: str | None = None,
     ravel_outputs=False,
@@ -99,7 +102,6 @@ def numba_lambdify(
     -----
     The function returned by this function is pickleable.
     """
-    ZERO_PATTERN = re.compile(r"(?<![\.\w])0([ ,\]])")
     FLOAT_SUBS = {
         sp.core.numbers.One(): sp.Float(1),
         sp.core.numbers.NegativeOne(): sp.Float(-1),
@@ -176,6 +178,11 @@ def numba_lambdify(
 
             # Handle conversion of 0 to 0.0
             code = re.sub(ZERO_PATTERN, r"0.0\g<1>", code)
+
+            # Its possible there were indexed values like x[0], which were rewritten to x[0.0], creating invalid code.
+            # For these, we need to undo the int to float rewrites
+            code = re.sub(FLOAT_INDEX_PATTERN, r"\1[\2]", code)
+
             code_name = f"retval_{i}"
             retvals.append(code_name)
             code = f"    {code_name} = np.array(\n{code}\n    )"
@@ -205,7 +212,10 @@ def numba_lambdify(
     assignments = "\n".join(
         [f"    {x} = {printer.doprint(y).replace('numpy.', 'np.')}" for x, y in sub_dict]
     )
+    assignments = re.sub(FLOAT_INDEX_PATTERN, r"\1[\2]", assignments)
+
     returns = f'[{",".join(retvals)}]' if len(retvals) > 1 else retvals[0]
+    returns = re.sub(FLOAT_INDEX_PATTERN, r"\1[\2]", returns)
     full_code = f"{decorator}\ndef f({input_signature}):\n{unpacked_inputs}\n\n{assignments}\n\n{code}\n\n    return {returns}"
 
     docstring = f"'''Automatically generated code:\n{full_code}'''"
@@ -213,79 +223,3 @@ def numba_lambdify(
 
     exec(code)
     return locals()["f"]
-
-
-@nb.njit(cache=True)
-def float_to_array(arr):
-    return np.asarray(arr, np.float64)
-
-
-@nb.njit(cache=True, nogil=True)
-def euler_approx(f, x0, theta0, theta, n_steps, progress_bar):
-    """
-    Compute the solution to a non-linear function g(x, theta + dtheta) by iteratively computing a linear approximation
-    f(x[t], theta + epsilon[t]) at the point (f(x[t-1], theta + epsilon[t-1]), theta + epsilon[t-1]), where epsilon[-1] = dtheta
-
-    Parameters
-    ----------
-    f: njit function
-        Linearized function to be approximated. Must have signature f(endog, exog) -> array[:]
-
-    x0: np.ndarray
-        Array of values of model variables representing the point at which g is linearized.
-
-    theta0: np.ndarray
-        Array of model parameter values representing the point at which g is linearized.
-
-    theta: np.ndarray
-        Values at which g is to be solved. These should correspond to something like "shocks" from the initial parameter
-        values theta0.
-
-    n_steps: int
-        Number of gradient updates to perform; this is the length of the epsilon vector in the notation above. More steps
-        leads to a more precise approximation.
-
-    Returns
-    -------
-    x: np.ndarray
-        Approximate solution to g(x + dx)
-
-    Notes
-    -----
-    A non-linear function g(x, theta) = 0, can be linearized around a point (x0, theta0) as:
-
-        A(x0, theta0) @ dx + B(x0, theta0) @ dtheta = 0
-
-    Where A is the jacobian of dg/dx, and B is the jacobian dg/dtheta. This system can be solved for x:
-        f(x0, theta0, dtheta) := dx = -inv(A(x0, theta0)) @ B(x0, theta0) @ dtheta
-
-    It is well-known that this linear approximation is poor when dtheta is large relative to theta0. A
-    solution to this problem is to decompse dtheta into a sequence of smaller -- presumably more accurate -- steps,
-    and iteratively update [x0, theta0] in the following fashion:
-        1. Initialize x_t = x0, theta_t = theta0
-        2. Compute step_size = (theta - theta0) / n_steps
-        3. For n_steps:
-            1. Compute dx = f(x=x_t, theta=theta_t, dtheta=step_size)
-            2. Update x_t = x_t + dx, theta_t = theta_t + step_size
-
-    Using this algorithm, and given an infinite compute budget, g(x0, theta) can be computed to arbitrary precision.
-    """
-    x0 = np.atleast_1d(float_to_array(x0))
-    theta0 = np.atleast_1d(float_to_array(theta0))
-    theta = np.atleast_1d(float_to_array(theta))
-
-    output = np.zeros((n_steps + 1, x0.size + theta0.size))
-    output[0, : x0.size] = x0
-    output[0, x0.size :] = theta0
-
-    dtheta = theta - theta0
-    x = np.concatenate((x0, theta0))
-    step_size = dtheta / n_steps
-
-    for t in range(1, n_steps + 1):
-        dx = f(step_size, x).ravel()
-        x = x + np.concatenate((dx, step_size))
-        output[t, :] = x
-        progress_bar.update(1)
-
-    return output

@@ -1,6 +1,8 @@
 import pytensor
 import pytensor.tensor as pt
 
+from cge_modeling.compile.pytensor_tools import rewrite_pregrad
+
 
 def test_prod_to_no_zero_prod():
     x = pt.dvector("x")
