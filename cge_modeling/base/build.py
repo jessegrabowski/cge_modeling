@@ -16,7 +16,9 @@ COMPILE_FUNC_FACTORY = {
 }
 
 
-def determine_default_backend(equations):
+def determine_default_backend(
+    equations: list[Equation],
+) -> Literal["pytensor", "numba", "sympytensor"]:
     # Check for Sum/Prod in the equations, if found, use sympytensor
     if any("Sum(" in eq.equation or "Prod(" in eq.equation for eq in equations):
         return "sympytensor"
@@ -49,7 +51,12 @@ def compile_model(
     functions_to_compile: list[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
 ) -> CGEModel:
-    if backend == "pytensor" and mode == "jax" and importlib.util.find_spec("jax") is not None:
+    if (
+        backend == "pytensor"
+        and mode is not None
+        and mode.upper() == "JAX"
+        and importlib.util.find_spec("jax") is not None
+    ):
         from cge_modeling.compile.jax import compile_jax_cge_functions
 
         func_maker = compile_jax_cge_functions
@@ -74,6 +81,7 @@ def compile_model(
 
     model._compiled = functions_to_compile
     model._compile_backend = backend
+    model.mode = mode.upper() if isinstance(mode, str) else mode
 
     return model
 
@@ -85,7 +93,7 @@ def cge_model(
     equations: list[Equation] | dict[str, Equation] | None = None,
     numeraire: Variable | None = None,
     apply_sympy_simplify: bool = False,
-    backend: Literal["pytensor", "numba"] | None = None,
+    backend: Literal["pytensor", "numba", "sympytensor"] | None = None,
     mode: str | None = None,
     use_sparse_matrices: bool = False,
     functions_to_compile: list[CompiledFunctions] | None = "all",
