@@ -1,6 +1,8 @@
 import re
 
+from collections import Counter
 from collections.abc import Sequence
+from copy import deepcopy
 from itertools import product
 from typing import Any, cast
 
@@ -417,3 +419,43 @@ def get_method_defaults(use_grad, use_hess, use_hessp, method):
         use_hess = False
 
     return use_grad, use_hess, use_hessp
+
+
+def create_final_param_dict(
+    initial_params: dict[str, Any],
+    final_values: dict[str, Any] | None,
+    final_delta: dict[str, Any] | None,
+    final_delta_pct: dict[str, Any] | None,
+) -> dict[str, Any]:
+    scenario_params = deepcopy(initial_params)
+    final_values = final_values if final_values is not None else {}
+    final_delta = final_delta if final_delta is not None else {}
+    final_delta_pct = final_delta_pct if final_delta_pct is not None else {}
+
+    all_params_to_update = [*final_values.keys(), *final_delta.keys(), *final_delta_pct.keys()]
+    if len(all_params_to_update) == 0:
+        raise ValueError(
+            "No parameters to update! Cannot create a scenario without updating any parameters."
+        )
+
+    update_count = Counter(all_params_to_update)
+    repeated_arguments = [k for k, v in update_count.items() if v > 1]
+    if len(repeated_arguments) > 0:
+        raise ValueError(
+            f"Arguments {', '.join(repeated_arguments)} are repeated among final_values, final_delta,"
+            f" and final_delta_pct. Define each scenario in exactly one way (by giving the final value, "
+            f"the offset from the initial value, or the percentage change from the initial value)."
+        )
+
+    # For final values, directly insert the provided values, overwriting the initial values
+    scenario_params.update(final_values)
+
+    # For deltas, add the delta to the initial value
+    for k, v in final_delta.items():
+        scenario_params[k] += v
+
+    # For percent changes, multiply the initial value by the percentage change
+    for k, v in final_delta_pct.items():
+        scenario_params[k] *= v
+
+    return scenario_params

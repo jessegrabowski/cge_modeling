@@ -32,6 +32,7 @@ from cge_modeling.base.primitives import (
 from cge_modeling.base.utilities import (
     _replace_dim_marker_with_dim_name,
     _validate_input,
+    create_final_param_dict,
     ensure_input_is_sequence,
     flat_array_to_variable_dict,
     get_method_defaults,
@@ -987,22 +988,24 @@ class CGEModel:
                 f"initial_state must be a Result or a dict of initial values, found {type(initial_state)}"
             )
 
-        if not all(x in x0_var_param for x in self.variable_names + self.parameter_names):
+        all_model_objs = [*self.variable_names, *self.parameter_names]
+
+        if not all(x in x0_var_param for x in all_model_objs):
+            missing_objs = [x for x in all_model_objs if x not in x0_var_param]
             raise ValueError(
-                f"initial_state must contain values for all variables and parameters in the model. Found {initial_state.keys()}"
+                f"initial_state must contain values for all variables and parameters in the model. Did not find values "
+                f"for {', '.join(missing_objs)}"
             )
 
-        final_param_dict = deepcopy(x0_var_param)
-        if final_values is not None:
-            final_param_dict.update(final_values)
-        elif final_delta is not None:
-            for k, v in final_delta.items():
-                final_param_dict[k] += v
-        elif final_delta_pct is not None:
-            for k, v in final_delta_pct.items():
-                final_param_dict[k] *= v
-        else:
-            raise ValueError()
+        if any(x not in all_model_objs for x in x0_var_param):
+            unknown_objs = [x for x in x0_var_param if x not in all_model_objs]
+            raise ValueError(
+                f"initial_state contains values for variables or parameters not in the model: {', '.join(unknown_objs)}"
+            )
+
+        final_param_dict = create_final_param_dict(
+            x0_var_param, final_values, final_delta, final_delta_pct
+        )
 
         _, theta_simulation = variable_dict_to_flat_array(
             final_param_dict, self.variables, self.parameters
