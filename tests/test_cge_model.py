@@ -564,3 +564,63 @@ def test_can_compile_without_jax_installed():
         mod = load_model_1(backend="pytensor")
         inital_data = calibrate_model_1(**model_1_data)
         mod.simulate(inital_data, final_delta_pct={"L_s": 0.5})
+
+
+def test_invalid_simulation_raises():
+    mod = load_model_1(backend="numba")
+    initial_state = calibrate_model_1(**model_1_data)
+
+    with pytest.raises(
+        ValueError, match="initial_state must be a Result or a dict of initial values"
+    ):
+        mod.simulate([1, 2, 3, 4, 5], final_values={"L_s": 1500})
+
+    with pytest.raises(
+        ValueError,
+        match="initial_state must contain values for all variables and parameters in the "
+        "model. Did not find values for alpha",
+    ):
+        bad_init = initial_state.copy()
+        del bad_init["alpha"]
+
+        mod.simulate(bad_init, final_values={"L_s": 1500})
+
+    with pytest.raises(
+        ValueError,
+        match="initial_state contains values for variables or parameters not in the " "model: lol",
+    ):
+        bad_init = initial_state.copy()
+        bad_init["lol"] = 3
+        mod.simulate(bad_init, final_values={"L_s": 1500})
+
+    with pytest.raises(ValueError, match="No parameters to update!"):
+        mod.simulate(initial_state)
+
+    with pytest.raises(ValueError, match="Arguments K_s are repeated among"):
+        mod.simulate(
+            initial_state, final_values={"L_s": 1500, "K_s": 5000}, final_delta_pct={"K_s": 0.5}
+        )
+
+
+@pytest.mark.parametrize(
+    "scenario_kwargs, expected_result",
+    [
+        ({"final_values": {"L_s": 1500}}, {"L_s": lambda x: 1500}),
+        ({"final_delta_pct": {"L_s": 0.5}}, {"L_s": lambda x: x * 0.5}),
+        ({"final_delta": {"L_s": -500}}, {"L_s": lambda x: x - 500}),
+        (
+            {"final_values": {"L_s": 1500}, "final_delta_pct": {"K_s": 0.5}},
+            {"L_s": lambda x: 1500, "K_s": lambda x: x * 0.5},
+        ),
+    ],
+    ids=["final_values", "final_delta_pct", "final_delta", "combined"],
+)
+def test_simulate(scenario_kwargs, expected_result):
+    mod = load_model_1(backend="numba")
+    initial_state = calibrate_model_1(**model_1_data)
+
+    res = mod.simulate(initial_state, **scenario_kwargs)
+
+    for key in expected_result:
+        final_param = res["optimizer"].parameters[key].isel(step=-1)
+        assert final_param == expected_result[key](initial_state[key])
