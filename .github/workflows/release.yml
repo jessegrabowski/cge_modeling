@@ -18,7 +18,7 @@ jobs:
         python-version: 3.11
     - name: Install release tooling
       run: |
-        pip install twine wheel
+        pip install twine wheel numpy setuptools versioneer
     - name: Build package
       run: |
         python setup.py sdist bdist_wheel
