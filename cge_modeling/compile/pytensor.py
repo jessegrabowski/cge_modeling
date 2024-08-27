@@ -327,7 +327,14 @@ def compile_pytensor_cge_functions(
             )
             f_euler.trust_inputs = True
 
-    return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler
+    def unwrap_jit_fn(f, mode):
+        if f is None or mode not in ["JAX", "NUMBA"]:
+            return f
+        return f.vm.jit_fn
+
+    return tuple(
+        unwrap_jit_fn(f, mode) for f in [f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler]
+    )
 
 
 def compile_cge_model_to_pytensor_Op(cge_model) -> tuple[pt.Op, pt.Op]:

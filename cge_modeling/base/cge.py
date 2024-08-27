@@ -722,7 +722,9 @@ class CGEModel:
             use_hess = False
             _log.warning("use_hess is ignored when use_jac=False. Setting use_hess=False.")
 
-        if self._compile_backend in ["pytensor", "sympytensor"] and self.mode != "JAX":
+        if (
+            self._compile_backend in ["pytensor"] and self.mode != "JAX"
+        ) or self._compile_backend == "sympytensor":
             parameters = self.parameters
             coords = self.coords
 
