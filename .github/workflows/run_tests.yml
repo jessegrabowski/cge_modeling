@@ -55,7 +55,7 @@ jobs:
           hashFiles('requirements.txt') }}
     - uses: conda-incubator/setup-miniconda@v2
       with:
-        miniforge-variant: Mambaforge
+        miniforge-variant: MiniForge3
         miniforge-version: latest
         mamba-version: "*"
         activate-environment: cge-test
