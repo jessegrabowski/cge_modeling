@@ -16,27 +16,48 @@ _log = logging.getLogger(__name__)
 
 
 class SAMTransformer:
-    __slots__ = ("_fit", "scale", "negative_mask")
+    __slots__ = ("_fit", "scale", "negative_locs", "n_levels")
 
     def __init__(self):
         self._fit = False
         self.scale: float | None = None
-        self.negative_mask: np.ndarray | None = None
+        self.negative_locs: list[tuple] | None = None
+        self.n_levels: int | None = None
 
     def fit(self, df):
-        self.scale = df.abs().sum().sum()
-        self.negative_mask = df < 0
+        n_levels = self.n_levels = len(df.index.names)
+        assert self.n_levels == len(
+            df.columns.names
+        ), "Index and columns must have the same number of levels"
+
+        self.scale = df.sum().sum()
+        negative_cells = (
+            (df < 0)
+            .melt(ignore_index=False)
+            .loc[lambda x: x.value]
+            .reset_index()
+            .drop(columns=["value"])
+            .values
+        )
+
+        def gather_indices(x):
+            if n_levels > 1:
+                return tuple(x[:n_levels]), tuple(x[n_levels:])
+            return x[:n_levels].item(), x[n_levels:].item()
+
+        self.negative_locs = [gather_indices(x) for x in negative_cells]
+
         self._fit = True
 
     def transform(self, df):
         if not self._fit:
             raise ValueError("Must fit transformer before transforming data")
-        neg_mask = self.negative_mask
-
+        assert self.n_levels == len(df.columns.names) == len(df.index.names)
         df = df.copy()
         df = df / self.scale
-        df.values.T[neg_mask] = -df.values[neg_mask]
-        df.values[neg_mask] = 0
+        for row, col in self.negative_locs:
+            df.loc[col, row] = -df.loc[row, col]
+            df.loc[row, col] = 0
 
         return df
 
@@ -47,11 +68,12 @@ class SAMTransformer:
     def inverse_transform(self, df):
         if not self._fit:
             raise ValueError("Must fit transformer before transforming data")
-        neg_mask = self.negative_mask
+        assert self.n_levels == len(df.columns.names) == len(df.index.names)
 
         df = df.copy()
-        df.values[neg_mask] = -df.values[neg_mask.T]
-        df[neg_mask.T] = 0
+        for row, col in self.negative_locs:
+            df.loc[row, col] = -df.loc[col, row]
+            df.loc[col, row] = 0
         df = df * self.scale
 
         return df
