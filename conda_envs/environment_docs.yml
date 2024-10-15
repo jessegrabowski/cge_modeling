@@ -23,6 +23,7 @@ dependencies:
     - texttable
     - sympytensor
     - squarify
+    - better_optimize
 
   # Extra dependencies for docs build
   - ipython

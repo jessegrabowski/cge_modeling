@@ -24,6 +24,7 @@ dependencies:
     - texttable
     - sympytensor
     - squarify
+    - better_optimize
 
   # Testing dependencies
   - pre-commit

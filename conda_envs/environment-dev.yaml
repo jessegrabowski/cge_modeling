@@ -32,6 +32,7 @@ dependencies:
       - jupyter_contrib_nbextensions
       - jupyter_nbextensions_configurator
       - sympytensor
+      - better_optimize
 
 
   # For building docs
