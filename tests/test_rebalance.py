@@ -31,8 +31,16 @@ def test_SAM_transformer(index):
     assert np.all(inverse == np.array([[0, 0, 3], [0, 0, 0], [0, -1, 0]]))
 
 
-def test_cross_entropy_rebalance():
-    df = pd.read_csv("tests/data/unbalanced_sam.csv", index_col=[0, 1], header=[0, 1])
-    df2, optim_res = balance_SAM(df, maxiter=5000)
-    assert optim_res.success
+@pytest.mark.parametrize("backend, method", [("cvxpy", "CLARABEL"), ("scipy", "SLSQP")])
+def test_cross_entropy_rebalance(backend, method):
+    df = pd.read_csv("tests/data/unbalanced_sam.csv", index_col=[0, 1], header=[0, 1]).fillna(0.0)
+    if backend == "scipy":
+        minimizer_kwargs = {"maxiter": 5000}
+    else:
+        minimizer_kwargs = {"delta": 1e-4}
+
+    df2, optim_res, success = balance_SAM(
+        df, use_cvxpy=backend == "cvxpy", method=method, **minimizer_kwargs
+    )
+    assert success
     assert np.allclose(df2.sum(axis=0), df2.sum(axis=1))

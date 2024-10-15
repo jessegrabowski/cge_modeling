@@ -3,12 +3,14 @@ import logging
 from collections.abc import Callable
 from functools import partial
 
+import cvxpy as cp
 import numpy as np
 import pandas as pd
 import pytensor
 import pytensor.tensor as pt
 
 from better_optimize import minimize
+from scipy.sparse import csr_array
 
 from cge_modeling.compile.pytensor_tools import rewrite_pregrad
 
@@ -154,20 +156,64 @@ def _crossentropy_method_setup(
     return f_X, f_ce, f_1, f_2, f_grad, f_1_grad, f_2_grad, f_hess, f_jvp_ce
 
 
-def balance_SAM(
-    sam: pd.DataFrame,
-    how="cross-entropy",
+def sparse_to_vector_and_matrix(Z):
+    row_indices, col_indices = Z.nonzero()
+    x = Z.data
+    nnz = Z.nnz
+
+    num_elements = Z.shape[0] * Z.shape[1]
+    A_data = np.ones(nnz)
+    A_rows = row_indices * Z.shape[1] + col_indices  # Flattened indices
+    A_cols = np.arange(nnz)
+
+    A = csr_array((A_data, (A_rows, A_cols)), shape=(num_elements, nnz))
+
+    return x, A
+
+
+def _balance_with_cvxpy(normalized_sam: pd.DataFrame, scale, method, **minimize_kwargs):
+    method = "CLARABEL" if method is None else method
+    delta = minimize_kwargs.pop("delta", 1e-10)
+
+    n = normalized_sam.shape[0]
+    Z = csr_array(normalized_sam.values)
+
+    x, A = sparse_to_vector_and_matrix(Z)
+    k = x.shape[0]
+    x_optim = cp.Variable(name="x_optim", shape=k)
+
+    Z_optim = (A @ x_optim).reshape((n, n), order="C")
+
+    constraints = [
+        x_optim.sum() == 1,
+        x_optim >= 0,
+        (Z_optim.sum(axis=0) * scale) == (Z_optim.sum(axis=1) * scale),
+    ]
+
+    objective = cp.kl_div(x_optim, x + delta).sum()
+
+    prob = cp.Problem(cp.Minimize(objective), constraints=constraints)
+    prob.solve(solver=method, **minimize_kwargs)
+
+    Z_new = (A @ x_optim.value).reshape((n, n))
+    balanced_SAM = pd.DataFrame(Z_new, index=normalized_sam.index, columns=normalized_sam.columns)
+
+    return balanced_SAM, prob
+
+
+def _balance_with_scipy(
+    normalized_sam: pd.DataFrame,
     use_grad=True,
     use_hess=False,
     use_hessp=True,
     use_constraint_grad=True,
     mode=None,
-    method="SLSQP",
+    method: str | None = None,
     progressbar=True,
     **minimize_kwargs,
 ):
-    if how != "cross-entropy":
-        raise NotImplementedError("Only cross-entropy method is implemented")
+    method = "SLSQP" if method is None else method
+
     if method not in ("SLSQP", "COBYLA", "trust-constr"):
         raise ValueError(
             "SAM rebalancing requires constrained optimization which is only supported by "
@@ -181,9 +227,6 @@ def balance_SAM(
         )
         use_hess = False
         use_hessp = False
-
-    sam_transformer = SAMTransformer()
-    normalized_sam = sam_transformer.fit_transform(sam)
 
     f_list = _crossentropy_method_setup(
         normalized_sam,
@@ -211,6 +254,7 @@ def balance_SAM(
             {"type": "eq", "fun": f_2, "jac": f_2_grad},
         ],
         bounds=[(0, 1)] * nonzero_values.shape[0],
+        progressbar=progressbar,
         **minimize_kwargs,
     )
 
@@ -220,5 +264,51 @@ def balance_SAM(
     balanced_SAM = pd.DataFrame(
         f_X(res.x), index=normalized_sam.index, columns=normalized_sam.columns
     )
-    balanced_SAM = sam_transformer.inverse_transform(balanced_SAM)
+
     return balanced_SAM, res
+
+
+def balance_SAM(
+    sam: pd.DataFrame,
+    how="cross-entropy",
+    use_cvxpy=True,
+    use_grad=True,
+    use_hess=False,
+    use_hessp=True,
+    use_constraint_grad=True,
+    mode=None,
+    method: str | None = None,
+    progressbar=True,
+    **minimize_kwargs,
+):
+    if how != "cross-entropy":
+        raise NotImplementedError("Only cross-entropy method is implemented")
+
+    sam_transformer = SAMTransformer()
+    normalized_sam = sam_transformer.fit_transform(sam)
+
+    if use_cvxpy:
+        balanced_SAM, res = _balance_with_cvxpy(
+            normalized_sam,
+            scale=sam_transformer.scale,
+            method=method,
+            **minimize_kwargs,
+        )
+        success = res.status == cp.OPTIMAL
+
+    else:
+        balanced_SAM, res = _balance_with_scipy(
+            normalized_sam,
+            use_grad=use_grad,
+            use_hess=use_hess,
+            use_hessp=use_hessp,
+            use_constraint_grad=use_constraint_grad,
+            mode=mode,
+            method=method,
+            progressbar=progressbar,
+            **minimize_kwargs,
+        )
+        success = res.success
+
+    balanced_SAM = sam_transformer.inverse_transform(balanced_SAM)
+    return balanced_SAM, res, success

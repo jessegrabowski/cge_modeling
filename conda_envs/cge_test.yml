@@ -18,6 +18,7 @@ dependencies:
   - fastprogress
   - matplotlib
   - joblib
+  - cvxpy
 
   - pip:
     - latextable

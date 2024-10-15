@@ -19,6 +19,7 @@ dependencies:
   - fastprogress
   - matplotlib
   - joblib
+  - cvxpy
 
   # JAX Backend
   - jax

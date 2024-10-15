@@ -17,6 +17,7 @@ dependencies:
   - matplotlib
   - jax
   - joblib
+  - cvxpy
 
   - pip:
       - texttable
