@@ -131,8 +131,9 @@ class ModelObject(ABC):
         idx_subscript = self._make_latex_subscript()
         base_latex_name = self.latex_name
         int_extend = int(self.extend_subscript)
+        has_subscript = "_{" in base_latex_name and "}" in base_latex_name
 
-        if self.extend_subscript:
+        if self.extend_subscript and has_subscript:
             tokens = base_latex_name.split("_")
             base_chunks, subscript_chunks = tokens[:-int_extend], tokens[-int_extend:]
             subscript = _process_subscript_chunks(subscript_chunks)
