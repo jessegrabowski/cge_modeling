@@ -1,3 +1,4 @@
+import logging
 import re
 
 from collections import Counter
@@ -17,6 +18,7 @@ from cge_modeling.base.primitives import (
     _pretty_print_dim_flags,
 )
 
+_log = logging.getLogger(__name__)
 CGETypes = Variable | Parameter | Equation
 
 
@@ -428,6 +430,7 @@ def create_final_param_dict(
     final_delta_pct: dict[str, Any] | None,
 ) -> dict[str, Any]:
     scenario_params = deepcopy(initial_params)
+
     final_values = final_values if final_values is not None else {}
     final_delta = final_delta if final_delta is not None else {}
     final_delta_pct = final_delta_pct if final_delta_pct is not None else {}

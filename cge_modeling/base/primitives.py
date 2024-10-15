@@ -144,7 +144,15 @@ class ModelObject(ABC):
 
             if len(subscript) > 0:
                 subscript = subscript.replace("{", "").replace("}", "")
-                idx_subscript = "_{" + subscript + ", " + idx_subscript[2:]
+                idx_subscript = "_{" + subscript
+                if len(idx_subscript) > 0:
+                    subscript += ", " + idx_subscript[2:]
+
+            if not idx_subscript.endswith("}"):
+                idx_subscript += "}"
+
+        if "_" in base_latex_name:
+            base_latex_name = r"\text{" + base_latex_name + "}"
 
         latex_name = base_latex_name + idx_subscript
 

@@ -234,6 +234,7 @@ def heading_to_latex(s):
 def parse_data(x):
     if isinstance(x, ModelObject):
         return x._full_latex_name
+
     elif isinstance(x, float | int):
         return x
     elif isinstance(x, str):
