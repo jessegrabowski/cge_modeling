@@ -1,6 +1,7 @@
 import sys
 
 from collections.abc import Callable
+from importlib.util import find_spec
 from unittest.mock import patch
 
 import numpy as np
@@ -22,6 +23,8 @@ from tests.utilities.models import (
     model_1_data,
     model_2_data,
 )
+
+JAX_INSTALLED = find_spec("JAX") is not None
 
 
 @pytest.fixture()
@@ -351,7 +354,10 @@ def test_long_unpack():
     "backend", ["numba", "sympytensor", "pytensor"], ids=["numba", "sympytensor", "pytensor"]
 )
 def test_model_gradients(model_function, jac_function, backend):
-    mode = "FAST_COMPILE" if backend in ["pytensor", "sympytensor"] else None
+    mode = "FAST_RUN" if backend in ["pytensor", "sympytensor"] else None
+    if mode == "FAST_RUN" and JAX_INSTALLED:
+        mode = "JAX"
+
     mod = model_function(
         backend=backend,
         mode=mode,
@@ -391,7 +397,7 @@ def test_model_gradients(model_function, jac_function, backend):
 def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, data, sparse):
     mod = model_function(
         backend="sympytensor",
-        mode="FAST_COMPILE",
+        mode="FAST_RUN" if not JAX_INSTALLED else "JAX",
         use_sparse_matrices=sparse,
     )
 

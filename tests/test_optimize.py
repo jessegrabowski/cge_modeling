@@ -80,7 +80,7 @@ def test_small_model():
         [1.16392629e04, 1.16392629e04, 7000.0, 4000.0, 0.897630824, 0.861940299, 0.0]
     )
     f_model_compiled = pytensor.function(
-        inputs=variables + params, outputs=equations, mode="FAST_COMPILE"
+        inputs=variables + params, outputs=equations, mode="FAST_RUN"
     )
 
     # Check optimizer converges to the scipy result
@@ -151,7 +151,7 @@ def test_small_model_from_compile():
 
 
 def test_sector_model_from_compile():
-    mod = load_model_2(mode="FAST_COMPILE", backend="pytensor")
+    mod = load_model_2(mode="FAST_RUN", backend="pytensor")
     calib_dict = calibrate_model_2(**model_2_data)
 
     x0 = {var.name: calib_dict[var.name] for var in mod.variables}
