@@ -84,17 +84,21 @@ def test_to_dict(cls):
         ("x_F", ["i", "j"], True, "x_{F, i=\\text{A}, j}"),
         ("x_{Fish}", ["i", "i"], True, "x_{Fish, i=\\text{A}, i=\\text{A}}"),
         ("x_K_d", ["i", "j"], 2, "x_{K, d, i=\\text{A}, j}"),
-        ("var_with_underscore", ["i"], False, "var_with_underscore_{i=\\text{A}}"),
+        ("var_with_underscore", ["i"], False, "\\text{var_with_underscore}_{i=\\text{A}}"),
+        ("P_CE", None, True, "P_{CE}"),
     ],
 )
 def test_sub_label(base_name, dims, extend, expected):
     x = Variable(
         name=base_name,
         dims=dims,
-        description="A lovely item from group <dim:i>",
+        description="A lovely item from group" + " <dim:i>"
+        if dims is not None and "i" in dims
+        else "",
         extend_subscript=extend,
     )
-    x.update_dim_value("i", "A")
+    if dims is not None and "i" in dims:
+        x.update_dim_value("i", "A")
     assert x._full_latex_name == expected
 
 

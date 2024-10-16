@@ -29,8 +29,18 @@ def _pretty_print_dim_flags(s, dims, dim_vals):
     return s
 
 
-def _process_subscript_chunks(chunks):
-    return ", ".join(chunks)
+def _tokenize_latex_subscript(subscript):
+    """
+    Given input of the form "_{...}", where ... is a comma separated list of subscript values,
+    return a list of the individual subscript values.
+    """
+    if subscript.startswith("_{"):
+        subscript = subscript[2:]
+    if subscript.endswith("}"):
+        subscript = subscript[:-1]
+
+    tokens = [x.strip() for x in subscript.split(",")]
+    return tokens if tokens != [""] else []
 
 
 @dataclass(slots=True, order=True, frozen=False, repr=False)
@@ -129,22 +139,27 @@ class ModelObject(ABC):
 
     def _initialize_full_latex_name(self):
         idx_subscript = self._make_latex_subscript()
+        idx_subscript_tokens = _tokenize_latex_subscript(idx_subscript)
         base_latex_name = self.latex_name
         int_extend = int(self.extend_subscript)
 
         if self.extend_subscript:
-            tokens = base_latex_name.split("_")
-            base_chunks, subscript_chunks = tokens[:-int_extend], tokens[-int_extend:]
-            subscript = _process_subscript_chunks(subscript_chunks)
+            tokens = [re.sub(r"[\{\}]", "", x.strip()) for x in base_latex_name.split("_")]
+            base_tokens, subscript_tokens = tokens[:-int_extend], tokens[-int_extend:]
 
-            if len(base_chunks) == 0:
-                base_latex_name, subscript = subscript, base_chunks
+            if len(base_tokens) == 0:
+                base_tokens, subscript_tokens = subscript_tokens, base_tokens
+            base_latex_name = "_".join(base_tokens)
+
+            subscript_tokens = subscript_tokens + idx_subscript_tokens
+
+            if len(subscript_tokens) == 0:
+                idx_subscript = ""
             else:
-                base_latex_name = "_".join(base_chunks)
+                idx_subscript = "_{" + ", ".join(subscript_tokens) + "}"
 
-            if len(subscript) > 0:
-                subscript = subscript.replace("{", "").replace("}", "")
-                idx_subscript = "_{" + subscript + ", " + idx_subscript[2:]
+        if "_" in base_latex_name:
+            base_latex_name = r"\text{" + base_latex_name + "}"
 
         latex_name = base_latex_name + idx_subscript
 

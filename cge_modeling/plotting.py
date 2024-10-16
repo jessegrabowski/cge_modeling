@@ -499,6 +499,7 @@ def plot_bar(
             legend=legend,
             labelsize=labelsize,
             xlabel_rotation=xlabel_rotation,
+            threshhold=threshhold,
         )
 
     return fig

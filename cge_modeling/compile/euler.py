@@ -45,38 +45,34 @@ def pytensor_euler_function_with_python_loop(
     if f_grad is not None:
         stat_string = "f = {task.fields[RMSE]:,.5g}, ||grad|| = {task.fields[grad_norm]:,.5g}"
 
-    task = None
     progress = initialize_progress_bar(stat_string)
-    progress.start()
+    value_dict = get_step_statistics(current_variables, current_params, f_system, f_grad)
+    task = progress.add_task("[green]Euler Approximation", total=n_steps, **value_dict)
 
-    for t in range(n_steps):
-        current_step = f_step(
-            **current_params,
-            **current_variables,
-            **theta_final,
-            **theta_initial,
-            n_steps=n_steps,
-        )
+    with progress:
+        for t in range(n_steps):
+            current_step = f_step(
+                **current_params,
+                **current_variables,
+                **theta_final,
+                **theta_initial,
+                n_steps=n_steps,
+            )
 
-        current_variable_vals = current_step[:n_variables]
-        current_parameter_vals = current_step[n_variables:]
+            current_variable_vals = current_step[:n_variables]
+            current_parameter_vals = current_step[n_variables:]
 
-        current_variables = {k: current_variable_vals[i] for i, k in enumerate(variable_names)}
-        current_params = {k: current_parameter_vals[i] for i, k in enumerate(parameter_names)}
+            current_variables = {k: current_variable_vals[i] for i, k in enumerate(variable_names)}
+            current_params = {k: current_parameter_vals[i] for i, k in enumerate(parameter_names)}
 
-        for k in data.keys():
-            results[k][t] = current_variables[k] if k in variable_names else current_params[k]
+            for k in data.keys():
+                results[k][t] = current_variables[k] if k in variable_names else current_params[k]
+
+            value_dict = get_step_statistics(current_variables, current_params, f_system, f_grad)
+            progress.update(task, advance=1, **value_dict)
 
         value_dict = get_step_statistics(current_variables, current_params, f_system, f_grad)
-
-        if t == 0:
-            task = progress.add_task("[green]Euler Approximation", total=n_steps, **value_dict)
-
-        progress.update(task, advance=1, **value_dict)
-
-    value_dict = get_step_statistics(current_variables, current_params, f_system, f_grad)
-    progress.update(task, completed=n_steps, refresh=True, **value_dict)
-    progress.stop()
+        progress.update(task, completed=n_steps, refresh=True, **value_dict)
 
     return list(results.values())
 

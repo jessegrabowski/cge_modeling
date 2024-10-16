@@ -17,12 +17,14 @@ dependencies:
   - fastprogress
   - matplotlib
   - joblib
+  - cvxpy
 
   - pip:
     - latextable
     - texttable
     - sympytensor
     - squarify
+    - better_optimize
 
   # Extra dependencies for docs build
   - ipython

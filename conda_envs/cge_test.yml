@@ -18,12 +18,14 @@ dependencies:
   - fastprogress
   - matplotlib
   - joblib
+  - cvxpy
 
   - pip:
     - latextable
     - texttable
     - sympytensor
     - squarify
+    - better_optimize
 
   # Testing dependencies
   - pre-commit

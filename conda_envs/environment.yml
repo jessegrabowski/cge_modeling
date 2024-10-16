@@ -7,7 +7,7 @@ dependencies:
   - pip
   - numpy
   - scipy
-  - sympy
+  - sympy<1.13
   - pandas
   - numba
   - pytensor
@@ -17,9 +17,11 @@ dependencies:
   - matplotlib
   - jax
   - joblib
+  - cvxpy
 
   - pip:
       - texttable
       - latextable
       - squarify
       - sympytensor
+      - better_optimize

@@ -90,7 +90,7 @@ def test_wrap_pytensor_func_for_scipy():
     f = a * x + b * y + c * z
     mse = (f**2).sum()
 
-    f_mse = pytensor.function([x, y, z, a, b, c], mse, mode="FAST_COMPILE")
+    f_mse = pytensor.function([x, y, z, a, b, c], mse, mode="FAST_RUN")
     test_value_dict = {"a": 1.0, "b": 2.0, "c": 3.0, "x": 1.0, "y": 2.0, "z": 3.0}
     assert f_mse(**test_value_dict) == 196.0
 

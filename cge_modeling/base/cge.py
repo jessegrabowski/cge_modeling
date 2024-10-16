@@ -556,6 +556,10 @@ class CGEModel:
         else:
             raise ValueError(f"Object {name} not found in model")
 
+    def get_shape(self, name):
+        obj = self.get(name)
+        return (len(self.coords[dim]) for dim in obj.dims)
+
     def summary(
         self,
         variables: Literal["all", "variables", "parameters"] | list[str] = "all",
@@ -597,7 +601,9 @@ class CGEModel:
             result_df = result.to_frame()
             initial, final = result_df.loc[variables, :].values.T
             info_dict[result.name] = {"Initial": initial, "Final": final}
-        display_latex_table(info_dict)
+
+        return info_dict
+        # display_latex_table(info_dict)
 
     def equation_table(self, display=True):
         eq_dict = [eq.to_dict() for eq in self.equations]

@@ -146,7 +146,7 @@ def test_cobb_douglass_pytensor_compile():
         return locals()["Y"], [K, L, A, alpha]
 
     Y, inputs = compile_Y()
-    f_Y = pytensor.function(inputs, Y, on_unused_input="ignore", mode="FAST_COMPILE")
+    f_Y = pytensor.function(inputs, Y, on_unused_input="ignore", mode="FAST_RUN")
     expected = expected_Y(L=1, K=1, A=1, alpha=0.5)
     np.testing.assert_allclose(f_Y(1, 1, 1, 0.5), expected)
 
@@ -160,7 +160,7 @@ def test_cobb_douglass_pytensor_compile():
         return locals()["L"], [Y, w, P, alpha]
 
     L, inputs = compile_L()
-    f_L = pytensor.function(inputs, L, on_unused_input="ignore", mode="FAST_COMPILE")
+    f_L = pytensor.function(inputs, L, on_unused_input="ignore", mode="FAST_RUN")
     expected = expected_L(Y=1, w=1, P=1, alpha=0.5)
     np.testing.assert_allclose(f_L(1, 1, 1, 0.5), expected)
 
@@ -174,7 +174,7 @@ def test_cobb_douglass_pytensor_compile():
         return locals()["K"], [Y, r, P, alpha]
 
     K, inputs = compile_K()
-    f_K = pytensor.function(inputs, K, on_unused_input="ignore", mode="FAST_COMPILE")
+    f_K = pytensor.function(inputs, K, on_unused_input="ignore", mode="FAST_RUN")
     expected = expected_K(Y=1, r=1, P=1, alpha=0.5)
     np.testing.assert_allclose(f_K(1, 1, 1, 0.5), expected)
 
@@ -394,7 +394,7 @@ def test_dixit_stiglitz_computation(backend):
             return locals()["Y"], [X, P_X, P_Y, alpha, A, epsilon]
 
         Y, inputs = compile_Y()
-        f_Y = pytensor.function(inputs, Y, on_unused_input="ignore", mode="FAST_COMPILE")
+        f_Y = pytensor.function(inputs, Y, on_unused_input="ignore", mode="FAST_RUN")
         expected = dx_Y(X=np.arange(7), A=1, alpha=np.full(7, 1 / 7), epsilon=3)
         np.testing.assert_allclose(
             f_Y(np.arange(7), np.ones(7), 1, np.full(7, 1 / 7), 1, 3), expected
@@ -412,7 +412,7 @@ def test_dixit_stiglitz_computation(backend):
             return locals()["X"], [Y, P_Y, P_X, A, alpha, epsilon]
 
         X, inputs = compile_X()
-        f_X = pytensor.function(inputs, X, on_unused_input="ignore", mode="FAST_COMPILE")
+        f_X = pytensor.function(inputs, X, on_unused_input="ignore", mode="FAST_RUN")
         expected = dx_X(Y=1, A=1, alpha=np.full(7, 1 / 7), P_Y=1, P_X=np.ones(7), epsilon=3)
         np.testing.assert_allclose(f_X(1, 1, np.ones(7), 1, np.full(7, 1 / 7), 3), expected)
 
@@ -624,7 +624,7 @@ def test_leonteif_1d_computation(backend):
             return locals()["Y"], [VA, VC, P_VA, P_VC, P_Y]
 
         Y, inputs = compile_Y()
-        f_Y = pytensor.function(inputs, Y, on_unused_input="ignore", mode="FAST_COMPILE")
+        f_Y = pytensor.function(inputs, Y, on_unused_input="ignore", mode="FAST_RUN")
         expected = leontief_Y(
             VA=np.arange(7), VC=np.arange(7), P_VA=np.ones(7), P_VC=np.ones(7), P_Y=1
         )
@@ -640,7 +640,7 @@ def test_leonteif_1d_computation(backend):
             return locals()["VA"], [Y, phi_VA]
 
         VA, inputs = compile_VA()
-        f_VA = pytensor.function(inputs, VA, on_unused_input="ignore", mode="FAST_COMPILE")
+        f_VA = pytensor.function(inputs, VA, on_unused_input="ignore", mode="FAST_RUN")
         expected = leontief_VA(Y=1, phi_VA=np.full(7, 1 / 7))
         np.testing.assert_allclose(f_VA(1, np.full(7, 1 / 7)), expected)
 
@@ -652,7 +652,7 @@ def test_leonteif_1d_computation(backend):
             return locals()["VC"], [Y, phi_VC]
 
         VC, inputs = compile_VC()
-        f_VC = pytensor.function(inputs, VC, on_unused_input="ignore", mode="FAST_COMPILE")
+        f_VC = pytensor.function(inputs, VC, on_unused_input="ignore", mode="FAST_RUN")
         expected = leontief_VC(Y=1, phi_VC=np.full(7, 1 / 7))
         np.testing.assert_allclose(f_VC(1, np.full(7, 1 / 7)), expected)
 
@@ -754,6 +754,6 @@ def test_2d_leontief_computation(backend, dims, coords):
             return locals()["X"], [Y, phi_X]
 
         Y, inputs = compile_Y()
-        f_Y = pytensor.function(inputs, Y, on_unused_input="ignore", mode="FAST_COMPILE")
+        f_Y = pytensor.function(inputs, Y, on_unused_input="ignore", mode="FAST_RUN")
         expected = leontief_Y(X=X_val, P_X=X_prices, P_Y=P_Y)
         np.testing.assert_allclose(f_Y(P_Y, X_val, X_prices), expected)

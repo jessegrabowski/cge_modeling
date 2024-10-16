@@ -77,7 +77,7 @@ def test_compile_euler_approximation_function():
         v2 = 2 - v1
         return np.array([v1, v2])
 
-    mode = "FAST_COMPILE"
+    mode = "FAST_RUN"
 
     theta_final, n_steps, result = symbolic_euler_approximation(
         equations, variables=variables, parameters=[parameters]

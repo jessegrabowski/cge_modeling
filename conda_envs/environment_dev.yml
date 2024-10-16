@@ -8,7 +8,7 @@ dependencies:
   - pip
   - numpy
   - scipy
-  - sympy
+  - sympy<1.13
   - pandas
   - numba
   - IPython
@@ -19,6 +19,7 @@ dependencies:
   - fastprogress
   - matplotlib
   - joblib
+  - cvxpy
 
   # JAX Backend
   - jax
@@ -32,6 +33,7 @@ dependencies:
       - jupyter_contrib_nbextensions
       - jupyter_nbextensions_configurator
       - sympytensor
+      - better_optimize
 
 
   # For building docs
