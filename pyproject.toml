@@ -52,7 +52,7 @@ dependencies = [
     "fastprogress",
     "numba-progress",
     "matplotlib",
-    "better-optimize"
+    "better_optimize"
   ]
 
 [project.optional-dependencies]

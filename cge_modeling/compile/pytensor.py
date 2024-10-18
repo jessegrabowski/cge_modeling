@@ -214,8 +214,11 @@ def compile_pytensor_hessp_function(
 
 
 def pytensor_euler_step(
-    system, variables, parameters, jacobian=None, grad=None
+    system, variables, parameters, jacobian=None, grad=None, use_rk4=False
 ) -> tuple[list[pt.TensorVariable], list[pt.TensorVariable]]:
+    if use_rk4:
+        raise NotImplementedError("RK4 not yet implemented for Pytensor")
+
     A, B = _make_euler_matrices(system, variables, parameters, jacobian)
 
     x_list = at_least_list(variables)
@@ -258,7 +261,8 @@ def compile_pytensor_cge_functions(
     cge_model: CGEModel,
     functions_to_compile: list[CompiledFunctions],
     mode: str | None = None,
-    use_scan_for_euler: bool = False,
+    use_scan_euler: bool = False,
+    use_rk4: bool = False,
     *args,
     **kwargs,
 ) -> tuple[Function | None, ...]:
@@ -303,9 +307,9 @@ def compile_pytensor_cge_functions(
         hessp, f_hessp = compile_pytensor_hessp_function(grad, variables, parameters, mode=mode)
 
     if "euler" in functions_to_compile:
-        if not use_scan_for_euler:
+        if not use_scan_euler:
             inputs, outputs = pytensor_euler_step(
-                system, variables, parameters, jacobian=jac, grad=grad
+                system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
             )
 
             f_step = pytensor.function(inputs, outputs, mode=mode)
@@ -320,10 +324,12 @@ def compile_pytensor_cge_functions(
             )
         else:
             theta_final, n_steps, euler_output = symbolic_euler_approximation(
-                system, variables, parameters, jacobian=jac, grad=grad
+                system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
             )
             f_euler = pytensor.function(
-                inputs=[*variables, *parameters, *theta_final], outputs=euler_output, mode=mode
+                inputs=[*variables, *parameters, theta_final, n_steps],
+                outputs=euler_output,
+                mode=mode,
             )
             f_euler.trust_inputs = True
 

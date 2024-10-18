@@ -65,7 +65,8 @@ def test_compile_to_pytensor(model_func, kwargs):
     assert B.type.shape == (n_eq, n_params)
 
 
-def test_compile_euler_approximation_function():
+@pytest.mark.parametrize("use_rk4", [True, False])
+def test_compile_euler_approximation_function(use_rk4):
     # Example problem from Notes and Problems from Applied General Equilibrium Economics, Chapter 3
 
     variables = v1, v2 = [pt.dscalar(name) for name in ["v1", "v2"]]
@@ -80,7 +81,7 @@ def test_compile_euler_approximation_function():
     mode = "FAST_RUN"
 
     theta_final, n_steps, result = symbolic_euler_approximation(
-        equations, variables=variables, parameters=[parameters]
+        equations, variables=variables, parameters=[parameters], use_rk4=use_rk4
     )
     f = pytensor.function([*variables, parameters, theta_final, n_steps], result, mode=mode)
 
@@ -90,7 +91,9 @@ def test_compile_euler_approximation_function():
     v3_final = 2
 
     analytic_solution = f_analytic(v3_final)
-    approximate_solutions = [np.c_[f(*initial_point, v3_initial, v3_final, n)[:2]].T for n in steps]
+    approximate_solutions = [
+        np.c_[f(*initial_point, v3_initial, [v3_final], n)[:2]].T for n in steps
+    ]
     errors = np.c_[[solution[-1] - analytic_solution for solution in approximate_solutions]]
 
     # Test the errors are monotonically decreasing in the number of steps

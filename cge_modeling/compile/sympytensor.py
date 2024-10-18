@@ -263,8 +263,9 @@ def compile_sympytensor_cge_functions(
     cge_model: CGEModel,
     functions_to_compile: list[CompiledFunctions],
     mode: str | None = None,
-    use_scan_for_euler: bool = False,
+    use_scan_euler: bool = False,
     use_sparse_matrices: bool = False,
+    use_rk4: bool = False,
     *args,
     **kwargs,
 ) -> tuple[Function | None, ...]:
@@ -347,9 +348,9 @@ def compile_sympytensor_cge_functions(
         )
 
     if "euler" in functions_to_compile:
-        if not use_scan_for_euler:
+        if not use_scan_euler:
             inputs, outputs = pytensor_euler_step(
-                system, variables, parameters, jacobian=None, grad=None
+                system, variables, parameters, jacobian=None, grad=None, use_rk4=use_rk4
             )
 
             f_step = pytensor.function(inputs, outputs, mode=mode)
@@ -367,7 +368,9 @@ def compile_sympytensor_cge_functions(
                 system, variables, parameters, jacobian=None
             )
             f_euler = pytensor.function(
-                inputs=[*variables, *parameters, *theta_final], outputs=euler_output, mode=mode
+                inputs=[*variables, *parameters, theta_final, n_steps],
+                outputs=euler_output,
+                mode=mode,
             )
             f_euler.trust_inputs = True
 

@@ -1,5 +1,6 @@
 import importlib.util
 
+from functools import partial
 from typing import Literal, cast
 
 from cge_modeling.base.cge import CGEModel
@@ -50,6 +51,7 @@ def compile_model(
     use_sparse_matrices: bool = False,
     functions_to_compile: list[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
+    use_rk4: bool = False,
 ) -> CGEModel:
     if (
         backend == "pytensor"
@@ -59,9 +61,9 @@ def compile_model(
     ):
         from cge_modeling.compile.jax import compile_jax_cge_functions
 
-        func_maker = compile_jax_cge_functions
+        func_maker = partial(compile_jax_cge_functions, use_rk4=use_rk4)
     else:
-        func_maker = COMPILE_FUNC_FACTORY[backend]
+        func_maker = partial(COMPILE_FUNC_FACTORY[backend], use_rk4=use_rk4)
 
     functions_to_compile = _parse_compile_kwarg(functions_to_compile)
     f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler = func_maker(
@@ -98,6 +100,7 @@ def cge_model(
     use_sparse_matrices: bool = False,
     functions_to_compile: list[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
+    use_rk4_euler: bool = False,
 ) -> CGEModel:
     if backend is None:
         backend = determine_default_backend(equations)
@@ -118,4 +121,5 @@ def cge_model(
         use_sparse_matrices=use_sparse_matrices,
         functions_to_compile=functions_to_compile,
         use_scan_euler=use_scan_euler,
+        use_rk4=use_rk4_euler,
     )
