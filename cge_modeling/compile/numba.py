@@ -129,7 +129,9 @@ def euler_approx(f_step, *, x0, theta0, theta_final, n_steps, progress_bar):
     return output
 
 
-def compile_numba_euler_func(variables, parameters, equations, jacobian=None):
+def compile_numba_euler_func(variables, parameters, equations, jacobian=None, use_rk4=False):
+    if use_rk4:
+        raise NotImplementedError("RK4 not yet implemented for Numba")
     if jacobian is None:
         A_mat = make_sympy_jacobian(equations, variables)
     else:
