@@ -66,8 +66,6 @@ def cge_primitives_to_pytensor(
     flat_equations = pt.specify_shape(flat_equations, (n_eq,))
     flat_equations.name = "equations"
 
-    rewrite_pregrad(flat_equations)
-
     return flat_equations, variables, parameters, (cache, {})
 
 
@@ -92,7 +90,6 @@ def make_jvp(
         The symbolic variables representing each component of ``p``, the point vector where the JVP is evaluated.
     """
     n_eq = grad.type.shape[0]
-    rewrite_pregrad(grad)
 
     if p is None:
         p_vars = [var.type(name=f"{var.name}_point") for var in x]
@@ -141,7 +138,7 @@ def compile_pytensor_jacobian_function(
     f_jac = pytensor.function(
         inputs=[*variables, *parameters], outputs=jac, mode=mode, on_unused_input="ignore"
     )
-    f_jac.trust_inputs = True
+    f_jac.trust_input = True
 
     return jac, f_jac
 
@@ -154,10 +151,9 @@ def compile_pytensor_error_function(
 ) -> tuple[pt.TensorVariable, Function]:
     squared_loss = 0.5 * (system**2).sum()
     squared_loss.name = "squared_loss"
-    rewrite_pregrad(squared_loss)
 
     f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
-    f_loss.trust_inputs = True
+    f_loss.trust_input = True
 
     return squared_loss, f_loss
 
@@ -171,12 +167,11 @@ def compile_pytensor_gradient_function(
 ) -> tuple[pt.TensorVariable, Function]:
     grad = pytensor.grad(loss, variables)
     grad = pt.specify_shape(pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]), n_variables)
-    rewrite_pregrad(grad)
 
     f_grad = pytensor.function(
         inputs=[*variables, *parameters], outputs=grad, mode=mode, on_unused_input="ignore"
     )
-    f_grad.trust_inputs = True
+    f_grad.trust_input = True
 
     return grad, f_grad
 
@@ -193,7 +188,7 @@ def compile_pytensor_hess_function(
     f_hess = pytensor.function(
         inputs=[*variables, *parameters], outputs=hess, mode=mode, on_unused_input="ignore"
     )
-    f_hess.trust_inputs = True
+    f_hess.trust_input = True
 
     return hess, f_hess
 
@@ -208,7 +203,7 @@ def compile_pytensor_hessp_function(
     hessp.name = "hessp"
 
     f_hessp = pytensor.function(inputs=[*variables, *parameters, *p_vars], outputs=hessp, mode=mode)
-    f_hessp.trust_inputs = True
+    f_hessp.trust_input = True
 
     return hessp, f_hessp
 
@@ -271,7 +266,7 @@ def compile_pytensor_cge_functions(
     f_system = pytensor.function(
         inputs=[*variables, *parameters], outputs=system, mode=mode, on_unused_input="raise"
     )
-    f_system.trust_inputs = True
+    f_system.trust_input = True
     if mode == "JAX":
         # This function needs to return an array, because the loss function displayed by minimize specifically checks
         # for an array. If it returns a jnp.Array, the check fails and an error is raised.
@@ -296,9 +291,12 @@ def compile_pytensor_cge_functions(
         squared_loss, f_resid = compile_pytensor_error_function(
             system, variables, parameters, mode=mode
         )
+
+        rewrite_pregrad(squared_loss)
         grad, f_grad = compile_pytensor_gradient_function(
             squared_loss, variables, parameters, cge_model.n_variables, mode=mode
         )
+
         hess, f_hess = compile_pytensor_hess_function(grad, variables, parameters, mode=mode)
         hessp, f_hessp = compile_pytensor_hessp_function(grad, variables, parameters, mode=mode)
 
@@ -309,7 +307,7 @@ def compile_pytensor_cge_functions(
             )
 
             f_step = pytensor.function(inputs, outputs, mode=mode)
-            f_step.trust_inputs = True
+            f_step.trust_input = True
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -325,16 +323,9 @@ def compile_pytensor_cge_functions(
             f_euler = pytensor.function(
                 inputs=[*variables, *parameters, *theta_final], outputs=euler_output, mode=mode
             )
-            f_euler.trust_inputs = True
+            f_euler.trust_input = True
 
-    def unwrap_jit_fn(f, mode):
-        if f is None or mode not in ["JAX", "NUMBA"]:
-            return f
-        return f.vm.jit_fn
-
-    return tuple(
-        unwrap_jit_fn(f, mode) for f in [f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler]
-    )
+    return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler
 
 
 def compile_cge_model_to_pytensor_Op(cge_model) -> tuple[pt.Op, pt.Op]:

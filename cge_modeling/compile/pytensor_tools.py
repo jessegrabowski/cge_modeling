@@ -250,7 +250,6 @@ def make_jacobian(
     n_eq = system.type.shape[0]
     n_vars = int(np.sum([np.prod(var.type.shape) for var in x]))
 
-    rewrite_pregrad(system)
     column_list = pytensor.gradient.jacobian(system, x)
 
     jac = pt.concatenate([pt.atleast_2d(x).reshape((n_eq, -1)) for x in column_list], axis=-1)

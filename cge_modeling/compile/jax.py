@@ -21,7 +21,7 @@ from cge_modeling.compile.pytensor import (
     cge_primitives_to_pytensor,
     validate_pytensor_parsing_result,
 )
-from cge_modeling.compile.pytensor_tools import flat_tensor_to_ragged_list, rewrite_pregrad
+from cge_modeling.compile.pytensor_tools import flat_tensor_to_ragged_list
 
 _log = logging.getLogger(__name__)
 
@@ -30,7 +30,6 @@ def graph_to_jax_function(inputs, outputs):
     if not isinstance(outputs, list):
         outputs = [outputs]
 
-    rewrite_pregrad(outputs)
     fgraph = FunctionGraph(inputs=inputs, outputs=outputs, clone=True)
     fgraph.attach_feature(
         Supervisor(

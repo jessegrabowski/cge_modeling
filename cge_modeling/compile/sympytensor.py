@@ -155,7 +155,7 @@ def compile_sympytensor_jacobian(
     f_jac = pytensor.function(
         inputs=[*variables, *parameters], outputs=jac, on_unused_input="ignore", mode=mode
     )
-    f_jac.trust_inputs = True
+    f_jac.trust_input = True
 
     return sp_jac, jac, f_jac
 
@@ -175,7 +175,7 @@ def compile_sympytensor_error_function(
     rewrite_pregrad(squared_loss)
 
     f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
-    f_loss.trust_inputs = True
+    f_loss.trust_input = True
 
     return sp_squared_loss, squared_loss, f_loss
 
@@ -199,7 +199,7 @@ def compile_sympytensor_gradient_function(
     f_grad = pytensor.function(
         inputs=[*variables, *parameters], outputs=grad, mode=mode, on_unused_input="ignore"
     )
-    f_grad.trust_inputs = True
+    f_grad.trust_input = True
 
     return sp_grad, grad, f_grad
 
@@ -223,7 +223,7 @@ def compile_sympytensor_hess_function(
     f_hess = pytensor.function(
         inputs=[*variables, *parameters], outputs=hess, mode=mode, on_unused_input="ignore"
     )
-    f_hess.trust_inputs = True
+    f_hess.trust_input = True
 
     return sp_hess, hess, f_hess
 
@@ -254,7 +254,7 @@ def compile_sympytensor_hessp_function(
         mode=mode,
         on_unused_input="ignore",
     )
-    f_hessp.trust_inputs = True
+    f_hessp.trust_input = True
 
     return sp_hessp, hessp, f_hessp
 
@@ -282,7 +282,7 @@ def compile_sympytensor_cge_functions(
     f_system = pytensor.function(
         inputs=[*variables, *parameters], outputs=system, mode=mode, on_unused_input="raise"
     )
-    f_system.trust_inputs = True
+    f_system.trust_input = True
     if mode == "JAX":
         f_system = return_array_from_jax_wrapper(f_system)
 
@@ -353,7 +353,7 @@ def compile_sympytensor_cge_functions(
             )
 
             f_step = pytensor.function(inputs, outputs, mode=mode)
-            f_step.trust_inputs = True
+            f_step.trust_input = True
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -369,6 +369,6 @@ def compile_sympytensor_cge_functions(
             f_euler = pytensor.function(
                 inputs=[*variables, *parameters, *theta_final], outputs=euler_output, mode=mode
             )
-            f_euler.trust_inputs = True
+            f_euler.trust_input = True
 
     return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler
