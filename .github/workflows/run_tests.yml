@@ -5,6 +5,13 @@ on:
   push:
     branches: [main]
 
+# Cancels all previous workflow runs for pull requests that have not completed.
+concurrency:
+  # The concurrency group contains the workflow name and the branch name for pull requests
+  # or the commit hash for any other events.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: true
+
 jobs:
   unittest:
     strategy:
@@ -14,10 +21,8 @@ jobs:
         include:
           - os: ubuntu-latest
             python-version: "3.12"
-            environment_file: cge_test
           - os: windows-latest
             python-version: "3.11"
-            environment_file: cge_test_windows
         test-subset:
           - |
             tests/
@@ -32,8 +37,8 @@ jobs:
         shell: bash -l {0}
 
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/cache@v3
+    - uses: actions/checkout@v4
+    - uses: actions/cache@v4
       env:
         # Increase this value to reset cache if cge_test.yml has not changed
         CACHE_NUMBER: 0
@@ -42,7 +47,7 @@ jobs:
         key: ${{ runner.os }}-py${{matrix.python-version}}-conda-${{ env.CACHE_NUMBER }}-${{
           hashFiles('conda_envs/cge_test.yml') }}
     - name: Cache multiple paths
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       env:
         # Increase this value to reset cache if requirements.txt has not changed
         CACHE_NUMBER: 1
@@ -53,14 +58,14 @@ jobs:
           ~\AppData\Local\pip\Cache
         key: ${{ runner.os }}-build-${{ matrix.python-version }}-${{ env.CACHE_NUMBER }}-${{
           hashFiles('requirements.txt') }}
-    - uses: conda-incubator/setup-miniconda@v2
+    - uses: conda-incubator/setup-miniconda@v3
       with:
         miniforge-variant: MiniForge3
         miniforge-version: latest
         mamba-version: "*"
         activate-environment: cge-test
         channel-priority: strict
-        environment-file: conda_envs/${{ matrix.environment_file }}.yml
+        environment-file: conda_envs/cge_test.yml
         python-version: ${{matrix.python-version}}
         use-mamba: true
         use-only-tar-bz2: false # IMPORTANT: This may break caching of conda packages! See https://github.com/conda-incubator/setup-miniconda/issues/267
@@ -75,7 +80,7 @@ jobs:
       run: |
         python -m pytest -vv --cov=cge_modeling --cov-report=xml --no-cov-on-fail --cov-report term $TEST_SUBSET
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }} # use token for more robust uploads
         env_vars: TEST_SUBSET

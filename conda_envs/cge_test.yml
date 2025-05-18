@@ -1,6 +1,7 @@
 name: cge-test
 channels:
 - conda-forge
+- nodefaults
 dependencies:
   # Base dependencies
   - pip
@@ -12,20 +13,20 @@ dependencies:
   - IPython
   - pymc
   - pytensor
-  - jax
   - tqdm
   - numba-progress
   - fastprogress
   - matplotlib
   - joblib
   - cvxpy
+  - better-optimize
+  - sympytensor
 
   - pip:
     - latextable
     - texttable
-    - sympytensor
     - squarify
-    - better_optimize
+    - jax
 
   # Testing dependencies
   - pre-commit
