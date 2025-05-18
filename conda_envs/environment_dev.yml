@@ -24,15 +24,13 @@ dependencies:
   - jax
   - numpyro
   - blackjax
+  - sympytensor
+  - better-optimize
 
   - pip:
       - texttable
       - latextable
       - squarify
-      - jupyter_contrib_nbextensions
-      - jupyter_nbextensions_configurator
-      - sympytensor
-      - better_optimize
 
 
   # For building docs

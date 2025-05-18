@@ -24,7 +24,7 @@ from tests.utilities.models import (
     model_2_data,
 )
 
-JAX_INSTALLED = find_spec("JAX") is not None
+JAX_INSTALLED = find_spec("jax") is not None
 
 
 @pytest.fixture()
