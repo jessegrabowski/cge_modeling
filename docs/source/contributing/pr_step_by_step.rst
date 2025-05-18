@@ -82,4 +82,3 @@ Then push the changes to the fork in your GitHub account with::
     If this is your first contribution, the start of some CI jobs will have to be approved by a maintainer.
 
 Go to the GitHub web page of your fork of the `cge_modeling` repo. Click the ‘Pull request’ button to send your changes to the project’s maintainers for review. This will send a notification to the committers.
-
