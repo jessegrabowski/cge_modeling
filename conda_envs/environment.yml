@@ -25,3 +25,4 @@ dependencies:
       - squarify
       - sympytensor
       - better_optimize
+      - cge_modeling

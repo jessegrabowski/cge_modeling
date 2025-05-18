@@ -8,7 +8,7 @@ import cge_modeling
 
 # -- Project information -----------------------------------------------------
 project = "cge_modeling"
-copyright = "2023-2024, Jesse Grabowski"
+copyright = "2023-2025, cge_modeling developers"
 language = "en"
 html_baseurl = "github.com/jessegrabowski/cge_modeling"
 

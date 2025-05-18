@@ -6,7 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "cge_modeling"
 dynamic = ['version']
 requires-python = ">=3.10, <3.13"
-authors = [{name="Jesse Grabowski", email='jessegrabowski@gmail.com'}]
+authors = [{name="Jesse Grabowski", email='jessegrabowski@gmail.com'},
+    {name="Camilo Saldarriaga", email='jcamsalda@gmail.com'}]
 description = "Computable general equlibrium models and policy simulation via autodiff with Pytensor"
 readme = 'README.md'
 license = { file = 'LICENSE.txt'}

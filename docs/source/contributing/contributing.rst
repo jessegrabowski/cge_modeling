@@ -4,7 +4,7 @@ Contributing
 `cge_modeling` is an open source, collective effort. There are many ways in which you can help make it better. And all of them are welcome!
 
 Contribute as an individual
-------------
+------------------------------------
 `cge_modeling` is a joint effort of many people, each contributing to the areas they like and have some expertise in, coordinating to try and cover all tasks.
 
 Coding and documentation are the most common types of contributions, but there are many more things that you can do to help the `cge_modeling` effort which are just as important.
@@ -18,11 +18,11 @@ Report a bug or make a suggestion for improvement by opening an issue in Github.
 Teach about `cge_modeling` and advertise best practices by writing blogs or giving talks
 
 Contribute via Pull Requests on GitHub
-------------
+------------------------------------------------------------
 We have a Pull request step-by-step and a Pull request checklist page to help in all the steps of the contributing process, from before your first ever contribution to regular contributions as a core contributor.
 
 Etiquette for code contributions
-~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 When you start working working on an issue, open a Draft pull request as soon as you make your first commit (see Pull request step-by-step).
 
 Before opening a PR with a new feature, please make a proposal by opening an issue or Discussion with the maintainers.
@@ -40,16 +40,16 @@ If unsure if an issue ticket is available feel free to ask in the issue ticket. 
 It’s okay if you are delayed or need to take a break, but please leave a comment in the pull request if you cannot get it to a state where it can be merged. Depending on the change (urgent bugfix vs. new feature) the core devs can determine if the PR needs to be reassigned to get the work done.
 
 Code related contributions
-~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Join the discussion or submit a solution for an open issue.
 
 Documentation related contributions
-~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 See all open issues in documentation [here](https://github.com/users/jessegrabowski/projects/2/views/1)
 
 
 Contribute as an institution
-~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Institutions can contribute in the following ways:
 
 By becoming Institutional Partners

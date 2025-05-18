@@ -29,3 +29,4 @@ If you use cge_modeling in your research, please cite the package using the foll
    api
    dev/index
    release/index
+   contributing/

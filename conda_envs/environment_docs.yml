@@ -41,3 +41,4 @@ dependencies:
   - sphinxcontrib-bibtex
   - pydata-sphinx-theme
   - watermark
+  - sphinx-tabs
