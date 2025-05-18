@@ -15,12 +15,12 @@ dependencies:
   - pytensor
   - tqdm
   - numba-progress
-  - fastprogress
   - matplotlib
   - joblib
   - cvxpy
   - better-optimize
   - sympytensor
+  - libgcc<15
 
   - pip:
     - latextable
