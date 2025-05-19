@@ -11,7 +11,7 @@ Coding and documentation are the most common types of contributions, but there a
 
 Contact us at `jessegrabowski@gmail.com ` or `jcamsalda@gmail.com` if you want to contribute to the project but are not sure where you can contribute or how to start.
 
-Below there are some examples of non code nor doc contributions that could serve as an inspiration. If you have other ideas let us know on Discourse to see if we can make it happen too.
+Below there are some examples of non code nor doc contributions that could serve as an inspiration.
 
 Report a bug or make a suggestion for improvement by opening an issue in Github. You can find the issues' board [here](https://github.com/users/jessegrabowski/projects/2/views/1)
 
