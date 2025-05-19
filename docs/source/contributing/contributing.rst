@@ -45,7 +45,7 @@ Join the discussion or submit a solution for an open issue.
 
 Documentation related contributions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-See all open issues in documentation [here](https://github.com/users/jessegrabowski/projects/2/views/1)
+See all open issues in documentation [here](https://github.com/jessegrabowski/cge_modeling/issues?q=is%3Aissue%20state%3Aopen%20label%3Adocumentation)
 
 
 Contribute as an institution
