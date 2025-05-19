@@ -9,7 +9,7 @@ Contribute as an individual
 
 Coding and documentation are the most common types of contributions, but there are many more things that you can do to help the `cge_modeling` effort which are just as important.
 
-Contact us to `jessegrabowski@gmail.com ` or `jcamsalda@gmail.com` if you want to contribute to the project but are not sure where you can contribute or how to start.
+Contact us at `jessegrabowski@gmail.com ` or `jcamsalda@gmail.com` if you want to contribute to the project but are not sure where you can contribute or how to start.
 
 Below there are some examples of non code nor doc contributions that could serve as an inspiration. If you have other ideas let us know on Discourse to see if we can make it happen too.
 
