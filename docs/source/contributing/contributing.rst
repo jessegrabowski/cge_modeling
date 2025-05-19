@@ -27,7 +27,7 @@ When you start working working on an issue, open a Draft pull request as soon as
 
 Before opening a PR with a new feature, please make a proposal by opening an issue or Discussion with the maintainers.
 
-Any issue without an open pull request is available for work. You can find the issues' board [here](https://github.com/users/jessegrabowski/projects/2/views/1)
+Any issue without an open pull request is available for work. You can find the issues' board [here](https://github.com/jessegrabowski/cge_modeling/issues)
 
 If a pull request has no recent activity it may be closed, or taken over by someone else.
 
