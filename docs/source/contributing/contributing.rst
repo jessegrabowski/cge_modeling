@@ -13,7 +13,7 @@ Contact us at `jessegrabowski@gmail.com ` or `jcamsalda@gmail.com` if you want t
 
 Below there are some examples of non code nor doc contributions that could serve as an inspiration.
 
-Report a bug or make a suggestion for improvement by opening an issue in Github. You can find the issues' board [here](https://github.com/users/jessegrabowski/projects/2/views/1)
+Report a bug or make a suggestion for improvement by opening an issue in Github. You can find the issues' board [here](https://github.com/jessegrabowski/cge_modeling/issues)
 
 Teach about `cge_modeling` and advertise best practices by writing blogs or giving talks
 
