@@ -5,20 +5,50 @@ on:
   push:
     branches: [main]
 
+# Cancels all previous workflow runs for pull requests that have not completed.
+concurrency:
+  # The concurrency group contains the workflow name and the branch name for pull requests
+  # or the commit hash for any other events.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: true
+
 jobs:
   unittest:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, windows-latest ]
         include:
           - os: ubuntu-latest
+            name: "Full Test Suite"
             python-version: "3.12"
+            test-subset: |
+              tests/base --ignore tests/base/test_cge.py
+              tests/base/test_cge.py -k "not test_model_gradients and not test_backends_agree"
+              tests/compile
+              tests/tools
+              tests/utilities
+              tests/test_plotting.py
+              tests/test_production_functions.py
+          - os: ubuntu-latest
+            name: "Test Model Gradients"
+            python-version: "3.12"
+            test-subset: |
+              tests/base/test_cge.py::test_model_gradients
+          - os: ubuntu-latest
+            name: "Test Backends Agree"
+            python-version: "3.12"
+            test-subset: |
+              tests/base/test_cge.py::test_backends_agree
           - os: windows-latest
+            name: "Partial Test Suite"
             python-version: "3.11"
-        test-subset:
-          - |
-            tests/
+            test-subset: |
+              tests/base --ignore tests/base/test_cge.py
+              tests/compile
+              tests/tools
+              tests/utilities
+              tests/test_plotting.py
+              tests/test_production_functions.py
 
     runs-on: ${{ matrix.os }}
 
@@ -45,9 +75,9 @@ jobs:
         pip install -e .
         python --version
 
-    - name: Run tests
+    - name: Run ${{ matrix.name }}
       run: |
-        python -m pytest -vv --cov=cge_modeling --cov-report=xml --no-cov-on-fail --cov-report term $TEST_SUBSET
+        python -m pytest --color=yes -vv --cov=cge_modeling --cov-append --cov-report=xml --no-cov-on-fail --cov-report term --durations=50 $TEST_SUBSET
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
