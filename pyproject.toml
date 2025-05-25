@@ -84,7 +84,7 @@ docs = [
 source = 'vcs'
 
 [tool.hatch.build.hooks.vcs]
-version-file = "_version.py"
+version-file = "cge_modeling/_version.py"
 
 [tool.hatch.build.targets.sdist]
 exclude = [
