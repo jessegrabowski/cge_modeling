@@ -76,10 +76,10 @@ jobs:
         python --version
 
     - name: Run ${{ matrix.name }}
-      run: |
+      run: >-
         IFS=$'\n' read -rd '' -a args <<<"$TEST_SUBSET"
         echo "${args[@]}"
-        python -m pytest --color=yes -vv --cov=cge_modeling --cov-append --cov-report=xml --no-cov-on-fail --cov-report term --durations=50 $TEST_SUBSET
+        python -m pytest --color=yes -vv --cov=cge_modeling --cov-append --cov-report=xml --no-cov-on-fail --cov-report term --durations=50 "${args[@]}"
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
