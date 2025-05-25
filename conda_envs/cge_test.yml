@@ -6,26 +6,25 @@ dependencies:
   - pip
   - numpy
   - scipy
-  - sympy<1.13
+  - sympy>1.13.2
   - pandas
   - numba
-  - IPython
   - pymc
   - pytensor
-  - jax
   - tqdm
   - numba-progress
-  - fastprogress
   - matplotlib
   - joblib
   - cvxpy
+  - better-optimize>=0.1.2
+  - sympytensor>=1.3.2
+  - IPython
 
   - pip:
     - latextable
     - texttable
-    - sympytensor
     - squarify
-    - better_optimize
+    - jax
 
   # Testing dependencies
   - pre-commit
