@@ -88,8 +88,8 @@ version-file = "_version.py"
 
 [tool.hatch.build.targets.sdist]
 exclude = [
-  '/.github',
-  '/notebooks',
+    '/.github',
+    '/notebooks',
     '/_thumbnails',
 
 ]
