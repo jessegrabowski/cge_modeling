@@ -77,9 +77,8 @@ jobs:
 
     - name: Run ${{ matrix.name }}
       run: |
-        IFS=$'\n' read -r -a args <<< "$TEST_SUBSET"
-        echo "${args[@]}"
-        python -m pytest --color=yes -vv --cov=cge_modeling --cov-append --cov-report=xml --no-cov-on-fail --cov-report term --durations=50 "${args[@]}"
+        echo "$TEST_SUBSET" |
+        xargs python -m pytest --color=yes -vv --cov=cge_modeling --cov-append --cov-report=xml --no-cov-on-fail --cov-report term --durations=50
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
