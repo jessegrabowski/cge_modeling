@@ -197,7 +197,7 @@ def plot_lines(
     return fig
 
 
-def plot_kateplot(
+def plot_areas(
     idata: az.InferenceData,
     initial_values: dict[str, np.array],
     mod: CGEModel,
