@@ -78,11 +78,28 @@ def wrap_scipy_func_for_pytensor(
     f: pytensor.compile.function.types.Function,
     variable_list: list[Variable],
     parameter_list: list[Parameter],
+    wrapping_hessp: bool = False,
 ):
-    @ft.wraps(f)
-    def inner(**kwargs):
-        x, theta = variable_dict_to_flat_array(kwargs, variable_list, parameter_list)
-        return f(x, theta)
+    if wrapping_hessp:
+
+        @ft.wraps(f)
+        def inner(**kwargs):
+            """
+            Wraps a PyTensor function to accept a single long vector of variables and parameters, and returns the
+            result of the function.
+            """
+            points = [f"{x.name}_point" for x in variable_list]
+            p = np.concatenate([np.atleast_1d(kwargs.pop(name)).ravel() for name in points])
+
+            x, theta = variable_dict_to_flat_array(kwargs, variable_list, parameter_list)
+            return f(x, p, theta)
+
+    else:
+
+        @ft.wraps(f)
+        def inner(**kwargs):
+            x, theta = variable_dict_to_flat_array(kwargs, variable_list, parameter_list)
+            return f(x, theta)
 
     return inner
 
