@@ -24,7 +24,7 @@ from tests.utilities.models import (
     model_2_data,
 )
 
-JAX_INSTALLED = find_spec("JAX") is not None
+JAX_INSTALLED = find_spec("jax") is not None
 
 
 @pytest.fixture()
@@ -355,8 +355,6 @@ def test_long_unpack():
 )
 def test_model_gradients(model_function, jac_function, backend):
     mode = "FAST_RUN" if backend in ["pytensor", "sympytensor"] else None
-    if mode == "FAST_RUN" and JAX_INSTALLED:
-        mode = "JAX"
 
     mod = model_function(
         backend=backend,
@@ -397,7 +395,7 @@ def test_model_gradients(model_function, jac_function, backend):
 def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, data, sparse):
     mod = model_function(
         backend="sympytensor",
-        mode="FAST_RUN" if not JAX_INSTALLED else "JAX",
+        mode="FAST_RUN" if not JAX_INSTALLED or sparse else "JAX",
         use_sparse_matrices=sparse,
     )
 
@@ -501,26 +499,26 @@ def test_backends_agree(
                     "Solvers disagree",
                 )
 
-    calibated_data = calibrate_model(**data)
+    calibrated_data = calibrate_model(**data)
     x0, theta0 = variable_dict_to_flat_array(
-        calibated_data, model_numba.variables, model_numba.parameters
+        calibrated_data, model_numba.variables, model_numba.parameters
     )
     resid_numba = model_numba.f_system(x0, theta0)
-    resid_pytensor = model_pytensor.f_system(**calibated_data)
+    resid_pytensor = model_pytensor.f_system(**calibrated_data)
 
     np.testing.assert_allclose(resid_numba, 0, atol=1e-8)
     np.testing.assert_allclose(resid_pytensor, 0, atol=1e-8)
 
-    labor_increase = calibated_data.copy()
+    labor_increase = calibrated_data.copy()
     labor_increase["L_s"] = 10_000
 
     _, theta_labor_increase = variable_dict_to_flat_array(
         labor_increase, model_numba.variables, model_numba.parameters
     )
 
-    res_numba = getattr(model_numba, method)(calibated_data, theta_labor_increase, **solver_kwargs)
+    res_numba = getattr(model_numba, method)(calibrated_data, theta_labor_increase, **solver_kwargs)
     res_pytensor = getattr(model_pytensor, method)(
-        calibated_data, theta_labor_increase, **solver_kwargs
+        calibrated_data, theta_labor_increase, **solver_kwargs
     )
 
     if method == "_solve_with_euler_approximation":

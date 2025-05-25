@@ -153,9 +153,19 @@ def compile_sympytensor_jacobian(
     rewrite_pregrad(jac)
 
     f_jac = pytensor.function(
-        inputs=[*variables, *parameters], outputs=jac, on_unused_input="ignore", mode=mode
+        inputs=[*variables, *parameters],
+        outputs=jac,
+        on_unused_input="ignore",
+        mode=mode,
+        trust_input=True,
     )
-    f_jac.trust_inputs = True
+
+    if (
+        mode == "JAX"
+        or isinstance(mode, pytensor.compile.mode.Mode)
+        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
+    ):
+        f_jac = return_array_from_jax_wrapper(f_jac)
 
     return sp_jac, jac, f_jac
 
@@ -174,8 +184,16 @@ def compile_sympytensor_error_function(
     squared_loss.name = "squared_loss"
     rewrite_pregrad(squared_loss)
 
-    f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
-    f_loss.trust_inputs = True
+    f_loss = pytensor.function(
+        inputs=[*variables, *parameters], outputs=squared_loss, mode=mode, trust_input=True
+    )
+
+    if (
+        mode == "JAX"
+        or isinstance(mode, pytensor.compile.mode.Mode)
+        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
+    ):
+        f_loss = return_array_from_jax_wrapper(f_loss)
 
     return sp_squared_loss, squared_loss, f_loss
 
@@ -197,9 +215,19 @@ def compile_sympytensor_gradient_function(
     rewrite_pregrad(grad)
 
     f_grad = pytensor.function(
-        inputs=[*variables, *parameters], outputs=grad, mode=mode, on_unused_input="ignore"
+        inputs=[*variables, *parameters],
+        outputs=grad,
+        mode=mode,
+        on_unused_input="ignore",
+        trust_input=True,
     )
-    f_grad.trust_inputs = True
+
+    if (
+        mode == "JAX"
+        or isinstance(mode, pytensor.compile.mode.Mode)
+        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
+    ):
+        f_grad = return_array_from_jax_wrapper(f_grad)
 
     return sp_grad, grad, f_grad
 
@@ -221,9 +249,19 @@ def compile_sympytensor_hess_function(
     rewrite_pregrad(hess)
 
     f_hess = pytensor.function(
-        inputs=[*variables, *parameters], outputs=hess, mode=mode, on_unused_input="ignore"
+        inputs=[*variables, *parameters],
+        outputs=hess,
+        mode=mode,
+        on_unused_input="ignore",
+        trust_input=True,
     )
-    f_hess.trust_inputs = True
+
+    if (
+        mode == "JAX"
+        or isinstance(mode, pytensor.compile.mode.Mode)
+        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
+    ):
+        f_hess = return_array_from_jax_wrapper(f_hess)
 
     return sp_hess, hess, f_hess
 
@@ -246,15 +284,22 @@ def compile_sympytensor_hessp_function(
     point_vars = [var.type(name=f"{var.name}_point") for var in variables]
     p = pt.concatenate([v.ravel() for v in point_vars], axis=0)
 
-    hessp = pytensor.clone_replace(hessp, {p_vars_pt: p})
+    hessp = pytensor.graph_replace(hessp, {p_vars_pt: p}, strict=True)
 
     f_hessp = pytensor.function(
         inputs=[*variables, *parameters, *point_vars],
         outputs=hessp.ravel(),
         mode=mode,
         on_unused_input="ignore",
+        trust_input=True,
     )
-    f_hessp.trust_inputs = True
+
+    if (
+        mode == "JAX"
+        or isinstance(mode, pytensor.compile.mode.Mode)
+        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
+    ):
+        f_hessp = return_array_from_jax_wrapper(f_hessp)
 
     return sp_hessp, hessp, f_hessp
 
@@ -280,10 +325,18 @@ def compile_sympytensor_cge_functions(
 
     # Always compile the system -- used to check residuals
     f_system = pytensor.function(
-        inputs=[*variables, *parameters], outputs=system, mode=mode, on_unused_input="raise"
+        inputs=[*variables, *parameters],
+        outputs=system,
+        mode=mode,
+        on_unused_input="raise",
+        trust_input=True,
     )
-    f_system.trust_inputs = True
-    if mode == "JAX":
+
+    if (
+        mode == "JAX"
+        or isinstance(mode, pytensor.compile.mode.Mode)
+        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
+    ):
         f_system = return_array_from_jax_wrapper(f_system)
 
     # Optional functions
@@ -352,8 +405,7 @@ def compile_sympytensor_cge_functions(
                 system, variables, parameters, jacobian=None, grad=None
             )
 
-            f_step = pytensor.function(inputs, outputs, mode=mode)
-            f_step.trust_inputs = True
+            f_step = pytensor.function(inputs, outputs, mode=mode, trust_input=True)
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -367,8 +419,10 @@ def compile_sympytensor_cge_functions(
                 system, variables, parameters, jacobian=None
             )
             f_euler = pytensor.function(
-                inputs=[*variables, *parameters, *theta_final], outputs=euler_output, mode=mode
+                inputs=[*variables, *parameters, *theta_final],
+                outputs=euler_output,
+                mode=mode,
+                trust_input=True,
             )
-            f_euler.trust_inputs = True
 
     return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler

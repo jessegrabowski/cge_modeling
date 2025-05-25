@@ -139,9 +139,12 @@ def compile_pytensor_jacobian_function(
     # enter as additive constants in the equations). In this case, we still want to be able to pass them as
     # inputs, but they will be unused.
     f_jac = pytensor.function(
-        inputs=[*variables, *parameters], outputs=jac, mode=mode, on_unused_input="ignore"
+        inputs=[*variables, *parameters],
+        outputs=jac,
+        mode=mode,
+        on_unused_input="ignore",
+        trust_input=True,
     )
-    f_jac.trust_inputs = True
 
     return jac, f_jac
 
@@ -156,8 +159,9 @@ def compile_pytensor_error_function(
     squared_loss.name = "squared_loss"
     rewrite_pregrad(squared_loss)
 
-    f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
-    f_loss.trust_inputs = True
+    f_loss = pytensor.function(
+        inputs=[*variables, *parameters], outputs=squared_loss, mode=mode, trust_input=True
+    )
 
     return squared_loss, f_loss
 
@@ -174,9 +178,12 @@ def compile_pytensor_gradient_function(
     rewrite_pregrad(grad)
 
     f_grad = pytensor.function(
-        inputs=[*variables, *parameters], outputs=grad, mode=mode, on_unused_input="ignore"
+        inputs=[*variables, *parameters],
+        outputs=grad,
+        mode=mode,
+        on_unused_input="ignore",
+        trust_input=True,
     )
-    f_grad.trust_inputs = True
 
     return grad, f_grad
 
@@ -191,9 +198,12 @@ def compile_pytensor_hess_function(
     hess.name = "hessian"
 
     f_hess = pytensor.function(
-        inputs=[*variables, *parameters], outputs=hess, mode=mode, on_unused_input="ignore"
+        inputs=[*variables, *parameters],
+        outputs=hess,
+        mode=mode,
+        on_unused_input="ignore",
+        trust_input=True,
     )
-    f_hess.trust_inputs = True
 
     return hess, f_hess
 
@@ -207,8 +217,9 @@ def compile_pytensor_hessp_function(
     hessp, p_vars = make_jvp(grad, variables)
     hessp.name = "hessp"
 
-    f_hessp = pytensor.function(inputs=[*variables, *parameters, *p_vars], outputs=hessp, mode=mode)
-    f_hessp.trust_inputs = True
+    f_hessp = pytensor.function(
+        inputs=[*variables, *parameters, *p_vars], outputs=hessp, mode=mode, trust_input=True
+    )
 
     return hessp, f_hessp
 
@@ -269,9 +280,13 @@ def compile_pytensor_cge_functions(
 
     # Always compile the system -- used to check residuals
     f_system = pytensor.function(
-        inputs=[*variables, *parameters], outputs=system, mode=mode, on_unused_input="raise"
+        inputs=[*variables, *parameters],
+        outputs=system,
+        mode=mode,
+        on_unused_input="raise",
+        trust_input=True,
     )
-    f_system.trust_inputs = True
+
     if mode == "JAX":
         # This function needs to return an array, because the loss function displayed by minimize specifically checks
         # for an array. If it returns a jnp.Array, the check fails and an error is raised.
@@ -308,8 +323,7 @@ def compile_pytensor_cge_functions(
                 system, variables, parameters, jacobian=jac, grad=grad
             )
 
-            f_step = pytensor.function(inputs, outputs, mode=mode)
-            f_step.trust_inputs = True
+            f_step = pytensor.function(inputs, outputs, mode=mode, trust_input=True)
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -323,9 +337,11 @@ def compile_pytensor_cge_functions(
                 system, variables, parameters, jacobian=jac, grad=grad
             )
             f_euler = pytensor.function(
-                inputs=[*variables, *parameters, *theta_final], outputs=euler_output, mode=mode
+                inputs=[*variables, *parameters, *theta_final],
+                outputs=euler_output,
+                mode=mode,
+                trust_input=True,
             )
-            f_euler.trust_inputs = True
 
     def unwrap_jit_fn(f, mode):
         if f is None or mode not in ["JAX", "NUMBA"]:

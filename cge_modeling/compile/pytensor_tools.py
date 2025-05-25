@@ -218,7 +218,7 @@ def make_unpacked_to_packed_map(
 def unpacked_graph_to_packed_graph(
     unpacked_graph: pt.TensorVariable | list[pt.TensorVariable], unpacked_to_indexed_dict: dict
 ) -> pt.TensorVariable | list[pt.TensorVariable]:
-    packed_graph = pytensor.clone_replace(unpacked_graph, unpacked_to_indexed_dict)
+    packed_graph = pytensor.graph_replace(unpacked_graph, unpacked_to_indexed_dict, strict=False)
     return packed_graph
 
 

@@ -165,7 +165,13 @@ def compile_jax_cge_functions(
         # Symbolically compute loss function and derivatives
         jax_functions = jax_loss_grad_hessp(system, variables, parameters)
         f_resid, f_grad, f_hess, f_hessp = (
-            return_array_from_jax_wrapper(jax.jit(f)) for f in jax_functions
+            wrap_scipy_func_for_pytensor(
+                return_array_from_jax_wrapper(jax.jit(f)),
+                cge_model.variables,
+                cge_model.parameters,
+                wrapping_hessp=is_hessp,
+            )
+            for f, is_hessp in zip(jax_functions, [False, False, False, True])
         )
 
     if "euler" in functions_to_compile:
@@ -178,7 +184,7 @@ def compile_jax_cge_functions(
             cge_model=cge_model,
             f_step=f_step,
             f_system=f_system,
-            f_grad=wrap_scipy_func_for_pytensor(f_grad, cge_model.variables, cge_model.parameters),
+            f_grad=f_grad,
         )
 
     return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler

@@ -38,21 +38,21 @@ keywords = [
 dependencies = [
     "setuptools",
     "numba",
-    "numpy<2",
-    "sympy<1.13",
-    "scipy<1.14",
+    "numpy",
+    "sympy>1.13.2",
+    "scipy",
     "pandas",
     "joblib",
     "pytensor",
     "latextable",
     "texttable",
-    "sympytensor",
+    "sympytensor>=1.3.2",
     "xarray",
     "arviz",
-    "fastprogress",
     "numba-progress",
     "matplotlib",
-    "better-optimize"
+    "better-optimize>=0.1.2",
+    "IPython",
   ]
 
 [project.optional-dependencies]

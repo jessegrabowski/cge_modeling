@@ -2,6 +2,8 @@ import importlib.util
 
 from typing import Literal, cast
 
+from pytensor.compile import get_mode
+
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Equation, Parameter, Variable
 from cge_modeling.compile.constants import CompiledFunctions
@@ -64,6 +66,11 @@ def compile_model(
         func_maker = COMPILE_FUNC_FACTORY[backend]
 
     functions_to_compile = _parse_compile_kwarg(functions_to_compile)
+
+    # TODO: 'inplace_elemwise_optimizer' was triggering an infinite loop during graph rewrites, but that's probably
+    #  a bug in PyTensor. Remove this once the bug is fixed.
+    mode = get_mode(mode).excluding("inplace_elemwise_optimizer")
+
     f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler = func_maker(
         cge_model=model,
         functions_to_compile=functions_to_compile,
