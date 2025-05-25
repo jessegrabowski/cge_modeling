@@ -23,7 +23,7 @@ jobs:
             python-version: "3.12"
             test-subset: |
               tests/base --ignore tests/base/test_cge.py
-              tests/base/test_cge.py -k 'not test_model_gradients and not test_backends_agree'
+              tests/base/test_cge.py -k "not test_model_gradients and not test_backends_agree"
               tests/compile
               tests/tools
               tests/utilities
@@ -77,7 +77,8 @@ jobs:
 
     - name: Run ${{ matrix.name }}
       run: |
-        echo $TEST_SUBSET
+        IFS=$'\n' read -rd '' -a args <<<"$TEST_SUBSET"
+        echo "${args[@]}"
         python -m pytest --color=yes -vv --cov=cge_modeling --cov-append --cov-report=xml --no-cov-on-fail --cov-report term --durations=50 $TEST_SUBSET
 
     - name: Upload coverage to Codecov
