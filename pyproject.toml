@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools", "versioneer[toml]"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
 [project]
 name = "cge_modeling"
@@ -80,14 +80,25 @@ docs = [
   "watermark",
 ]
 
+[tool.hatch.version]
+source = 'vcs'
 
-[tool.versioneer]
-VCS = "git"
-style = "pep440"
-versionfile_source = "cge_modeling/_version.py"
-versionfile_build = "cge_modeling/_version.py"
-tag_prefix = 'v'
+[tool.hatch.build.hooks.vcs]
+version-file = "_version.py"
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+  '/.github',
+  '/notebooks',
+    '/_thumbnails',
+
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["cge_modeling"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 minversion = "6.0"

@@ -7,7 +7,7 @@ from cge_modeling.compile.pytensor_tools import prod_to_no_zero_prod
 from cge_modeling.plotting import plot_bar, plot_kateplot, plot_lines
 from cge_modeling.tools.output_tools import display_info_as_table, latex_print_equations
 
-from cge_modeling._version import get_versions
+from importlib.metadata import version
 
 
 _log = logging.getLogger("cge_modeling")
@@ -18,7 +18,7 @@ if not logging.root.handlers:
         _log.addHandler(handler)
 
 
-__version__ = get_versions()["version"]
+__version__ = version("cge_modeling")
 
 __all__ = [
     "cge_model",
