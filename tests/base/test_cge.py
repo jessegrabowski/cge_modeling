@@ -354,9 +354,7 @@ def test_long_unpack():
     "backend", ["numba", "sympytensor", "pytensor"], ids=["numba", "sympytensor", "pytensor"]
 )
 def test_model_gradients(model_id, jac_function, backend):
-    mode = "FAST_RUN" if backend in ["pytensor", "sympytensor"] else None
-
-    mod = load_and_cache_model(model_id, mode=mode, backend=backend)
+    mod = load_and_cache_model(model_id, mode="FAST_RUN", backend=backend)
     print(load_and_cache_model.cache_info())
 
     data = generate_data(mod.variables + mod.parameters, mod.coords)

@@ -30,13 +30,21 @@ jobs:
               tests/test_plotting.py
               tests/test_production_functions.py
           - os: ubuntu-latest
-            name: "CGE Model Compilation Tests"
+            name: "Test Model Gradients"
             python-version: "3.12"
             test-subset: |
               tests/base/test_cge.py::test_model_gradients
+          - os: ubuntu-latest
+            name: "Test Backends Agree"
+            python-version: "3.12"
+            test-subset: |
               tests/base/test_cge.py::test_backends_agree
-              tests/base/test_cge.py::test_pytensor_from_sympy
               tests/base/test_cge.py::test_can_compile_without_jax_installed
+          - os: ubuntu-latest
+            name: "Test PyTensor from Sympy"
+            python-version: "3.12"
+            test-subset: |
+              tests/base/test_cge.py::test_pytensor_from_sympy
           - os: windows-latest
             name: "Partial Test Suite"
             python-version: "3.11"
