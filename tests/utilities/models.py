@@ -6,7 +6,7 @@ import numpy as np
 from cge_modeling import Equation, Parameter, Variable, cge_model
 
 
-def load_model_1(**kwargs):
+def load_model_1_components(**kargs):
     variable_info = [
         # Firm Variables
         Variable(name="Y", description="Total output of goods"),
@@ -45,6 +45,15 @@ def load_model_1(**kwargs):
         Equation("Capital market clearing", "K_s = K_d"),
         Equation("Sector <dim:i> goods market clearing", "Y = C"),
     ]
+
+    # All variables in model_1 are scalar, so there are no coords
+    coords = {}
+
+    return variable_info, param_info, equations, coords
+
+
+def load_model_1(**kwargs):
+    variable_info, param_info, equations, _ = load_model_1_components(**kwargs)
 
     return cge_model(
         variables=variable_info,
@@ -107,7 +116,7 @@ def expected_model_1_jacobian(Y, L_d, K_d, C, income, r, P, resid, alpha, A, L_s
     # @formatter:on
 
 
-def load_model_2(**kwargs):
+def load_modeL_2_components(**kwargs):
     backend = kwargs.get("backend", "numba")
 
     sectors = ["0", "1", "2"]
@@ -289,6 +298,12 @@ def load_model_2(**kwargs):
             "P[0] = P_Ag_bar" if backend == "pytensor" else "P.subs({i:0}) = P_Ag_bar",
         ),
     ]
+
+    return variable_info, param_info, equations, coords
+
+
+def load_model_2(**kwargs):
+    variable_info, param_info, equations, coords = load_modeL_2_components(**kwargs)
 
     return cge_model(
         variables=variable_info,
@@ -548,16 +563,26 @@ def expected_model_2_jacobian(
 
 @cache
 def load_and_cache_model(
-    model_id: Literal[1, 2], backend, mode="FAST_RUN", use_sparse_matrices=False
+    model_id: Literal[1, 2],
+    backend,
+    mode="FAST_RUN",
+    use_sparse_matrices=False,
+    functions_to_compile="all",
 ):
     match model_id:
         case 1:
             model = load_model_1(
-                backend=backend, mode=mode, use_sparse_matrices=use_sparse_matrices
+                backend=backend,
+                mode=mode,
+                use_sparse_matrices=use_sparse_matrices,
+                functions_to_compile=functions_to_compile,
             )
         case 2:
             model = load_model_2(
-                backend=backend, mode=mode, use_sparse_matrices=use_sparse_matrices
+                backend=backend,
+                mode=mode,
+                use_sparse_matrices=use_sparse_matrices,
+                functions_to_compile=functions_to_compile,
             )
         case _:
             raise ValueError("Invalid model_id. Use 1 or 2.")
