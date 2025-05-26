@@ -1,5 +1,6 @@
 import logging
 
+from collections.abc import Sequence
 from functools import partial
 
 import pytensor
@@ -267,7 +268,7 @@ def pytensor_euler_step(
 
 def compile_pytensor_cge_functions(
     cge_model: CGEModel,
-    functions_to_compile: list[CompiledFunctions],
+    functions_to_compile: Sequence[CompiledFunctions],
     mode: str | None = None,
     use_scan_for_euler: bool = False,
     *args,

@@ -1,5 +1,6 @@
 import importlib.util
 
+from collections.abc import Sequence
 from typing import Literal, cast
 
 from pytensor.compile import get_mode
@@ -38,7 +39,7 @@ def _parse_compile_kwarg(compile: list[str] | str | None = None) -> list[Compile
         if compile in ["all", True]:
             compile = ["root", "minimize", "euler"]
         else:
-            compile = [compile] if not isinstance(compile, list) else compile
+            compile = [compile] if not isinstance(compile, Sequence) else compile
 
         compile = cast(list[CompiledFunctions], compile)
 
@@ -103,7 +104,7 @@ def cge_model(
     backend: Literal["pytensor", "numba", "sympytensor"] | None = None,
     mode: str | None = None,
     use_sparse_matrices: bool = False,
-    functions_to_compile: list[CompiledFunctions] | None = "all",
+    functions_to_compile: Sequence[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
 ) -> CGEModel:
     if backend is None:
