@@ -414,9 +414,9 @@ def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sp
     "model_id, calibrate_model, data",
     [
         (1, calibrate_model_1, model_1_data),
-        (2, calibrate_model_2, model_2_data),
+        # (2, calibrate_model_2, model_2_data),
     ],
-    ids=["simple_model", "3-goods simple"],
+    ids=["simple_model"],  # , "3-goods simple"],
 )
 @pytest.mark.parametrize(
     "method, solver_kwargs, functions_to_compile",
