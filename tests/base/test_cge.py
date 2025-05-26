@@ -537,7 +537,7 @@ def test_backends_agree(
 
 
 def test_generate_SAM():
-    mod = load_and_cache_model(model_id=1, backend="pytensor")
+    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
     param_dict = {
         "alpha": 0.75,
         "A": 2.0,
@@ -574,13 +574,15 @@ def test_can_compile_without_jax_installed():
             # Can't cache here, otherwise the error won't be raised if the model is already cached
             load_model_1(backend="pytensor", mode="JAX")
 
-        mod = load_and_cache_model(model_id=1, backend="pytensor")
+        mod = load_and_cache_model(
+            model_id=1, backend="pytensor", functions_to_compile=("root", "euler")
+        )
         inital_data = calibrate_model_1(**model_1_data)
         mod.simulate(inital_data, final_delta_pct={"L_s": 0.5})
 
 
 def test_invalid_simulation_raises():
-    mod = load_and_cache_model(model_id=1, backend="numba")
+    mod = load_and_cache_model(model_id=1, backend="numba", functions_to_compile=("root", "euler"))
     initial_state = calibrate_model_1(**model_1_data)
 
     with pytest.raises(
