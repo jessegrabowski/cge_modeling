@@ -354,8 +354,9 @@ def test_long_unpack():
     "backend", ["numba", "sympytensor", "pytensor"], ids=["numba", "sympytensor", "pytensor"]
 )
 def test_model_gradients(model_id, jac_function, backend):
-    mod = load_and_cache_model(model_id, mode="FAST_RUN", backend=backend)
-    print(load_and_cache_model.cache_info())
+    mod = load_and_cache_model(
+        model_id, mode="FAST_RUN", backend=backend, functions_to_compile=("root", "minimize")
+    )
 
     data = generate_data(mod.variables + mod.parameters, mod.coords)
     p = np.eye(mod.n_equations)[:, 0]
@@ -395,9 +396,8 @@ def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sp
         backend="sympytensor",
         mode="FAST_RUN" if not JAX_INSTALLED or sparse else "JAX",
         use_sparse_matrices=sparse,
+        functions_to_compile="root",
     )
-
-    print(load_and_cache_model.cache_info())
 
     calibated_data = calibrate_model(**data)
     resid = mod.f_system(**calibated_data)
@@ -419,7 +419,7 @@ def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sp
     ids=["simple_model", "3-goods simple"],
 )
 @pytest.mark.parametrize(
-    "method, solver_kwargs",
+    "method, solver_kwargs, functions_to_compile",
     [
         (
             "_solve_with_minimize",
@@ -430,6 +430,7 @@ def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sp
                 "maxiter": 10_000,
                 "tol": 1e-16,
             },
+            "minimize",
         ),
         (
             "_solve_with_minimize",
@@ -440,12 +441,14 @@ def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sp
                 "maxiter": 10_000,
                 "tol": 1e-16,
             },
+            "minimize",
         ),
         (
             "_solve_with_root",
             {"method": "hybr", "use_jac": True, "maxiter": 10_000, "tol": 1e-16},
+            "root",
         ),
-        ("_solve_with_euler_approximation", {"n_steps": 500}),
+        ("_solve_with_euler_approximation", {"n_steps": 500}, "euler"),
     ],
     ids=["minimize_hess", "minimize_hessp", "root", "euler"],
 )
@@ -457,15 +460,18 @@ def test_backends_agree(
     data: dict,
     method: str,
     solver_kwargs: dict,
+    functions_to_compile: str,
     mode: str,
     pt_backend: str,
 ):
     if mode in ["JAX"]:
         pytest.importorskip(mode.lower())
-    model_numba = load_and_cache_model(model_id=model_id, backend="numba")
-    model_pytensor = load_and_cache_model(model_id=model_id, backend=pt_backend, mode=mode)
-
-    print(load_and_cache_model.cache_info())
+    model_numba = load_and_cache_model(
+        model_id=model_id, backend="numba", functions_to_compile=functions_to_compile
+    )
+    model_pytensor = load_and_cache_model(
+        model_id=model_id, backend=pt_backend, mode=mode, functions_to_compile=functions_to_compile
+    )
 
     def solver_agreement_checks(results: list, names: list):
         for res, name in zip(results, names):
