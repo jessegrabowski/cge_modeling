@@ -55,7 +55,6 @@ jobs:
 
     env:
       TEST_SUBSET: ${{ matrix.test-subset }}
-      MATRIX_ID: ${{ steps.matrix_id.outputs.id }}
 
     defaults:
       run:
@@ -91,6 +90,8 @@ jobs:
         run: |
           echo "$TEST_SUBSET" |
           xargs python -m pytest --color=yes -vv --cov=cge_modeling/ --cov-report=xml:coverage/coverage-${MATRIX_ID}.xml --no-cov-on-fail --durations=50
+        env:
+          MATRIX_ID: ${{ steps.matrix_id.outputs.id }}
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
