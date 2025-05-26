@@ -62,31 +62,41 @@ jobs:
         shell: bash -leo pipefail {0}
 
     steps:
-    - uses: actions/checkout@v4
-    - uses: mamba-org/setup-micromamba@v2
-      with:
-        environment-file: conda_envs/cge_test.yml
-        create-args: >-
-          python=${{matrix.python-version}}
-        environment-name: cge-test
-        init-shell: bash
-        cache-environment: true
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: conda_envs/cge_test.yml
+          create-args: >-
+            python=${{matrix.python-version}}
+          environment-name: cge-test
+          init-shell: bash
+          cache-environment: true
 
-    - name: Install current branch
-      run: |
-        pip install -e .
-        python --version
+      - name: Create matrix ID
+        id: matrix_id
+        env:
+          MATRIX_CONTENT: ${{ toJson(matrix) }}
+        run: |
+          echo $MATRIX_CONTENT
+          export MATRIX_ID=`echo $MATRIX_CONTENT | sha256sum | cut -c 1-32`
+          echo $MATRIX_ID
+          echo "id=$MATRIX_ID" >> $GITHUB_OUTPUT
 
-    - name: Run ${{ matrix.name }}
-      run: |
-        echo "$TEST_SUBSET" |
-        xargs python -m pytest --color=yes -vv --cov=cge_modeling/ --cov-report=xml:coverage/coverage-${MATRIX_ID}.xml --no-cov-on-fail --durations=50
+      - name: Install current branch
+        run: |
+          pip install -e .
+          python --version
 
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-${{ steps.matrix_id.outputs.id }}
-        path: coverage/coverage-${{ steps.matrix-id.outputs.id }}.xml
+      - name: Run ${{ matrix.name }}
+        run: |
+          echo "$TEST_SUBSET" |
+          xargs python -m pytest --color=yes -vv --cov=cge_modeling/ --cov-report=xml:coverage/coverage-${MATRIX_ID}.xml --no-cov-on-fail --durations=50
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ steps.matrix_id.outputs.id }}
+          path: coverage/coverage-${{ steps.matrix-id.outputs.id }}.xml
 
   all_tests:
     if: ${{ always() }}
