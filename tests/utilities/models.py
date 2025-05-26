@@ -1,3 +1,4 @@
+from functools import cache
 from typing import Literal
 
 import numpy as np
@@ -543,3 +544,22 @@ def expected_model_2_jacobian(
     J[row_idx, P_columns[0]] = 1
 
     return J
+
+
+@cache
+def load_and_cache_model(
+    model_id: Literal[1, 2], backend, mode="FAST_RUN", use_sparse_matrices=False
+):
+    match model_id:
+        case 1:
+            model = load_model_1(
+                backend=backend, mode=mode, use_sparse_matrices=use_sparse_matrices
+            )
+        case 2:
+            model = load_model_2(
+                backend=backend, mode=mode, use_sparse_matrices=use_sparse_matrices
+            )
+        case _:
+            raise ValueError("Invalid model_id. Use 1 or 2.")
+
+    return model
