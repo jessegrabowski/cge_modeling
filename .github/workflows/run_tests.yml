@@ -97,11 +97,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ steps.matrix_id.outputs.id }}
-          path: coverage/coverage-${{ steps.matrix-id.outputs.id }}.xml
+          path: coverage/coverage-${{ steps.matrix_id.outputs.id }}.xml
 
   all_tests:
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    name: "Check All Tests Pass"
     needs: [ unittest ]
     steps:
       - name: Check all tests pass
