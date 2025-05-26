@@ -74,7 +74,7 @@ def compile_model(
 
     f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler = func_maker(
         cge_model=model,
-        functions_to_compile=functions_to_compile,
+        functions_to_compile=functions_to_compile if functions_to_compile is not None else [],
         mode=mode,
         use_scan_euler=use_scan_euler,
         use_sparse_matrices=use_sparse_matrices,
