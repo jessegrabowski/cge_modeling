@@ -4,7 +4,7 @@ from cge_modeling.base.primitives import Equation, Parameter, Variable
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.build import cge_model, compile_model
 from cge_modeling.compile.pytensor_tools import prod_to_no_zero_prod
-from cge_modeling.plotting import plot_bar, plot_kateplot, plot_lines
+from cge_modeling.plotting import plot_bar, plot_areas, plot_lines
 from cge_modeling.tools.output_tools import display_info_as_table, latex_print_equations
 
 from importlib.metadata import PackageNotFoundError, version
@@ -40,6 +40,6 @@ __all__ = [
     "latex_print_equations",
     "display_info_as_table",
     "plot_lines",
-    "plot_kateplot",
+    "plot_areas",
     "plot_bar",
 ]

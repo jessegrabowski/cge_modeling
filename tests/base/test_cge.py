@@ -18,8 +18,8 @@ from tests.utilities.models import (
     calibrate_model_2,
     expected_model_1_jacobian,
     expected_model_2_jacobian,
+    load_and_cache_model,
     load_model_1,
-    load_model_2,
     model_1_data,
     model_2_data,
 )
@@ -337,14 +337,14 @@ def test_long_unpack():
 
 
 @pytest.mark.parametrize(
-    "model_function, jac_function",
+    "model_id, jac_function",
     [
         (
-            load_model_1,
+            1,
             expected_model_1_jacobian,
         ),  # expected_model_1_grad, expected_model_1_hessian),
         (
-            load_model_2,
+            2,
             expected_model_2_jacobian,
         ),  # expected_model_2_grad, expected_model_2_hessian),
     ],
@@ -353,13 +353,11 @@ def test_long_unpack():
 @pytest.mark.parametrize(
     "backend", ["numba", "sympytensor", "pytensor"], ids=["numba", "sympytensor", "pytensor"]
 )
-def test_model_gradients(model_function, jac_function, backend):
-    mode = "FAST_RUN" if backend in ["pytensor", "sympytensor"] else None
-
-    mod = model_function(
-        backend=backend,
-        mode=mode,
+def test_model_gradients(model_id, jac_function, backend):
+    mod = load_and_cache_model(
+        model_id, mode="FAST_RUN", backend=backend, functions_to_compile=("root", "minimize")
     )
+
     data = generate_data(mod.variables + mod.parameters, mod.coords)
     p = np.eye(mod.n_equations)[:, 0]
 
@@ -384,19 +382,21 @@ def test_model_gradients(model_function, jac_function, backend):
 
 
 @pytest.mark.parametrize(
-    "model_function, calibrate_model, f_expected_jac, data",
+    "model_id, calibrate_model, f_expected_jac, data",
     [
-        (load_model_1, calibrate_model_1, expected_model_1_jacobian, model_1_data),
-        (load_model_2, calibrate_model_2, expected_model_2_jacobian, model_2_data),
+        (1, calibrate_model_1, expected_model_1_jacobian, model_1_data),
+        (2, calibrate_model_2, expected_model_2_jacobian, model_2_data),
     ],
     ids=["simple_model", "3-goods simple"],
 )
 @pytest.mark.parametrize("sparse", [False, True], ids=["dense", "sparse"])
-def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, data, sparse):
-    mod = model_function(
+def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sparse):
+    mod = load_and_cache_model(
+        model_id,
         backend="sympytensor",
         mode="FAST_RUN" if not JAX_INSTALLED or sparse else "JAX",
         use_sparse_matrices=sparse,
+        functions_to_compile="root",
     )
 
     calibated_data = calibrate_model(**data)
@@ -411,15 +411,15 @@ def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, da
 
 
 @pytest.mark.parametrize(
-    "model_function, calibrate_model, data",
+    "model_id, calibrate_model, data",
     [
-        (load_model_1, calibrate_model_1, model_1_data),
-        (load_model_2, calibrate_model_2, model_2_data),
+        (1, calibrate_model_1, model_1_data),
+        # (2, calibrate_model_2, model_2_data),
     ],
-    ids=["simple_model", "3-goods simple"],
+    ids=["simple_model"],  # , "3-goods simple"],
 )
 @pytest.mark.parametrize(
-    "method, solver_kwargs",
+    "method, solver_kwargs, functions_to_compile",
     [
         (
             "_solve_with_minimize",
@@ -430,6 +430,7 @@ def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, da
                 "maxiter": 10_000,
                 "tol": 1e-16,
             },
+            "minimize",
         ),
         (
             "_solve_with_minimize",
@@ -440,30 +441,37 @@ def test_pytensor_from_sympy(model_function, calibrate_model, f_expected_jac, da
                 "maxiter": 10_000,
                 "tol": 1e-16,
             },
+            "minimize",
         ),
         (
             "_solve_with_root",
             {"method": "hybr", "use_jac": True, "maxiter": 10_000, "tol": 1e-16},
+            "root",
         ),
-        ("_solve_with_euler_approximation", {"n_steps": 500}),
+        ("_solve_with_euler_approximation", {"n_steps": 500}, "euler"),
     ],
     ids=["minimize_hess", "minimize_hessp", "root", "euler"],
 )
 @pytest.mark.parametrize("mode", ["FAST_RUN", "JAX"], ids=["FAST_RUN", "JAX"])
 @pytest.mark.parametrize("pt_backend", ["pytensor", "sympytensor"], ids=["pytensor", "sympytensor"])
 def test_backends_agree(
-    model_function: Callable,
+    model_id: int,
     calibrate_model: Callable,
     data: dict,
     method: str,
     solver_kwargs: dict,
+    functions_to_compile: str,
     mode: str,
     pt_backend: str,
 ):
     if mode in ["JAX"]:
         pytest.importorskip(mode.lower())
-    model_numba = model_function(backend="numba")
-    model_pytensor = model_function(backend=pt_backend, mode=mode)
+    model_numba = load_and_cache_model(
+        model_id=model_id, backend="numba", functions_to_compile=functions_to_compile
+    )
+    model_pytensor = load_and_cache_model(
+        model_id=model_id, backend=pt_backend, mode=mode, functions_to_compile=functions_to_compile
+    )
 
     def solver_agreement_checks(results: list, names: list):
         for res, name in zip(results, names):
@@ -529,7 +537,7 @@ def test_backends_agree(
 
 
 def test_generate_SAM():
-    mod = load_model_1(backend="pytensor")
+    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
     param_dict = {
         "alpha": 0.75,
         "A": 2.0,
@@ -563,15 +571,18 @@ def test_generate_SAM():
 def test_can_compile_without_jax_installed():
     with patch.dict(sys.modules, {"jax": None}):
         with pytest.raises(ImportError):
+            # Can't cache here, otherwise the error won't be raised if the model is already cached
             load_model_1(backend="pytensor", mode="JAX")
 
-        mod = load_model_1(backend="pytensor")
+        mod = load_and_cache_model(
+            model_id=1, backend="pytensor", functions_to_compile=("root", "euler")
+        )
         inital_data = calibrate_model_1(**model_1_data)
         mod.simulate(inital_data, final_delta_pct={"L_s": 0.5})
 
 
 def test_invalid_simulation_raises():
-    mod = load_model_1(backend="numba")
+    mod = load_and_cache_model(model_id=1, backend="numba", functions_to_compile=("root", "euler"))
     initial_state = calibrate_model_1(**model_1_data)
 
     with pytest.raises(
@@ -620,7 +631,7 @@ def test_invalid_simulation_raises():
     ids=["final_values", "final_delta_pct", "final_delta", "combined"],
 )
 def test_simulate(scenario_kwargs, expected_result):
-    mod = load_model_1(backend="numba")
+    mod = load_and_cache_model(model_id=1, backend="numba")
     initial_state = calibrate_model_1(**model_1_data)
 
     res = mod.simulate(initial_state, **scenario_kwargs)

@@ -131,7 +131,7 @@ def euler_approx(f_step, *, x0, theta0, theta_final, n_steps, progress_bar):
 
 def compile_numba_euler_func(variables, parameters, equations, jacobian=None):
     if jacobian is None:
-        A_mat = equations.jacobian(variables)
+        A_mat = make_sympy_jacobian(equations, variables)
     else:
         A_mat = jacobian
     B_mat = sp.Matrix([[eq.diff(x) for x in parameters] for eq in equations])

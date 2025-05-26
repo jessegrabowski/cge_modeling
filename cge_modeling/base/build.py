@@ -38,7 +38,7 @@ def _parse_compile_kwarg(compile: list[str] | str | None = None) -> list[Compile
         if compile in ["all", True]:
             compile = ["root", "minimize", "euler"]
         else:
-            compile = [compile] if not isinstance(compile, list) else compile
+            compile = [compile] if not isinstance(compile, list | tuple) else compile
 
         compile = cast(list[CompiledFunctions], compile)
 
@@ -50,7 +50,7 @@ def compile_model(
     backend: Literal["pytensor", "numba", "sympytensor"] | None = None,
     mode: str | None = None,
     use_sparse_matrices: bool = False,
-    functions_to_compile: list[CompiledFunctions] | None = "all",
+    functions_to_compile: list[CompiledFunctions] | tuple[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
 ) -> CGEModel:
     if (
@@ -73,7 +73,7 @@ def compile_model(
 
     f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler = func_maker(
         cge_model=model,
-        functions_to_compile=functions_to_compile,
+        functions_to_compile=functions_to_compile if functions_to_compile is not None else [],
         mode=mode,
         use_scan_euler=use_scan_euler,
         use_sparse_matrices=use_sparse_matrices,
@@ -103,7 +103,7 @@ def cge_model(
     backend: Literal["pytensor", "numba", "sympytensor"] | None = None,
     mode: str | None = None,
     use_sparse_matrices: bool = False,
-    functions_to_compile: list[CompiledFunctions] | None = "all",
+    functions_to_compile: list[CompiledFunctions] | tuple[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
 ) -> CGEModel:
     if backend is None:
