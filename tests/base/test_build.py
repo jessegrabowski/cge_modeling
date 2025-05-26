@@ -1,5 +1,7 @@
 import importlib.util
 
+from inspect import signature
+
 import pytest
 
 from cge_modeling.base import build
@@ -63,8 +65,6 @@ def test_cge_model_factory(backend, functions_to_compile, expected_compiled_list
     else:
         assert not model._compiled
 
-    is_numba = backend == "numba"
-
     should_compile_root = "root" in expected_compiled_list if expected_compiled_list else False
     should_compile_minimize = (
         "minimize" in expected_compiled_list if expected_compiled_list else False
@@ -99,3 +99,50 @@ def test_cge_model_factory(backend, functions_to_compile, expected_compiled_list
         assert model.parse_equations_to_sympy is True
     else:  # backend == "pytensor"
         assert model.parse_equations_to_sympy is False
+
+
+def check_function_signature(func, backend, expected_input_names):
+    if backend == "numba":
+        assert func.__code__.co_argcount == len(expected_input_names)
+        func_sig = signature(func)
+        assert all(x in func_sig.parameters for x in expected_input_names)
+    else:
+        input_names = [x.name for x in func.maker.fgraph.inputs]
+        assert len(input_names) == len(expected_input_names)
+        assert all(x in input_names for x in expected_input_names)
+
+
+@pytest.mark.parametrize("backend", ["pytensor", "sympytensor"])
+def test_compiled_functions_have_correct_signature(backend):
+    """
+    Smoke test to ensure that all compiled functions have the expected signature. The code has
+    gone though several iterations on this point, vacillating between f(variables, parameters) (form expected by scipy)
+    and f(**variables, **parameters) (a more natural form for users).
+
+    The canonical form is now f(**variables, **parameters), and all compiled functions should have this signature in all
+    backends.
+    """
+    # TODO: Add numba test
+    # TODO: Add sympytensor test
+
+    # Skip compiling Euler because it has a much more complex signature
+    model = load_and_cache_model(
+        model_id=1, backend=backend, mode="FAST_RUN", functions_to_compile=("root", "minimize")
+    )
+
+    variable_names = [x.name for x in model.variables]
+    parameter_names = [x.name for x in model.parameters]
+
+    for func in [
+        model.f_system,
+        model.f_jac,
+        model.f_resid,
+        model.f_grad,
+        model.f_hess,
+    ]:
+        check_function_signature(func, backend, variable_names + parameter_names)
+
+    variable_points = [f"{x}_point" for x in variable_names]
+    check_function_signature(
+        model.f_hessp, backend, variable_names + parameter_names + variable_points
+    )
