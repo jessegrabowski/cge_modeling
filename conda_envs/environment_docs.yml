@@ -6,7 +6,7 @@ dependencies:
   - pip
   - numpy
   - scipy
-  - sympy<1.13
+  - sympy>=1.14.0
   - pandas
   - numba
   - IPython
@@ -14,17 +14,17 @@ dependencies:
   - pytensor
   - tqdm
   - numba-progress
-  - fastprogress
   - matplotlib
   - joblib
   - cvxpy
 
+  - sympytensor>=1.3.3
+  - better-optimize>=0.1.2
+
   - pip:
     - latextable
     - texttable
-    - sympytensor
     - squarify
-    - better_optimize
 
   # Extra dependencies for docs build
   - ipython

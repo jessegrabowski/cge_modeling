@@ -3,10 +3,9 @@ channels:
 - conda-forge
 dependencies:
   # Base dependencies
-  - pip
   - numpy
   - scipy
-  - sympy>1.13.2
+  - sympy>=1.14.0
   - pandas
   - numba
   - pymc
@@ -17,14 +16,15 @@ dependencies:
   - joblib
   - cvxpy
   - better-optimize>=0.1.2
-  - sympytensor>=1.3.2
+  - sympytensor>=1.3.3
   - IPython
 
+  - pip
   - pip:
     - latextable
     - texttable
     - squarify
-    - jax
+    - jax # Needs to be pip installed for the windows CI runner
 
   # Testing dependencies
   - pre-commit

@@ -39,14 +39,14 @@ dependencies = [
     "setuptools",
     "numba",
     "numpy",
-    "sympy>1.13.2",
+    "sympy>=1.14.0",
     "scipy",
     "pandas",
     "joblib",
     "pytensor",
     "latextable",
     "texttable",
-    "sympytensor>=1.3.2",
+    "sympytensor>=1.3.3",
     "xarray",
     "arviz",
     "numba-progress",
@@ -60,7 +60,6 @@ dev = [
     "pre-commit",
     "pytest",
     "pytest-cov",
-    "versioneer"
 ]
 
 docs = [
@@ -153,15 +152,15 @@ lines-between-types = 1
 
 [tool.ruff.lint.per-file-ignores]
 'tests/*.py' = [
-  'F841', # Unused variable warning for test files -- common in pymc model declarations
-  'D106',  # Missing docstring for public method -- unittest test subclasses don't need docstrings
-  'F401', # Unused import warning for test files -- this check removes imports of fixtures
-  'F811',  # Redefine while unused -- this check fails on imported fixtures
+    'F841', # Unused variable warning for test files -- common in pymc model declarations
+    'D106',  # Missing docstring for public method -- unittest test subclasses don't need docstrings
+    'F401', # Unused import warning for test files -- this check removes imports of fixtures
+    'F811',  # Redefine while unused -- this check fails on imported fixtures
 ]
 'cge_modeling/compile/numba_tools.py' = [
-      'F401', # Unused import warning -- imports are used in generated code strings
+    'F401', # Unused import warning -- imports are used in generated code strings
 ]
 'cge_modeling/__init__.py' = [
-        'F401', # Unused import warning -- need to import (but not use) pytensor rewrite
-        'I001' # Import order matters to avoid circular imports
+    'F401', # Unused import warning -- need to import (but not use) pytensor rewrite
+    'I001' # Import order matters to avoid circular imports
 ]
