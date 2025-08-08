@@ -82,7 +82,6 @@ def symbolic_euler_approximation(
     variables: list[pt.Variable],
     parameters: list[pt.Variable],
     jacobian: pt.TensorVariable | None = None,
-    grad: pt.TensorVariable | None = None,
     use_rk4: bool = False,
 ) -> tuple[pt.TensorVariable, pt.TensorVariable, list[pt.TensorVariable]]:
     """
@@ -105,8 +104,6 @@ def symbolic_euler_approximation(
     jacobian: TensorVariable, optional
         A matrix of partial derivatives df(x) / dx. If not provided, it will be computed from the the system and
         variables.
-    n_steps: int
-        The number of steps to take in the Euler approximation
 
     Returns
     -------
@@ -127,9 +124,6 @@ def symbolic_euler_approximation(
     theta_list = cast(list, at_least_list(parameters))
 
     theta_initial = [clone_and_rename(x, suffix="_initial") for x in theta_list]
-    # theta_final = [clone_and_rename(x, suffix="_final") for x in theta_list]
-    # theta_final_vec = pt.concatenate([pt.atleast_1d(x).flatten() for x in theta_final], axis=-1)
-
     theta_initial_vec = pt.concatenate([pt.atleast_1d(x).flatten() for x in theta_initial], axis=-1)
     theta_final = pt.tensor(
         name="theta_final", shape=theta_initial_vec.type.shape, dtype=theta_initial_vec.type.dtype
@@ -160,7 +154,6 @@ def symbolic_euler_approximation(
         x_prev = args[:x_args]
         theta_prev = args[x_args : x_args + theta_args]
         theta_initial = args[x_args + theta_args : x_args + 2 * theta_args]
-        # theta_final = args[x_args + 2 * theta_args : -1]
         theta_final = args[-2]
         n_steps = args[-1]
 
