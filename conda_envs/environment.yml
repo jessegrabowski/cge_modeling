@@ -7,21 +7,21 @@ dependencies:
   - pip
   - numpy
   - scipy
-  - sympy<1.13
+  - sympy>=1.14.0
   - pandas
   - numba
   - pytensor
   - tqdm
   - numba-progress
-  - fastprogress
   - matplotlib
   - jax
   - joblib
   - cvxpy
 
+  - sympytensor>=1.3.3
+  - better-optimize>=0.1.2
+
   - pip:
       - texttable
       - latextable
       - squarify
-      - sympytensor
-      - better_optimize

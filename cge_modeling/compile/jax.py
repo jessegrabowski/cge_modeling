@@ -64,7 +64,7 @@ def make_jax_system_and_jacobian(f, variables, parameters):
     return f_sys_wrapped, jax_jac
 
 
-def jax_euler_step(system, variables, parameters):
+def jax_euler_step(system, variables, parameters, use_rk4=False):
     f_system_jax = graph_to_jax_function(inputs=[*variables, *parameters], outputs=[system])  # noeq
     f_sys_wrapped, f_jac = make_jax_system_and_jacobian(f_system_jax, variables, parameters)
 
@@ -89,9 +89,20 @@ def jax_euler_step(system, variables, parameters):
 
         step_size = (theta_final_vec - theta0_vec) / n_steps
 
-        A = f_jac(x_vec, theta_vec)
-        _, Bv = jax.jvp(lambda theta: f_sys_wrapped(x_vec, theta), (theta_vec,), (step_size,))
-        step = -jax.scipy.linalg.solve(A, Bv[:, None])[:, 0]
+        def compute(x, theta):
+            A = f_jac(x, theta)
+            _, Bv = jax.jvp(lambda theta: f_sys_wrapped(x, theta), (theta,), (step_size,))
+            return -jax.scipy.linalg.solve(A, Bv[:, None])[:, 0]
+
+        if use_rk4:
+            dx1 = compute(x_vec, theta_vec)
+            dx2 = compute(x_vec + 0.5 * dx1, theta_vec + 0.5 * step_size)
+            dx3 = compute(x_vec + 0.5 * dx2, theta_vec + 0.5 * step_size)
+            dx4 = compute(x_vec + dx3, theta_vec + step_size)
+            step = (dx1 + 2 * dx2 + 2 * dx3 + dx4) / 6
+
+        else:
+            step = compute(x_vec, theta_vec)
 
         x_next_vec = x_vec + step
         theta_next_vec = theta_vec + step_size
@@ -154,6 +165,8 @@ def compile_jax_cge_functions(
     f_hessp = None
     f_euler = None
 
+    use_rk4 = kwargs.get("use_rk4", False)
+
     if "root" in functions_to_compile:
         f_jac = wrap_scipy_func_for_pytensor(
             return_array_from_jax_wrapper(jax.jit(_f_jac)),
@@ -177,7 +190,7 @@ def compile_jax_cge_functions(
     if "euler" in functions_to_compile:
         # Compile the one-step linear approximation function used by the iterative Euler approximation
         # We don't need to save this because it's only used internally by the euler_approx function
-        f_step = jax.jit(jax_euler_step(system, variables, parameters))
+        f_step = jax.jit(jax_euler_step(system, variables, parameters, use_rk4=use_rk4))
 
         f_euler = partial(
             pytensor_euler_function_with_python_loop,

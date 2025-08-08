@@ -82,7 +82,7 @@ def symbolic_euler_approximation(
     variables: list[pt.Variable],
     parameters: list[pt.Variable],
     jacobian: pt.TensorVariable | None = None,
-    grad: pt.TensorVariable | None = None,
+    use_rk4: bool = False,
 ) -> tuple[pt.TensorVariable, pt.TensorVariable, list[pt.TensorVariable]]:
     """
     Find the solution to a system of equations using the Euler approximation method.
@@ -104,8 +104,6 @@ def symbolic_euler_approximation(
     jacobian: TensorVariable, optional
         A matrix of partial derivatives df(x) / dx. If not provided, it will be computed from the the system and
         variables.
-    n_steps: int
-        The number of steps to take in the Euler approximation
 
     Returns
     -------
@@ -126,14 +124,14 @@ def symbolic_euler_approximation(
     theta_list = cast(list, at_least_list(parameters))
 
     theta_initial = [clone_and_rename(x, suffix="_initial") for x in theta_list]
-    theta_final = [clone_and_rename(x, suffix="_final") for x in theta_list]
-
-    theta_final_vec = pt.concatenate([pt.atleast_1d(x).flatten() for x in theta_final], axis=-1)
     theta_initial_vec = pt.concatenate([pt.atleast_1d(x).flatten() for x in theta_initial], axis=-1)
+    theta_final = pt.tensor(
+        name="theta_final", shape=theta_initial_vec.type.shape, dtype=theta_initial_vec.type.dtype
+    )
 
     n_steps = pt.scalar("n_steps", dtype="int32")
 
-    step_size = (theta_final_vec - theta_initial_vec) / n_steps
+    step_size = (theta_final - theta_initial_vec) / n_steps
 
     Bv = B @ pt.atleast_1d(step_size)
     Bv.name = "Bv"
@@ -142,7 +140,7 @@ def symbolic_euler_approximation(
     rewrite_pregrad(step)
 
     f_step = OpFromGraph(
-        inputs=x_list + theta_list + theta_initial + theta_final + [n_steps],
+        inputs=x_list + theta_list + theta_initial + [theta_final, n_steps],
         outputs=[step, step_size],
         inline=True,
     )
@@ -156,14 +154,52 @@ def symbolic_euler_approximation(
         x_prev = args[:x_args]
         theta_prev = args[x_args : x_args + theta_args]
         theta_initial = args[x_args + theta_args : x_args + 2 * theta_args]
-        theta_final = args[x_args + 2 * theta_args : -1]
+        theta_final = args[-2]
         n_steps = args[-1]
 
-        step, step_size = f_step(*x_prev, *theta_prev, *theta_initial, *theta_final, n_steps)
-        delta_x = flat_tensor_to_ragged_list(step, x_shapes)
-        x_next = [x + dx for x, dx in zip(x_prev, delta_x)]
+        if use_rk4:
+            dx1, step_size = f_step(*x_prev, *theta_prev, *theta_initial, theta_final, n_steps)
+            delta_x1 = flat_tensor_to_ragged_list(dx1, x_shapes)
+            delta_theta = flat_tensor_to_ragged_list(step_size, theta_shapes)
 
-        delta_theta = flat_tensor_to_ragged_list(step_size, theta_shapes)
+            dx2, _ = f_step(
+                *[x + 0.5 * dx for x, dx in zip(x_prev, delta_x1)],
+                *[theta + 0.5 * d_theta for theta, d_theta in zip(theta_prev, delta_theta)],
+                *theta_initial,
+                theta_final,
+                n_steps,
+            )
+            delta_x2 = flat_tensor_to_ragged_list(dx2, x_shapes)
+
+            dx3, _ = f_step(
+                *[x + 0.5 * dx for x, dx in zip(x_prev, delta_x2)],
+                *[theta + 0.5 * d_theta for theta, d_theta in zip(theta_prev, delta_theta)],
+                *theta_initial,
+                theta_final,
+                n_steps,
+            )
+            delta_x3 = flat_tensor_to_ragged_list(dx3, x_shapes)
+
+            dx4, _ = f_step(
+                *[x + dx for x, dx in zip(x_prev, delta_x3)],
+                *[theta + d_theta for theta, d_theta in zip(theta_prev, delta_theta)],
+                *theta_initial,
+                theta_final,
+                n_steps,
+            )
+            delta_x4 = flat_tensor_to_ragged_list(dx4, x_shapes)
+
+            delta_x = [
+                (dx1 + 2 * dx2 + 2 * dx3 + dx4) / 6
+                for dx1, dx2, dx3, dx4 in zip(delta_x1, delta_x2, delta_x3, delta_x4)
+            ]
+
+        else:
+            step, step_size = f_step(*x_prev, *theta_prev, *theta_initial, theta_final, n_steps)
+            delta_x = flat_tensor_to_ragged_list(step, x_shapes)
+            delta_theta = flat_tensor_to_ragged_list(step_size, theta_shapes)
+
+        x_next = [x + dx for x, dx in zip(x_prev, delta_x)]
         theta_next = [theta + dtheta for theta, dtheta in zip(theta_prev, delta_theta)]
 
         assert len(theta_next) == len(theta_prev)
@@ -172,7 +208,7 @@ def symbolic_euler_approximation(
     result, updates = pytensor.scan(
         step_func,
         outputs_info=x_list + theta_list,
-        non_sequences=theta_list + theta_final + [n_steps],
+        non_sequences=[*theta_list, theta_final, n_steps],
         n_steps=n_steps,
         strict=True,
     )
