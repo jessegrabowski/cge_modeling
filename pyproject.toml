@@ -54,6 +54,7 @@ dependencies = [
     "xarray<2027",
   ]
 
+# pixi turns these extras into features of the same name.
 [project.optional-dependencies]
 dev = [
     "pre-commit",
@@ -161,3 +162,44 @@ lines-between-types = 1
     'F401', # Unused import warning -- need to import (but not use) pytensor rewrite
     'I001' # Import order matters to avoid circular imports
 ]
+
+# pixi reads [project].dependencies, requires-python and the extras above on its own. The tables
+# here only add what the project metadata cannot say: which packages come from conda-forge instead
+# of PyPI (a conda entry overrides the PyPI requirement of the same name), and platform toolchains.
+# The pixi-export-env pre-commit hook renders the `default` environment to
+# conda_envs/environment_dev.yml.
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64", "win-64"]
+
+# The compiled stack resolves from conda-forge.
+[tool.pixi.dependencies]
+numpy = "<3"
+numba = "<1"
+pytensor = ">=3.3.8,<4"
+cvxpy = "<2"
+
+# gxx 16.2.0 on conda-forge win-64 cannot link (ld cannot find dllcrt2.o);
+# see conda-forge/ctng-compilers-feedstock#229 and m2w64-sysroot-feedstock#23.
+[tool.pixi.target.win-64.dependencies]
+gxx_win-64 = "16.1.*"
+
+[tool.pixi.pypi-dependencies]
+cge_modeling = { path = ".", editable = true }
+
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+
+[tool.pixi.feature.py313.dependencies]
+python = "3.13.*"
+
+[tool.pixi.environments]
+default = { features = ["dev", "docs", "py312"], solve-group = "py312" }
+docs = { features = ["docs", "py312"], solve-group = "py312" }
+py313 = { features = ["dev", "py313"] }
+
+[tool.pixi.tasks]
+# Extra arguments pass through, e.g. `pixi run test tests/base`.
+test = "python -m pytest -vv --cache-clear --cov=cge_modeling --cov-report=xml:coverage.xml --no-cov-on-fail --cov-report term --durations=50"
+lint = "pre-commit run --all-files"
+docs-build = { cmd = "python -m sphinx -W --keep-going -j auto -b html source build/html", cwd = "docs" }
