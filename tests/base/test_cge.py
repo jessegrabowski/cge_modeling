@@ -1,3 +1,4 @@
+import logging
 import sys
 
 from collections.abc import Callable
@@ -7,6 +8,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 import sympy as sp
+import xarray as xr
 
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Equation, Parameter, Variable
@@ -530,8 +532,8 @@ def test_backends_agree(
     )
 
     if method == "_solve_with_euler_approximation":
-        res_numba = res_numba.parameters.isel(step=-1).to_array().values
-        res_pytensor = res_pytensor.parameters.isel(step=-1).to_array().values
+        res_numba = res_numba["parameters"].dataset.isel(step=-1).to_array().values
+        res_pytensor = res_pytensor["parameters"].dataset.isel(step=-1).to_array().values
 
     solver_agreement_checks([res_numba, res_pytensor], ["Numba", "PyTensor"])
 
@@ -637,5 +639,42 @@ def test_simulate(scenario_kwargs, expected_result):
     res = mod.simulate(initial_state, **scenario_kwargs)
 
     for key in expected_result:
-        final_param = res["optimizer"].parameters[key].isel(step=-1)
+        final_param = res["optimizer"]["parameters"][key].isel(step=-1)
         assert final_param == expected_result[key](initial_state[key])
+
+
+def test_check_for_equilibrium_reads_simulation_datatree(caplog):
+    mod = load_and_cache_model(model_id=1, backend="sympytensor")
+    initial_state = calibrate_model_1(**model_1_data)
+    res = mod.simulate(initial_state, final_delta_pct={"L_s": 0.5})
+
+    with caplog.at_level(logging.INFO, logger="cge_modeling"):
+        mod.check_for_equilibrium(res["optimizer"])
+
+    assert "Equilibrium found!" in caplog.text
+
+
+def test_check_for_equilibrium_flags_mismatched_state(caplog):
+    mod = load_and_cache_model(model_id=1, backend="sympytensor")
+    initial_state = calibrate_model_1(**model_1_data)
+    optimizer = mod.simulate(initial_state, final_delta_pct={"L_s": 0.5})["optimizer"]
+
+    pre_shock_variables_post_shock_parameters = xr.DataTree.from_dict(
+        {
+            "variables": optimizer["variables"].dataset.isel(step=0),
+            "parameters": optimizer["parameters"].dataset.isel(step=-1),
+        }
+    )
+
+    with caplog.at_level(logging.INFO, logger="cge_modeling"):
+        mod.check_for_equilibrium(pre_shock_variables_post_shock_parameters)
+
+    assert "Equilibrium not found" in caplog.text
+
+
+def test_check_for_equilibrium_requires_variables_and_parameters():
+    mod = load_and_cache_model(model_id=1, backend="sympytensor")
+    variables_only = xr.DataTree.from_dict({"variables": xr.Dataset()})
+
+    with pytest.raises(ValueError, match="DataTree must contain variables and parameters children"):
+        mod.check_for_equilibrium(variables_only)

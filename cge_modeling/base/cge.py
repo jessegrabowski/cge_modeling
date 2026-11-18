@@ -15,7 +15,6 @@ import pandas as pd
 import sympy as sp
 import xarray as xr
 
-from arviz import InferenceData
 from better_optimize import minimize, root
 from better_optimize.constants import minimize_method, root_method
 from cloudpickle import cloudpickle
@@ -40,6 +39,7 @@ from cge_modeling.base.utilities import (
     variable_dict_to_flat_array,
 )
 from cge_modeling.tools.output_tools import (
+    datatree_to_value_dict,
     display_latex_table,
     list_of_array_to_idata,
     optimizer_result_to_idata,
@@ -1024,11 +1024,11 @@ class CGEModel:
                 x0_var_param, theta_simulation, n_steps=n_iter_euler
             )
             return_values["euler"] = idata_euler
-            idata_euler.variables = idata_euler.variables.dropna(dim="step")
-            idata_euler.parameters = idata_euler.parameters.dropna(dim="step")
+            for group in ("variables", "parameters"):
+                idata_euler[group] = idata_euler[group].dataset.dropna(dim="step")
             last_step = min(
-                idata_euler.variables.coords["step"].max().item(),
-                idata_euler.parameters.coords["step"].max().item(),
+                idata_euler["variables"].coords["step"].max().item(),
+                idata_euler["parameters"].coords["step"].max().item(),
             )
             if last_step != (n_iter_euler - 1):
                 _log.warning(
@@ -1036,10 +1036,7 @@ class CGEModel:
                     f"(the last non-NaN step) for the optimizer started point."
                 )
 
-            x0_var_param = (
-                idata_euler.isel(step=last_step).to_dict()["variables"]
-                | idata_euler.isel(step=last_step).to_dict()["parameters"]
-            )
+            x0_var_param = datatree_to_value_dict(idata_euler.isel(step=last_step))
 
         if use_optimizer:
             if optimizer_mode == "root":
@@ -1089,7 +1086,7 @@ class CGEModel:
 
     def check_for_equilibrium(
         self,
-        data: dict[str, float | np.ndarray] | InferenceData | xr.Dataset | OptimizeResult,
+        data: dict[str, float | np.ndarray] | xr.DataTree | xr.Dataset | OptimizeResult,
         tol=1e-6,
         print_equations=True,
     ):
@@ -1098,7 +1095,7 @@ class CGEModel:
 
         Parameters
         ----------
-        data: dict, InferenceData, or xr.Dataset
+        data: dict, xr.DataTree, or xr.Dataset
             The state of the model to check. Must contain values for all variables and parameters in the model.
         tol: float
             The tolerance for the squared error of the system of equations. Defaults to 1e-6.
@@ -1111,17 +1108,13 @@ class CGEModel:
         The data argument is expected to be either a dictionary of variable and parameter values.
         """
 
-        if isinstance(data, InferenceData):
-            if not ("variables" in data.groups() and "parameters" in data.groups()):
-                raise ValueError("InferenceData must contain variables and parameters groups")
+        if isinstance(data, xr.DataTree):
+            if not {"variables", "parameters"} <= set(data.children):
+                raise ValueError("DataTree must contain variables and parameters children")
 
             if "step" in data["variables"].dims:
-                data = (
-                    data.isel(step=-1).to_dict()["variables"]
-                    | data.isel(step=-1).to_dict()["parameters"]
-                )
-            else:
-                data = data.to_dict()["variables"] | data.to_dict()["parameters"]
+                data = data.isel(step=-1)
+            data = datatree_to_value_dict(data)
 
         elif isinstance(data, xr.Dataset):
             data = {x.name: data[x.name].values for x in self.variables + self.parameters}
