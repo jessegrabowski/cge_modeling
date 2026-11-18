@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import xarray.testing as xr_testing
 
 from pytensor.graph import rewrite_graph
 from pytensor.graph.traversal import explicit_graph_inputs
@@ -9,6 +10,7 @@ from cge_modeling import model as cm
 from tests.utilities.models import (
     build_model_2_in_context,
     calibrate_model_2,
+    load_and_cache_model,
     load_model_2,
     model_2_data,
 )
@@ -41,6 +43,30 @@ def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
             for tensor in explicit_graph_inputs([lowered])
         }
         np.testing.assert_allclose(lowered.eval(inputs), 0.0, atol=1e-8, err_msg=equation.name)
+
+
+@pytest.mark.parametrize("optimizer_mode", ["root", "minimize"])
+def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
+    context_model, _ = build_model_2_in_context()
+    string_model = load_and_cache_model(model_id=2, backend="pytensor")
+    calibrated = calibrate_model_2(**model_2_data)
+    scenario = {
+        "final_delta_pct": {"L_s": 0.5},
+        "n_iter_euler": 100,
+        "optimizer_mode": optimizer_mode,
+        "verbose": False,
+    }
+
+    context_result = context_model.simulate(calibrated, **scenario)
+    string_result = string_model.simulate(calibrated, **scenario)
+
+    assert context_model._compile_backend == "pytensor"
+    for group in ("euler", "optimizer"):
+        xr_testing.assert_allclose(
+            context_result[group]["variables"].dataset,
+            string_result[group]["variables"].dataset,
+            rtol=1e-6,
+        )
 
 
 def test_equation_residual_is_lhs_minus_rhs_in_coords_dim_order():
