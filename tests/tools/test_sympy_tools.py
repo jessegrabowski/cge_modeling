@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 import sympy as sp
 
-from cge_modeling.tools.sympy_tools import find_equation_dims, substitute_reduce_ops
+from cge_modeling.tools.sympy_tools import (
+    find_equation_dims,
+    recursive_solve_symbolic,
+    substitute_reduce_ops,
+)
 
 
 def substitute_expression(expr, values):
@@ -86,3 +90,13 @@ def test_find_equation_dims(eq, expected):
     eq = sp.parse_expr(eq, local_dict)
     found_idx = find_equation_dims(eq, idx_symbols)
     assert found_idx == expected
+
+
+def test_recursive_solve_symbolic_solves_whole_chain():
+    a, b, x, y, z = sp.symbols("a b x y z")
+    equations = [x - a, y - x - b, z - y]
+
+    # After the first pass three values are known, one per equation, while y and z are still unsolved.
+    solution = recursive_solve_symbolic(equations, {a: 1.0, b: 2.0})
+
+    assert (solution[x], solution[y], solution[z]) == (1.0, 3.0, 3.0)

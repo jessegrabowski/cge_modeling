@@ -578,7 +578,7 @@ def recursive_solve_symbolic(equations, known_values=None, max_iter=100):
         unsolved = simplified_equations.copy()
 
         # Break if the system is solved, or if we're stuck
-        if len(known_values) == len(equations):
+        if not unsolved:
             break
         if not new_solution_found:
             break
