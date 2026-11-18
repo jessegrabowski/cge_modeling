@@ -191,6 +191,15 @@ class CGEModel:
         self.f_jac: Callable | None = None
         self.f_euler: Callable | None = None
 
+    def _compiled_function(
+        self,
+        name: Literal["f_system", "f_jac", "f_resid", "f_grad", "f_hess", "f_hessp", "f_euler"],
+    ) -> Callable[..., Any]:
+        function = getattr(self, name)
+        if function is None:
+            raise ValueError(f"{name} has not been compiled.")
+        return function
+
     def check_initialization(self):
         if self.n_variables != self.n_equations:
             raise ValueError(
@@ -666,8 +675,6 @@ class CGEModel:
     ):
         method: root_method = optimizer_kwargs.pop("method", "hybr")
 
-        f_system = self.f_system
-        f_jac = self.f_jac
         free_variables = self.variables
 
         use_hess = optimizer_kwargs.pop("use_hess", None)
@@ -683,8 +690,16 @@ class CGEModel:
         parameters = self.parameters
         coords = self.coords
 
-        f_system = wrap_pytensor_func_for_scipy(f_system, free_variables, parameters, coords)
-        f_jac = wrap_pytensor_func_for_scipy(f_jac, free_variables, parameters, coords)
+        f_system = wrap_pytensor_func_for_scipy(
+            self._compiled_function("f_system"), free_variables, parameters, coords
+        )
+        f_jac = (
+            wrap_pytensor_func_for_scipy(
+                self._compiled_function("f_jac"), free_variables, parameters, coords
+            )
+            if use_jac
+            else None
+        )
 
         x0, _theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
 
@@ -692,7 +707,7 @@ class CGEModel:
             f=f_system,
             x0=x0,
             args=(theta_final,),
-            jac=f_jac if use_jac else None,
+            jac=f_jac,
             progressbar=progressbar,
             verbose=verbose,
             method=method,
@@ -734,11 +749,21 @@ class CGEModel:
             parameters = self.parameters
             coords = self.coords
 
-            f_resid = wrap_pytensor_func_for_scipy(f_resid, free_variables, parameters, coords)
-            f_grad = wrap_pytensor_func_for_scipy(f_grad, free_variables, parameters, coords)
-            f_hess = wrap_pytensor_func_for_scipy(f_hess, free_variables, parameters, coords)
+            f_resid = wrap_pytensor_func_for_scipy(
+                self._compiled_function("f_resid"), free_variables, parameters, coords
+            )
+            f_grad = wrap_pytensor_func_for_scipy(
+                self._compiled_function("f_grad"), free_variables, parameters, coords
+            )
+            f_hess = wrap_pytensor_func_for_scipy(
+                self._compiled_function("f_hess"), free_variables, parameters, coords
+            )
             f_hessp = wrap_pytensor_func_for_scipy(
-                f_hessp, free_variables, parameters, coords, include_p=True
+                self._compiled_function("f_hessp"),
+                free_variables,
+                parameters,
+                coords,
+                include_p=True,
             )
 
         x0, _theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
@@ -1123,7 +1148,7 @@ class CGEModel:
             parameters = flat_array_to_variable_dict(data.args, self.parameters, self.coords)
             data = {**variables, **parameters}
 
-        errors = self.f_system(**data)
+        errors = self._compiled_function("f_system")(**data)
         sse = (errors**2).sum()
 
         if sse < tol:
