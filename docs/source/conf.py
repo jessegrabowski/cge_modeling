@@ -188,7 +188,6 @@ bibtex_reference_style = "author_year"
 intersphinx_mapping = {
     "arviz": ("https://python.arviz.org/en/latest/", None),
     "pytensor": ("https://pytensor.readthedocs.io/en/latest/", None),
-    "pmx": ("https://www.pymc.io/projects/experimental/en/latest", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "myst": ("https://myst-parser.readthedocs.io/en/latest", None),
     "myst-nb": ("https://myst-nb.readthedocs.io/en/latest/", None),
