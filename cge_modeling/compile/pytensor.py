@@ -1,7 +1,8 @@
 import logging
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
+from typing import Any
 
 import pytensor
 
@@ -11,7 +12,6 @@ from pytensor.compile.builders import OpFromGraph
 from pytensor.graph.basic import explicit_graph_inputs
 
 from cge_modeling import CGEModel
-from cge_modeling.base.function_wrappers import return_array_from_jax_wrapper
 from cge_modeling.compile.constants import CompiledFunctions
 from cge_modeling.compile.euler import (
     _make_euler_matrices,
@@ -268,7 +268,7 @@ def compile_pytensor_cge_functions(
     use_rk4: bool = False,
     *args,
     **kwargs,
-) -> tuple[Function | None, ...]:
+) -> tuple[Callable[..., Any] | None, ...]:
     system, variables, parameters, (cache, _unpacked_cache) = cge_primitives_to_pytensor(cge_model)
     validate_pytensor_parsing_result(system, variables, parameters, cache)
 
@@ -281,11 +281,6 @@ def compile_pytensor_cge_functions(
         mode=mode,
         on_unused_input="raise",
     )
-
-    if mode == "JAX":
-        # This function needs to return an array, because the loss function displayed by minimize specifically checks
-        # for an array. If it returns a jnp.Array, the check fails and an error is raised.
-        f_system = return_array_from_jax_wrapper(f_system)
 
     # Optional functions
     f_jac = None
@@ -337,14 +332,7 @@ def compile_pytensor_cge_functions(
                 mode=mode,
             )
 
-    def unwrap_jit_fn(f, mode):
-        if f is None or mode not in ["JAX", "NUMBA"]:
-            return f
-        return f.vm.jit_fn
-
-    return tuple(
-        unwrap_jit_fn(f, mode) for f in [f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler]
-    )
+    return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler
 
 
 def compile_cge_model_to_pytensor_Op(cge_model) -> tuple[pt.Op, pt.Op]:

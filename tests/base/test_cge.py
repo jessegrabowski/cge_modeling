@@ -444,28 +444,20 @@ def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sp
     ],
     ids=["minimize_hess", "minimize_hessp", "root", "euler"],
 )
-@pytest.mark.parametrize(
-    "pt_backend, mode",
-    [("pytensor", "FAST_RUN"), ("pytensor", "JAX"), ("sympytensor", "JAX")],
-    ids=["pytensor-FAST_RUN", "pytensor-JAX", "sympytensor-JAX"],
-)
-def test_backends_agree(
+def test_jax_mode_agrees_with_default_mode(
     model_id: int,
     calibrate_model: Callable,
     data: dict,
     method: str,
     solver_kwargs: dict,
     functions_to_compile: str,
-    mode: str,
-    pt_backend: str,
 ):
-    if mode == "JAX":
-        pytest.importorskip("jax")
-    model_reference = load_and_cache_model(
-        model_id=model_id, backend="sympytensor", functions_to_compile=functions_to_compile
+    pytest.importorskip("jax")
+    model_default = load_and_cache_model(
+        model_id=model_id, backend="pytensor", functions_to_compile=functions_to_compile
     )
-    model_candidate = load_and_cache_model(
-        model_id=model_id, backend=pt_backend, mode=mode, functions_to_compile=functions_to_compile
+    model_jax = load_and_cache_model(
+        model_id=model_id, backend="pytensor", mode="JAX", functions_to_compile=functions_to_compile
     )
 
     def solver_agreement_checks(results: list, names: list):
@@ -490,31 +482,26 @@ def test_backends_agree(
         )
 
     calibrated_data = calibrate_model(**data)
-    resid_reference = model_reference.f_system(**calibrated_data)
-    resid_candidate = model_candidate.f_system(**calibrated_data)
-
-    np.testing.assert_allclose(resid_reference, 0, atol=1e-8)
-    np.testing.assert_allclose(resid_candidate, 0, atol=1e-8)
+    np.testing.assert_allclose(model_default.f_system(**calibrated_data), 0, atol=1e-8)
+    np.testing.assert_allclose(model_jax.f_system(**calibrated_data), 0, atol=1e-8)
 
     labor_increase = calibrated_data.copy()
     labor_increase["L_s"] = 10_000
 
     _, theta_labor_increase = variable_dict_to_flat_array(
-        labor_increase, model_reference.variables, model_reference.parameters
+        labor_increase, model_default.variables, model_default.parameters
     )
 
-    res_reference = getattr(model_reference, method)(
+    res_default = getattr(model_default, method)(
         calibrated_data, theta_labor_increase, **solver_kwargs
     )
-    res_candidate = getattr(model_candidate, method)(
-        calibrated_data, theta_labor_increase, **solver_kwargs
-    )
+    res_jax = getattr(model_jax, method)(calibrated_data, theta_labor_increase, **solver_kwargs)
 
     if method == "_solve_with_euler_approximation":
-        res_reference = res_reference["parameters"].dataset.isel(step=-1).to_array().values
-        res_candidate = res_candidate["parameters"].dataset.isel(step=-1).to_array().values
+        res_default = res_default["parameters"].dataset.isel(step=-1).to_array().values
+        res_jax = res_jax["parameters"].dataset.isel(step=-1).to_array().values
 
-    solver_agreement_checks([res_reference, res_candidate], ["Reference", "Candidate"])
+    solver_agreement_checks([res_default, res_jax], ["Default mode", "JAX mode"])
 
 
 @pytest.mark.parametrize("backend", ["pytensor", "sympytensor"])

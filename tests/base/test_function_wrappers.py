@@ -2,6 +2,7 @@
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
+import pytest
 
 from cge_modeling import Parameter, Variable
 from cge_modeling.base.function_wrappers import (
@@ -44,6 +45,29 @@ def test_wrap_pytensor_func_for_scipy_passes_fixed_values():
 
     # x=1, y=2 (fixed), z=3 with a=1, b=2, c=3 gives (1 + 4 + 9)^2. Swapping x and z would give 100.
     assert f_mse_fixed_y(np.array([1.0, 3.0]), np.array([1.0, 2.0, 3.0])) == 196.0
+
+
+@pytest.mark.parametrize("include_p", [False, True], ids=["value", "hessp"])
+def test_wrap_pytensor_func_for_scipy_returns_numpy_for_jax_outputs(include_p):
+    jnp = pytest.importorskip("jax.numpy")
+    variables = [Variable("x", dims=None)]
+    parameters = [Parameter("a", dims=None)]
+
+    def f_jax(**inputs):
+        return jnp.asarray([inputs["x"] * inputs["a"]])
+
+    wrapped = wrap_pytensor_func_for_scipy(
+        f_jax, variables, parameters, coords={}, include_p=include_p
+    )
+    args = (
+        (np.array([2.0]), np.array([1.0]), np.array([3.0]))
+        if include_p
+        else (np.array([2.0]), np.array([3.0]))
+    )
+    out = wrapped(*args)
+
+    assert type(out) is np.ndarray
+    np.testing.assert_allclose(out, [6.0])
 
 
 def test_select_free_variable_entries_drops_fixed_rows_and_columns():

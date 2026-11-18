@@ -211,11 +211,6 @@ class CGEModel:
         compile_kwargs.setdefault("backend", self._compile_backend or backend)
         compile_model(self, **compile_kwargs)
 
-    def _functions_take_named_inputs(self) -> bool:
-        return self._compile_backend == "sympytensor" or (
-            self._compile_backend == "pytensor" and self.mode != "JAX"
-        )
-
     def check_initialization(self):
         if self.n_variables != self.n_equations:
             raise ValueError(
@@ -663,11 +658,9 @@ class CGEModel:
             fitted_values[len(self.unpacked_variable_names) :],
         )
 
-        f_resid = self._compiled_function("f_resid")
-        if self._functions_take_named_inputs():
-            f_resid = wrap_pytensor_func_for_scipy(
-                f_resid, self.variables, self.parameters, self.coords
-            )
+        f_resid = wrap_pytensor_func_for_scipy(
+            self._compiled_function("f_resid"), self.variables, self.parameters, self.coords
+        )
         success = f_resid(x0, theta0) < 1e-6
 
         result = Result(
@@ -757,40 +750,33 @@ class CGEModel:
         method: minimize_method = optimizer_kwargs.pop("method", "trust-ncg")
         use_jac, use_hess, use_hessp = get_method_defaults(use_jac, use_hess, use_hessp, method)
 
-        f_resid = self.f_resid
-        f_grad = self.f_grad
-        f_hess = self.f_hess
-        f_hessp = self.f_hessp
         free_variables = [var for var in self.variables if var.name not in fixed_values]
 
         if not use_jac and use_hess:
             use_hess = False
             _log.warning("use_hess is ignored when use_jac=False. Setting use_hess=False.")
 
-        if self._functions_take_named_inputs():
-            parameters = self.parameters
-            coords = self.coords
-            free_mask = make_flat_array_return_mask(
-                np.zeros(self.n_variables), self.variables, list(fixed_values), coords
+        parameters = self.parameters
+        coords = self.coords
+        free_mask = make_flat_array_return_mask(
+            np.zeros(self.n_variables), self.variables, list(fixed_values), coords
+        )
+
+        def wrap(name, variable_axes, include_p=False):
+            f = wrap_pytensor_func_for_scipy(
+                self._compiled_function(name),
+                free_variables,
+                parameters,
+                coords,
+                include_p=include_p,
+                fixed_values=fixed_values,
             )
+            return select_free_variable_entries(f, free_mask, variable_axes)
 
-            def wrap(name, variable_axes, include_p=False):
-                f = wrap_pytensor_func_for_scipy(
-                    self._compiled_function(name),
-                    free_variables,
-                    parameters,
-                    coords,
-                    include_p=include_p,
-                    fixed_values=fixed_values,
-                )
-                return select_free_variable_entries(f, free_mask, variable_axes)
-
-            f_resid = wrap("f_resid", variable_axes=())
-            f_grad = wrap("f_grad", variable_axes=(0,))
-            f_hess = wrap("f_hess", variable_axes=(0, 1))
-            f_hessp = wrap("f_hessp", variable_axes=(0,), include_p=True)
-        elif fixed_values:
-            raise ValueError("fixed_values is not supported for models compiled in JAX mode.")
+        f_resid = wrap("f_resid", variable_axes=())
+        f_grad = wrap("f_grad", variable_axes=(0,))
+        f_hess = wrap("f_hess", variable_axes=(0, 1))
+        f_hessp = wrap("f_hessp", variable_axes=(0,), include_p=True)
 
         x0, _theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
 

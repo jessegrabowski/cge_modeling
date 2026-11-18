@@ -1,5 +1,3 @@
-import importlib.util
-
 from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any, Literal
@@ -54,19 +52,10 @@ def compile_model(
     use_scan_euler: bool = False,
     use_rk4: bool = False,
 ) -> CGEModel:
-    if (
-        backend == "pytensor"
-        and mode is not None
-        and mode.upper() == "JAX"
-        and importlib.util.find_spec("jax") is not None
-    ):
-        from cge_modeling.compile.jax import compile_jax_cge_functions
-
-        func_maker = partial(compile_jax_cge_functions, use_rk4=use_rk4)
-    elif backend is None:
+    if backend is None:
         raise ValueError(f"backend must be one of {list(COMPILE_FUNC_FACTORY)}, found None")
-    else:
-        func_maker = partial(COMPILE_FUNC_FACTORY[backend], use_rk4=use_rk4)
+
+    func_maker = partial(COMPILE_FUNC_FACTORY[backend], use_rk4=use_rk4)
 
     compile_list = list(_parse_compile_kwarg(functions_to_compile) or [])
 

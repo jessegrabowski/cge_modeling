@@ -47,7 +47,8 @@ def wrap_pytensor_func_for_scipy(
     inner_f: Callable
         A wrapped version of the input function that accepts a single long vector of variables as input, and a single
         long vector of parameters as second input. The wrapped function will unpack these vectors into a dictionary of
-        variables and parameters, and then unpack that dictionary into keyword arguments to the original function.
+        variables and parameters, and then unpack that dictionary into keyword arguments to the original function. It
+        returns a numpy array.
     """
     fixed_values = {} if fixed_values is None else fixed_values
     fixed_points = {
@@ -55,6 +56,7 @@ def wrap_pytensor_func_for_scipy(
         for name, value in fixed_values.items()
     }
 
+    # JAX-mode functions return JAX arrays, and scipy's solvers are much slower doing their arithmetic on those.
     if not include_p:
 
         @ft.wraps(f)
@@ -62,7 +64,7 @@ def wrap_pytensor_func_for_scipy(
             # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
             inputs = np.r_[x0, theta]
             data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
-            return f(**data, **fixed_values)
+            return np.asarray(f(**data, **fixed_values))
 
     else:
 
@@ -77,7 +79,7 @@ def wrap_pytensor_func_for_scipy(
             point_dict = {f"{name}_point": point for name, point in point_dict.items()}
             data.update(point_dict)
 
-            return f(**data, **fixed_values, **fixed_points)
+            return np.asarray(f(**data, **fixed_values, **fixed_points))
 
     return inner_f
 
@@ -144,11 +146,3 @@ def select_free_variable_entries(
         return out
 
     return inner_f
-
-
-def return_array_from_jax_wrapper(f):
-    @ft.wraps(f)
-    def f_array_return(*args, **kwargs):
-        return np.array(f(*args, **kwargs))
-
-    return f_array_return
