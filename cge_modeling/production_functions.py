@@ -1087,3 +1087,82 @@ def DixitStiglitzValue(
     )
     zero_profit = (name, output_price * output, (factor_price * factor).sum(factor_dim))
     return _register_equations(model, [zero_profit, *demands])
+
+
+def Leontief(
+    name: str,
+    *,
+    output: XTensorVariable,
+    output_price: XTensorVariable,
+    factors: Sequence[XTensorVariable],
+    factor_prices: Sequence[XTensorVariable],
+    factor_shares: Sequence[XTensorVariable | float],
+    factor_dim: str | Sequence[str | None] | None = None,
+    model: "CGEModel | None" = None,
+) -> tuple[XTensorEquation, ...]:
+    r"""
+    Register a Leontief production block on ``model``, or on the active :class:`CGEModel`.
+
+    The block is the zero-profit condition and one demand per factor:
+
+    .. math::
+
+        P_Y Y = \sum_i P_i X_i, \qquad X_i = \alpha_i Y
+
+    The technology :math:`Y = \min_i X_i / \alpha_i` is not registered, because it holds whenever the demands do.
+
+    Parameters
+    ----------
+    name : str
+        Name of the zero-profit equation. Each demand equation is named ``"{name}: demand for {factor}"``.
+    output, output_price : XTensorVariable
+        The output :math:`Y` and its price :math:`P_Y`.
+    factors, factor_prices : sequence of XTensorVariable
+        The factors :math:`X_i`, which must be model objects, and their prices :math:`P_i`, in matching order.
+    factor_shares : sequence of XTensorVariable or float
+        The input-output coefficients :math:`\alpha_i`, one per factor.
+    factor_dim : str, sequence of str or None, or None, optional
+        The dim of each factor that indexes its inputs, summed over in the zero-profit condition. For an
+        input-output matrix ``X(i, j)`` with output ``Y(j)``, pass ``factors=[X]`` and ``factor_dim="i"``. A
+        single str or None applies to every factor; a sequence gives one entry per factor, so goods inputs
+        ``X(i, j)`` and energy inputs ``X_E(k, j)`` enter one block as ``factors=[X, X_E]`` and
+        ``factor_dim=["i", "k"]``. Every dim of a factor cost that is not summed must be a dim of the output.
+        Default is None, for factors that each enter as one input.
+    model : CGEModel, optional
+        Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
+
+    Returns
+    -------
+    equations : tuple of XTensorEquation
+        The zero-profit equation, then one demand equation per factor, in factor order.
+    """
+    model = modelcontext(model)
+    _check_factors_named(factors)
+    _check_one_per_factor(factors, price=factor_prices, share=factor_shares)
+    if factor_dim is None or isinstance(factor_dim, str):
+        factor_dims = [factor_dim] * len(factors)
+    else:
+        factor_dims = list(factor_dim)
+        _check_one_per_factor(factors, factor_dim=factor_dims)
+
+    output_value = output_price * output
+    factor_costs = []
+    for factor, price, dim in zip(factors, factor_prices, factor_dims, strict=True):
+        cost = price * factor
+        if dim is not None:
+            if dim not in cost.type.dims:
+                raise ValueError(f"Factor {factor.name} has no dim {dim!r} to sum over.")
+            cost = cost.sum(dim)
+        extra_dims = [d for d in cost.type.dims if d not in output_value.type.dims]
+        if extra_dims:
+            raise ValueError(
+                f"The cost of factor {factor.name} has dims {extra_dims} that the output does not; pass them as "
+                "its factor_dim."
+            )
+        factor_costs.append(cost)
+
+    demands = [
+        (f"{name}: demand for {factor.name}", factor, share * output)
+        for factor, share in zip(factors, factor_shares, strict=True)
+    ]
+    return _register_equations(model, [(name, output_value, reduce(add, factor_costs)), *demands])

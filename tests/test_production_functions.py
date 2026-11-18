@@ -13,6 +13,7 @@ from cge_modeling.production_functions import (
     CobbDouglas,
     DixitStiglitz,
     DixitStiglitzValue,
+    Leontief,
 )
 
 
@@ -286,6 +287,190 @@ def test_dixit_stiglitz_blocks_hold_when_the_output_price_is_the_unit_cost(helpe
         )
 
 
+def test_leontief_holds_when_the_output_price_is_the_unit_cost():
+    with CGEModel() as model:
+        Y, X_1, X_2, P_Y = (cm.Variable(name) for name in ("Y", "X_1", "X_2", "P_Y"))
+        P_1, P_2, a_1, a_2 = (cm.Parameter(name) for name in ("P_1", "P_2", "a_1", "a_2"))
+        equations = Leontief(
+            "Bundle",
+            output=Y,
+            output_price=P_Y,
+            factors=[X_1, X_2],
+            factor_prices=[P_1, P_2],
+            factor_shares=[a_1, a_2],
+        )
+    objects = {
+        "Y": Y,
+        "X_1": X_1,
+        "X_2": X_2,
+        "P_Y": P_Y,
+        "P_1": P_1,
+        "P_2": P_2,
+        "a_1": a_1,
+        "a_2": a_2,
+    }
+    point = {"Y": 4.0, "P_1": 1.3, "P_2": 0.6, "a_1": 0.25, "a_2": 0.4}
+    point |= {
+        "X_1": point["a_1"] * point["Y"],
+        "X_2": point["a_2"] * point["Y"],
+        "P_Y": point["a_1"] * point["P_1"] + point["a_2"] * point["P_2"],
+    }
+
+    assert model.equation_names == ["Bundle", "Bundle: demand for X_1", "Bundle: demand for X_2"]
+    for equation in equations:
+        np.testing.assert_allclose(
+            evaluate_residual(equation, objects, point), 0.0, atol=1e-12, err_msg=equation.name
+        )
+
+
+def test_leontief_zero_profit_fails_off_the_unit_cost():
+    with CGEModel():
+        Y, X_1, X_2, P_Y = (cm.Variable(name) for name in ("Y", "X_1", "X_2", "P_Y"))
+        P_1, P_2, a_1, a_2 = (cm.Parameter(name) for name in ("P_1", "P_2", "a_1", "a_2"))
+        zero_profit, *_ = Leontief(
+            "Bundle",
+            output=Y,
+            output_price=P_Y,
+            factors=[X_1, X_2],
+            factor_prices=[P_1, P_2],
+            factor_shares=[a_1, a_2],
+        )
+    objects = {"Y": Y, "X_1": X_1, "X_2": X_2, "P_Y": P_Y, "P_1": P_1, "P_2": P_2}
+    point = {"Y": 4.0, "X_1": 1.0, "X_2": 1.6, "P_1": 1.3, "P_2": 0.6}
+    unit_cost = 0.25 * point["P_1"] + 0.4 * point["P_2"]
+
+    assert abs(evaluate_residual(zero_profit, objects, point | {"P_Y": unit_cost * 1.1})) > 1e-3
+
+
+def test_leontief_over_an_input_output_matrix_reproduces_the_model_2_bundle():
+    sectors = ["0", "1", "2"]
+    with CGEModel(coords={"i": sectors, "j": sectors}):
+        X = cm.Variable("X", dims=("i", "j"))
+        VC = cm.Variable("VC", dims="i")
+        P_VC = cm.Variable("P_VC", dims="i")
+        P = cm.Parameter("P", dims="i")
+        psi_X = cm.Parameter("psi_X", dims=("i", "j"))
+        zero_profit, demand = Leontief(
+            "Intermediate bundle",
+            output=VC.rename(i="j"),
+            output_price=P_VC.rename(i="j"),
+            factors=[X],
+            factor_prices=[P],
+            factor_shares=[psi_X],
+            factor_dim="i",
+        )
+    objects = {"X": X, "VC": VC, "P_VC": P_VC, "P": P, "psi_X": psi_X}
+    rng = np.random.default_rng(2)
+    point = {
+        "X": rng.uniform(1, 2, (3, 3)),
+        "VC": rng.uniform(1, 2, 3),
+        "P_VC": rng.uniform(1, 2, 3),
+        "P": rng.uniform(1, 2, 3),
+        "psi_X": rng.uniform(0.1, 0.5, (3, 3)),
+    }
+    inline_zero_profit = VC * P_VC - (P * X).sum("i").rename(j="i")
+    inline_demand = X - psi_X * VC.rename(i="j")
+
+    for equation, inline in [(zero_profit, inline_zero_profit), (demand, inline_demand)]:
+        np.testing.assert_allclose(
+            evaluate_residual(equation, objects, point),
+            evaluate(inline, objects, point),
+            err_msg=equation.name,
+        )
+
+
+def test_leontief_sums_each_factor_over_its_own_input_dim():
+    with CGEModel(coords={"i": ["a", "b"], "j": ["a", "b"], "k": ["energy"]}):
+        X = cm.Variable("X", dims=("i", "j"))
+        X_E = cm.Variable("X_E", dims=("k", "j"))
+        VC = cm.Variable("VC", dims="j")
+        P_VC = cm.Variable("P_VC", dims="j")
+        P = cm.Parameter("P", dims="i")
+        P_E = cm.Parameter("P_E", dims="k")
+        psi_X = cm.Parameter("psi_X", dims=("i", "j"))
+        psi_X_E = cm.Parameter("psi_X_E", dims=("k", "j"))
+        zero_profit, *_ = Leontief(
+            "Intermediate bundle",
+            output=VC,
+            output_price=P_VC,
+            factors=[X, X_E],
+            factor_prices=[P, P_E],
+            factor_shares=[psi_X, psi_X_E],
+            factor_dim=["i", "k"],
+        )
+    objects = {"X": X, "X_E": X_E, "VC": VC, "P_VC": P_VC, "P": P, "P_E": P_E}
+    rng = np.random.default_rng(3)
+    point = {
+        "X": rng.uniform(1, 2, (2, 2)),
+        "X_E": rng.uniform(1, 2, (1, 2)),
+        "VC": rng.uniform(1, 2, 2),
+        "P_VC": rng.uniform(1, 2, 2),
+        "P": rng.uniform(1, 2, 2),
+        "P_E": rng.uniform(1, 2, 1),
+    }
+    expected = point["P_VC"] * point["VC"] - (
+        (point["P"][:, None] * point["X"]).sum(axis=0)
+        + (point["P_E"][:, None] * point["X_E"]).sum(axis=0)
+    )
+
+    np.testing.assert_allclose(evaluate_residual(zero_profit, objects, point), expected)
+
+
+def test_leontief_requires_one_factor_dim_per_factor():
+    with pytest.raises(ValueError, match="Expected one factor_dim per factor"):
+        with CGEModel(coords={"i": ["a"], "j": ["a"]}):
+            X = cm.Variable("X", dims=("i", "j"))
+            VC = cm.Variable("VC", dims="j")
+            P_VC = cm.Variable("P_VC", dims="j")
+            P = cm.Parameter("P", dims="i")
+            psi_X = cm.Parameter("psi_X", dims=("i", "j"))
+            Leontief(
+                "Intermediate bundle",
+                output=VC,
+                output_price=P_VC,
+                factors=[X],
+                factor_prices=[P],
+                factor_shares=[psi_X],
+                factor_dim=["i", "j"],
+            )
+
+
+def test_leontief_requires_one_share_per_factor():
+    with pytest.raises(
+        ValueError, match="Expected one share per factor, found 2 factors and 1 shares"
+    ):
+        with CGEModel():
+            Y, X_1, X_2, P_Y = (cm.Variable(name) for name in ("Y", "X_1", "X_2", "P_Y"))
+            P_1, P_2, a_1 = (cm.Parameter(name) for name in ("P_1", "P_2", "a_1"))
+            Leontief(
+                "Bundle",
+                output=Y,
+                output_price=P_Y,
+                factors=[X_1, X_2],
+                factor_prices=[P_1, P_2],
+                factor_shares=[a_1],
+            )
+
+
+def test_helpers_reject_factors_that_are_not_model_objects():
+    with pytest.raises(ValueError, match=r"Factors at positions \[0\] have no name"):
+        with CGEModel(coords={"i": ["a", "b"], "j": ["a", "b"]}):
+            X = cm.Variable("X", dims=("i", "j"))
+            VC = cm.Variable("VC", dims="i")
+            P_VC = cm.Variable("P_VC", dims="i")
+            P = cm.Parameter("P", dims="j")
+            psi_X = cm.Parameter("psi_X", dims=("i", "j"))
+            Leontief(
+                "Bundle",
+                output=VC,
+                output_price=P_VC,
+                factors=[X.rename(i="j", j="i")],
+                factor_prices=[P],
+                factor_shares=[psi_X.rename(i="j", j="i")],
+                factor_dim="j",
+            )
+
+
 def test_a_name_clash_leaves_the_model_unchanged():
     with CGEModel() as model:
         Y, K, L, P = (cm.Variable(name) for name in ("Y", "K", "L", "P"))
@@ -344,6 +529,33 @@ def test_cobb_douglas_with_one_factor_and_no_share_uses_a_share_of_one():
 
     np.testing.assert_allclose(evaluate_residual(production, objects, point), 0.0)
     np.testing.assert_allclose(evaluate_residual(demand, objects, point), 0.0)
+
+
+@pytest.mark.parametrize(
+    "factor_dim, message",
+    [
+        (None, r"has dims \['i'\] that the output does not; pass them as its factor_dim"),
+        ("k", "Factor X has no dim 'k' to sum over"),
+    ],
+    ids=["forgotten", "wrong_dim"],
+)
+def test_leontief_rejects_factor_costs_with_dims_the_output_lacks(factor_dim, message):
+    with pytest.raises(ValueError, match=message):
+        with CGEModel(coords={"i": ["a", "b"], "j": ["a", "b"], "k": ["energy"]}):
+            X = cm.Variable("X", dims=("i", "j"))
+            VC = cm.Variable("VC", dims="j")
+            P_VC = cm.Variable("P_VC", dims="j")
+            P = cm.Parameter("P", dims="i")
+            psi_X = cm.Parameter("psi_X", dims=("i", "j"))
+            Leontief(
+                "Bundle",
+                output=VC,
+                output_price=P_VC,
+                factors=[X],
+                factor_prices=[P],
+                factor_shares=[psi_X],
+                factor_dim=factor_dim,
+            )
 
 
 def test_dixit_stiglitz_rejects_an_output_indexed_by_the_varieties():
