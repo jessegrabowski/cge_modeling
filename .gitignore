@@ -179,6 +179,10 @@ docs/jupyter_execute/
 .pixi/
 cge_modeling/_version.py
 
+# Written by the gallery Sphinx extension on every docs build
+/docs/source/examples/gallery.rst
+/docs/source/_thumbnails/
+
 # Coverage reports
 .coverage
 coverage.xml
