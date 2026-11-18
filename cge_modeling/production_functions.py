@@ -1,11 +1,20 @@
 import string
 
 from collections.abc import Sequence
+from functools import reduce
 from itertools import combinations, product
+from operator import add, mul
 from string import Template
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
+from pytensor.xtensor.type import XTensorVariable
+
+from cge_modeling.base.context import XTensorEquation, modelcontext
+from cge_modeling.model import Equation
 from cge_modeling.tools.utils import at_least_list
+
+if TYPE_CHECKING:
+    from cge_modeling.base.cge import CGEModel
 
 BACKEND_TYPE = Literal["sympytensor", "pytensor"]
 
@@ -705,3 +714,112 @@ def leontief(
             transpose_output=transpose_output,
             backend=backend,
         )
+
+
+EquationSpec = tuple[str, XTensorVariable, XTensorVariable]
+
+
+def _check_one_per_factor(factors: Sequence[XTensorVariable], **per_factor: Sequence) -> None:
+    for label, values in per_factor.items():
+        if len(values) != len(factors):
+            raise ValueError(
+                f"Expected one {label} per factor, found {len(factors)} factors and {len(values)} {label}s."
+            )
+
+
+def _check_factors_named(factors: Sequence[XTensorVariable]) -> None:
+    unnamed = [position for position, factor in enumerate(factors) if factor.name is None]
+    if unnamed:
+        raise ValueError(
+            f"Factors at positions {unnamed} have no name. Pass model objects, not expressions built from them."
+        )
+
+
+def _complete_factor_shares(
+    factors: Sequence[XTensorVariable],
+    factor_prices: Sequence[XTensorVariable],
+    factor_shares: Sequence[XTensorVariable | float],
+) -> list[XTensorVariable | float]:
+    """
+    Check that there is one price per factor, and return one share per factor.
+
+    With one share fewer than factors, the last share is one minus the sum of the others.
+    """
+    _check_one_per_factor(factors, price=factor_prices)
+    n_factors = len(factors)
+    if len(factor_shares) == n_factors:
+        return list(factor_shares)
+    if len(factor_shares) == n_factors - 1:
+        return [*factor_shares, 1 - reduce(add, factor_shares, 0.0)]
+    raise ValueError(
+        f"Expected {n_factors} factor shares, or {n_factors - 1} with the last implied, found {len(factor_shares)}."
+    )
+
+
+def _register_equations(
+    model: "CGEModel", specs: Sequence[EquationSpec]
+) -> tuple[XTensorEquation, ...]:
+    """Register ``(name, lhs, rhs)`` specs on ``model`` after checking that every name is free."""
+    names = [name for name, _, _ in specs]
+    taken = [name for name in names if name in model.equation_names]
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    if taken or repeated:
+        raise ValueError(
+            f"Cannot register the block: equation names {taken + repeated} are already taken or repeated."
+        )
+    return tuple(Equation(name, lhs, rhs, model=model) for name, lhs, rhs in specs)
+
+
+def CobbDouglas(
+    name: str,
+    *,
+    output: XTensorVariable,
+    output_price: XTensorVariable,
+    factors: Sequence[XTensorVariable],
+    factor_prices: Sequence[XTensorVariable],
+    factor_shares: Sequence[XTensorVariable | float],
+    tfp: XTensorVariable | float,
+    model: "CGEModel | None" = None,
+) -> tuple[XTensorEquation, ...]:
+    r"""
+    Register a Cobb-Douglas production block on ``model``, or on the active :class:`CGEModel`.
+
+    The block is the technology and one cost-minimizing demand per factor:
+
+    .. math::
+
+        Y = A \prod_i X_i^{\alpha_i}, \qquad X_i = \alpha_i \frac{Y P_Y}{P_i}
+
+    Parameters
+    ----------
+    name : str
+        Name of the production equation. Each demand equation is named ``"{name}: demand for {factor}"``.
+    output, output_price : XTensorVariable
+        The output :math:`Y` and its price :math:`P_Y`.
+    factors, factor_prices : sequence of XTensorVariable
+        The factors :math:`X_i`, which must be model objects, and their prices :math:`P_i`, in matching order.
+    factor_shares : sequence of XTensorVariable or float
+        The shares :math:`\alpha_i`, one per factor. With one share fewer than factors, the last share is one
+        minus the sum of the others.
+    tfp : XTensorVariable or float
+        Total factor productivity :math:`A`.
+    model : CGEModel, optional
+        Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
+
+    Returns
+    -------
+    equations : tuple of XTensorEquation
+        The production equation, then one demand equation per factor, in factor order.
+    """
+    model = modelcontext(model)
+    _check_factors_named(factors)
+    factor_shares = _complete_factor_shares(factors, factor_prices, factor_shares)
+
+    technology = tfp * reduce(
+        mul, [factor**share for factor, share in zip(factors, factor_shares, strict=True)]
+    )
+    demands = [
+        (f"{name}: demand for {factor.name}", factor, share * output * output_price / price)
+        for factor, price, share in zip(factors, factor_prices, factor_shares, strict=True)
+    ]
+    return _register_equations(model, [(name, output, technology), *demands])
