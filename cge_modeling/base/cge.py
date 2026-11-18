@@ -204,6 +204,14 @@ class CGEModel:
             raise ValueError(f"{name} has not been compiled.")
         return function
 
+    def _compile(self, **compile_kwargs) -> None:
+        # cge_modeling.base.build imports this module, so compile_model can only be imported here.
+        from cge_modeling.base.build import compile_model
+
+        backend = "sympytensor" if self.parse_equations_to_sympy else "pytensor"
+        compile_kwargs.setdefault("backend", self._compile_backend or backend)
+        compile_model(self, **compile_kwargs)
+
     def check_initialization(self):
         if self.n_variables != self.n_equations:
             raise ValueError(

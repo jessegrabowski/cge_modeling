@@ -20,6 +20,7 @@ from tests.utilities.models import (
     expected_model_2_jacobian,
     load_and_cache_model,
     load_model_1,
+    load_model_1_components,
     model_1_data,
     model_2_data,
 )
@@ -666,6 +667,18 @@ def test_simulate(scenario_kwargs, expected_result):
     for key in expected_result:
         final_param = res["optimizer"]["parameters"][key].isel(step=-1)
         assert final_param == expected_result[key](initial_state[key])
+
+
+def test_simulate_compiles_an_uncompiled_model():
+    variables, parameters, equations, coords = load_model_1_components()
+    mod = CGEModel(coords=coords, variables=variables, parameters=parameters, equations=equations)
+    initial_state = calibrate_model_1(**model_1_data)
+
+    res = mod.simulate(initial_state, final_values={"L_s": 1500}, n_iter_euler=100)
+
+    assert mod._compile_backend == "sympytensor"
+    assert list(mod._compiled) == ["euler", "root"]
+    assert res["optimizer"]["parameters"]["L_s"].isel(step=-1) == 1500
 
 
 def test_check_for_equilibrium_reads_simulation_datatree(caplog):
