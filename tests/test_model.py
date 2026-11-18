@@ -32,6 +32,12 @@ def test_model_2_in_context_matches_string_model_objects_and_size():
     assert model.parameter_names == string_model.parameter_names
     assert model.n_variables == model.n_equations == string_model.n_equations
     assert model.n_parameters == string_model.n_parameters
+    for context_object, string_object in zip(
+        model.variables + model.parameters, string_model.variables + string_model.parameters
+    ):
+        assert context_object._full_latex_name == string_object._full_latex_name, (
+            context_object.name
+        )
 
 
 def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():

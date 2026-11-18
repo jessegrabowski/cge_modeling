@@ -261,17 +261,21 @@ class CGEModel:
         kind: Literal["variable", "parameter"],
         description: str | None,
         latex_name: str | None,
+        extend_subscript: bool | int,
     ) -> ModelObjectVariable:
         if name in self.variable_names + self.parameter_names:
             raise ValueError(f"The model already has a variable or parameter named {name!r}.")
         if name in self.coords:
             raise ValueError(f"Name {name!r} conflicts with an existing dimension name.")
 
-        obj: Variable | Parameter
-        if kind == "variable":
-            obj = Variable(name=name, dims=dims, description=description, latex_name=latex_name)
-        else:
-            obj = Parameter(name=name, dims=dims, description=description, latex_name=latex_name)
+        object_class = Variable if kind == "variable" else Parameter
+        obj = object_class(
+            name=name,
+            dims=dims,
+            description=description,
+            latex_name=latex_name,
+            extend_subscript=extend_subscript,
+        )
 
         normalized_dims = cast(tuple[str, ...], obj.dims)
         unknown_dims = [dim for dim in normalized_dims if dim not in self.coords]
