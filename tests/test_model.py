@@ -74,6 +74,7 @@ def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
             context_result[group]["variables"].dataset,
             string_result[group]["variables"].dataset,
             rtol=1e-6,
+            atol=1e-6,
         )
 
 

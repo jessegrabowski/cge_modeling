@@ -5,6 +5,7 @@ import numpy as np
 
 from cge_modeling import CGEModel, Equation, Parameter, Variable, cge_model
 from cge_modeling import model as cm
+from cge_modeling.production_functions import CES, Leontief
 
 
 def load_model_1_components(**kargs):
@@ -346,24 +347,33 @@ def build_model_2_in_context() -> CGEModel:
         K_s = cm.Parameter("K_s")
         P_Ag_bar = cm.Parameter("P_Ag_bar", latex_name=r"\bar{P}_{Ag}")
 
-        exponent = (phi_VA - 1) / phi_VA
-
-        cm.Equation("Final good production", P * Y, P_VC * VC + P_VA * VA)
-        cm.Equation("Demand for intermediate goods bundle", VC, psi_VC * Y)
-        cm.Equation("Demand for labor-capital", VA, psi_VA * Y)
-        cm.Equation(
+        Leontief(
+            "Final good production",
+            output=Y,
+            output_price=P,
+            factors=[VC, VA],
+            factor_prices=[P_VC, P_VA],
+            factor_shares=[psi_VC, psi_VA],
+        )
+        Leontief(
             "Production of intermediate goods bundle",
-            VC * P_VC,
-            (P * X).sum("i").rename(j="i"),
+            output=VC.rename(i="j"),
+            output_price=P_VC.rename(i="j"),
+            factors=[X],
+            factor_prices=[P],
+            factor_shares=[psi_X],
+            factor_dim="i",
         )
-        cm.Equation("Demand for intermediate inputs", X, psi_X * VC.rename(i="j"))
-        cm.Equation(
+        CES(
             "Production of labor-capital",
-            VA,
-            A * (alpha * K_d**exponent + (1 - alpha) * L_d**exponent) ** (1 / exponent),
+            output=VA,
+            output_price=P_VA,
+            factors=[K_d, L_d],
+            factor_prices=[r, w],
+            factor_shares=[alpha],
+            tfp=A,
+            epsilon=phi_VA,
         )
-        cm.Equation("Demand for capital", K_d, VA / A * (alpha * P_VA * A / r) ** phi_VA)
-        cm.Equation("Demand for labor", L_d, VA / A * ((1 - alpha) * A * P_VA / w) ** phi_VA)
         cm.Equation("Household income", income, w * L_s + r * K_s)
         cm.Equation("Household utility", U, (C**gamma).prod())
         cm.Equation("Household demand", C, gamma * income / P)
