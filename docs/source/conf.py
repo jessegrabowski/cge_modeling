@@ -123,6 +123,9 @@ autodoc_typehints = "none"
 autoclass_content = "class"
 remove_from_toctrees = ["**/classmethods/*"]
 
+# Prefix section labels with their document so headings repeated across pages stay unique.
+autosectionlabel_prefix_document = True
+
 numpydoc_show_class_members = False
 numpydoc_xref_param_type = True
 numpydoc_xref_ignore = {
