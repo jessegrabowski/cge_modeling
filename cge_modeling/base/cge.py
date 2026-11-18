@@ -8,10 +8,11 @@ import warnings
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
+import pytensor.tensor as pt
 import sympy as sp
 import xarray as xr
 
@@ -19,8 +20,12 @@ from better_optimize import minimize, root
 from better_optimize.constants import minimize_method, root_method
 from cloudpickle import cloudpickle
 from pytensor.compile.mode import Mode
+from pytensor.graph.traversal import explicit_graph_inputs
+from pytensor.xtensor import as_xtensor
+from pytensor.xtensor.basic import xtensor_from_tensor
 from scipy.optimize import OptimizeResult
 
+from cge_modeling.base.context import ModelObjectVariable, XTensorEquation, model_stack
 from cge_modeling.base.function_wrappers import (
     select_free_variable_entries,
     wrap_compiled_function_for_scipy,
@@ -39,6 +44,7 @@ from cge_modeling.base.utilities import (
     ensure_input_is_sequence,
     flat_array_to_variable_dict,
     get_method_defaults,
+    infer_object_shape_from_coords,
     make_flat_array_return_mask,
     unpack_equation_strings,
     variable_dict_to_flat_array,
@@ -137,6 +143,10 @@ class CGEModel:
         considered. Therefore, it may not be the case that the number of variables declared is equal to the number of
         equations declared.
 
+        A model can instead be built from pytensor xtensor expressions: create it with only ``coords``, then declare
+        objects and equations with :mod:`cge_modeling.model` inside ``with model:`` or with ``model=model``. A model
+        built this way does not accept the ``variables``, ``parameters``, and ``equations`` lists, and the reverse.
+
         """
 
         self.numeraire = None
@@ -155,6 +165,10 @@ class CGEModel:
         self._unpacked_parameters: dict[str, dict[str, Any]] = {}
         self._unpacked_equations: dict[str, dict[str, Any] | None] = {}
 
+        self._model_objects: dict[str, ModelObjectVariable] = {}
+        self._xtensor_equations: dict[str, XTensorEquation] = {}
+        self._context_tokens: list = []
+
         self._initialize_group(variables, "variables")
         if numeraire is not None:
             if numeraire not in self.variable_names:
@@ -170,15 +184,7 @@ class CGEModel:
         if numeraire:
             del self._variables[numeraire]
 
-        self.n_equations = len(self.unpacked_equation_names)
-        self.n_variables = len(self.unpacked_variable_names)
-        self.n_parameters = len(self.unpacked_parameter_names)
-
         self.check_initialization()
-        _log.info(
-            f"Initial pre-processing complete, found {self.n_equations} equations, {self.n_variables} variables, "
-            f"{self.n_parameters} parameters"
-        )
 
         self.scenarios: dict[str, Result] = {}
 
@@ -193,6 +199,140 @@ class CGEModel:
         self.f_hessp: Callable | None = None
         self.f_jac: Callable | None = None
         self.f_euler: Callable | None = None
+
+    @property
+    def n_variables(self) -> int:
+        return len(self.unpacked_variable_names)
+
+    @property
+    def n_parameters(self) -> int:
+        return len(self.unpacked_parameter_names)
+
+    @property
+    def n_equations(self) -> int:
+        return len(self.unpacked_equation_names) + sum(
+            int(np.prod(equation.residual.type.shape))
+            for equation in self._xtensor_equations.values()
+        )
+
+    def __enter__(self) -> "CGEModel":
+        if self._is_string_built():
+            raise ValueError(
+                "This model was built from Variable, Parameter, and Equation lists, so objects cannot be added "
+                "to it in a `with` block."
+            )
+        self._context_tokens.append(model_stack.set((*model_stack.get(), self)))
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        model_stack.reset(self._context_tokens.pop())
+
+    def __getitem__(self, name: str) -> ModelObjectVariable:
+        """Return the variable or parameter named ``name`` that was registered in a ``with`` block."""
+        try:
+            return self._model_objects[name]
+        except KeyError:
+            raise KeyError(
+                f"{name!r} is not a variable or parameter registered in a `with` block on this model."
+            ) from None
+
+    def _is_string_built(self) -> bool:
+        has_string_objects = bool(self._variables or self._parameters or self._equations)
+        return has_string_objects and not self._model_objects
+
+    def label_positions(self, dim: str, labels: Any) -> int | list[int]:
+        """Map one label, or a list of labels, of ``dim`` to positions along it."""
+        if dim not in self.coords:
+            raise ValueError(f"Unknown dimension {dim!r}. Model dims are {list(self.coords)}.")
+
+        dim_labels = list(self.coords[dim])
+
+        def position(label):
+            if label not in dim_labels:
+                raise KeyError(f"{label!r} is not a label of dimension {dim!r}: {dim_labels}.")
+            return dim_labels.index(label)
+
+        if isinstance(labels, str) or not isinstance(labels, Sequence | np.ndarray | pd.Index):
+            return position(labels)
+        return [position(label) for label in labels]
+
+    def _register_model_object(
+        self,
+        name: str,
+        dims: str | list[str] | tuple[str, ...] | None,
+        kind: Literal["variable", "parameter"],
+        description: str | None,
+        latex_name: str | None,
+    ) -> ModelObjectVariable:
+        if name in self.variable_names + self.parameter_names:
+            raise ValueError(f"The model already has a variable or parameter named {name!r}.")
+        if name in self.coords:
+            raise ValueError(f"Name {name!r} conflicts with an existing dimension name.")
+
+        obj: Variable | Parameter
+        if kind == "variable":
+            obj = Variable(name=name, dims=dims, description=description, latex_name=latex_name)
+        else:
+            obj = Parameter(name=name, dims=dims, description=description, latex_name=latex_name)
+
+        normalized_dims = cast(tuple[str, ...], obj.dims)
+        unknown_dims = [dim for dim in normalized_dims if dim not in self.coords]
+        if unknown_dims:
+            raise ValueError(
+                f"{name!r} has dims {unknown_dims} that are not in the model coords {list(self.coords)}."
+            )
+
+        tensor = pt.tensor(name, shape=infer_object_shape_from_coords(obj, self.coords))
+        xtensor = xtensor_from_tensor(tensor, dims=normalized_dims, name=name)
+        # pytensor builds the output variable from its type, so the subclass is attached afterward. It adds methods
+        # only, and graph clones made during compilation are plain XTensorVariables, which is all they need to be.
+        xtensor.__class__ = ModelObjectVariable
+
+        group = f"{kind}s"
+        getattr(self, f"_{group}")[name] = obj
+        getattr(self, f"_unpacked_{group}").update(
+            {
+                make_indexed_name(unpacked): {"modelobj": unpacked}
+                for unpacked in self._unpack_objects([obj])
+            }
+        )
+        self._model_objects[name] = xtensor
+        return xtensor
+
+    def _register_model_equation(self, name: str, lhs: Any, rhs: Any) -> XTensorEquation:
+        if name in self.equation_names:
+            raise ValueError(f"The model already has an equation named {name!r}.")
+        for side, value in (("lhs", lhs), ("rhs", rhs)):
+            if isinstance(value, bool):
+                raise TypeError(
+                    f"{side} of equation {name!r} is a bool. `==` does not build equations; pass the two "
+                    "sides separately, as Equation(name, lhs, rhs)."
+                )
+
+        lhs, rhs = as_xtensor(lhs), as_xtensor(rhs)
+        residual = lhs - rhs
+
+        unknown_dims = [dim for dim in residual.type.dims if dim not in self.coords]
+        if unknown_dims:
+            raise ValueError(
+                f"Equation {name!r} has dims {unknown_dims} that are not in the model coords {list(self.coords)}."
+            )
+
+        model_tensors = {obj.owner.inputs[0] for obj in self._model_objects.values()}
+        inputs = list(explicit_graph_inputs([residual]))
+        if not inputs:
+            raise ValueError(f"Equation {name!r} uses no variables or parameters of the model.")
+        foreign_inputs = [variable for variable in inputs if variable not in model_tensors]
+        if foreign_inputs:
+            raise ValueError(
+                f"Equation {name!r} uses inputs that are not objects of this model: {foreign_inputs}."
+            )
+
+        residual = residual.transpose(*[dim for dim in self.coords if dim in residual.type.dims])
+
+        equation = XTensorEquation(name=name, lhs=lhs, rhs=rhs, residual=residual)
+        self._xtensor_equations[name] = equation
+        return equation
 
     def _compiled_function(
         self,
@@ -304,7 +444,7 @@ class CGEModel:
 
     @property
     def equation_names(self) -> list[str]:
-        return list(self._equations.keys())
+        return [*self._equations, *self._xtensor_equations]
 
     @property
     def equations(self) -> list[Equation]:
@@ -342,6 +482,11 @@ class CGEModel:
         group: ValidGroups,
         overwrite: bool = False,
     ):
+        if self._model_objects:
+            raise ValueError(
+                f"Cannot add {obj.name}; this model is built in a `with` block, so add objects with the "
+                "constructors in cge_modeling.model."
+            )
         obj_dict = getattr(self, f"_{group}")
         obj_names = getattr(self, f"{group[:-1]}_names")
         if obj.name in obj_names and not overwrite:

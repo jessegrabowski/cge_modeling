@@ -1,5 +1,9 @@
+import logging
+
 import pytest
 
+from cge_modeling import CGEModel
+from cge_modeling import model as cm
 from cge_modeling.base import build
 from cge_modeling.base.primitives import Equation
 from tests.utilities.models import load_and_cache_model
@@ -91,6 +95,34 @@ def test_compiled_functions_take_packed_inputs(backend):
     check_function_signature(
         model.f_euler.keywords["f_step"], ["x", "theta", "theta_initial", "theta_final", "n_steps"]
     )
+
+
+def test_compile_model_rejects_a_non_square_context_built_model():
+    with CGEModel(coords={"i": ["a", "b"]}) as model:
+        P = cm.Variable("P", dims="i")
+        cm.Equation("first price", P.sel(i="a"), 1.0)
+
+    with pytest.raises(ValueError, match="Found 2 variables but 1 equations"):
+        build.compile_model(model, backend="pytensor")
+
+
+def test_compile_model_rejects_a_square_context_built_model():
+    with CGEModel(coords={"i": ["a", "b"]}) as model:
+        P = cm.Variable("P", dims="i")
+        cm.Equation("prices", P, 1.0)
+
+    with pytest.raises(NotImplementedError, match="built in a `with` block is not supported yet"):
+        build.compile_model(model, backend="pytensor")
+
+
+def test_compile_model_logs_the_model_size_once(caplog):
+    model = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile=None)
+
+    with caplog.at_level(logging.INFO, logger="cge_modeling"):
+        build.compile_model(model, backend="pytensor", functions_to_compile=None)
+
+    size_messages = [r.message for r in caplog.records if "Compiling a model with" in r.message]
+    assert len(size_messages) == 1
 
 
 def test_compile_model_requires_backend():
