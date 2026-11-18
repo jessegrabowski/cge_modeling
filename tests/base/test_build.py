@@ -101,3 +101,10 @@ def test_compiled_functions_have_correct_signature(backend):
 
     variable_points = [f"{x}_point" for x in variable_names]
     check_function_signature(model.f_hessp, variable_names + parameter_names + variable_points)
+
+
+def test_compile_model_requires_backend():
+    model = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile=None)
+
+    with pytest.raises(ValueError, match="backend must be one of"):
+        build.compile_model(model, backend=None)
