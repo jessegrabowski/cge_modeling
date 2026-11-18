@@ -681,6 +681,29 @@ def test_simulate_compiles_an_uncompiled_model():
     assert res["optimizer"]["parameters"]["L_s"].isel(step=-1) == 1500
 
 
+def test_calibrate_reproduces_sequential_calibration():
+    variables, parameters, equations, coords = load_model_1_components()
+    mod = CGEModel(coords=coords, variables=variables, parameters=parameters, equations=equations)
+    expected = calibrate_model_1(**model_1_data)
+
+    result = mod.calibrate(data={**model_1_data, "w": 1.0})
+
+    assert result.success
+    fitted = result.to_dict()["fitted"]
+    for name, value in expected.items():
+        np.testing.assert_allclose(fitted[name], value)
+
+
+def test_calibrate_flags_inconsistent_data():
+    variables, parameters, equations, coords = load_model_1_components()
+    mod = CGEModel(coords=coords, variables=variables, parameters=parameters, equations=equations)
+
+    # Consumption is pinned by income in the budget constraint, so also supplying it over-determines the system.
+    result = mod.calibrate(data={**model_1_data, "w": 1.0, "C": 5.0})
+
+    assert not result.success
+
+
 def test_check_for_equilibrium_reads_simulation_datatree(caplog):
     mod = load_and_cache_model(model_id=1, backend="sympytensor")
     initial_state = calibrate_model_1(**model_1_data)

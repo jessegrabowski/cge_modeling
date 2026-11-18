@@ -212,6 +212,11 @@ class CGEModel:
         compile_kwargs.setdefault("backend", self._compile_backend or backend)
         compile_model(self, **compile_kwargs)
 
+    def _functions_take_named_inputs(self) -> bool:
+        return self._compile_backend == "sympytensor" or (
+            self._compile_backend == "pytensor" and self.mode != "JAX"
+        )
+
     def check_initialization(self):
         if self.n_variables != self.n_equations:
             raise ValueError(
@@ -659,7 +664,12 @@ class CGEModel:
             fitted_values[len(self.unpacked_variable_names) :],
         )
 
-        success = self.f_resid(x0, theta0) < 1e-6
+        f_resid = self._compiled_function("f_resid")
+        if self._functions_take_named_inputs():
+            f_resid = wrap_pytensor_func_for_scipy(
+                f_resid, self.variables, self.parameters, self.coords
+            )
+        success = f_resid(x0, theta0) < 1e-6
 
         result = Result(
             name=name,
@@ -758,9 +768,7 @@ class CGEModel:
             use_hess = False
             _log.warning("use_hess is ignored when use_jac=False. Setting use_hess=False.")
 
-        if (
-            self._compile_backend in ["pytensor"] and self.mode != "JAX"
-        ) or self._compile_backend == "sympytensor":
+        if self._functions_take_named_inputs():
             parameters = self.parameters
             coords = self.coords
             free_mask = make_flat_array_return_mask(
