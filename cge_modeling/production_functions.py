@@ -202,7 +202,7 @@ def cobb_douglass(
     return (eq_production, *tuple(eq_fac_demands))
 
 
-def CES(
+def ces_string(
     factors: list[str] | str,
     factor_prices: list[str] | str,
     output: str,
