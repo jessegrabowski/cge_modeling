@@ -345,7 +345,7 @@ def flat_array_to_variable_dict(
 
 
 def variable_dict_to_flat_array(
-    d: dict[str, np.ndarray],
+    d: Mapping[str, Any],
     variable_list: list[Variable],
     parameter_list: list[Parameter],
 ) -> tuple[np.ndarray, np.ndarray]:

@@ -7,7 +7,7 @@ from pytensor import tensor as pt
 from pytensor.compile.builders import OpFromGraph
 
 from cge_modeling.base.cge import CGEModel
-from cge_modeling.base.utilities import flat_array_to_variable_dict
+from cge_modeling.base.utilities import infer_object_shape_from_coords
 from cge_modeling.compile.pytensor_tools import (
     clone_and_rename,
     flat_tensor_to_ragged_list,
@@ -18,63 +18,49 @@ from cge_modeling.tools.utils import at_least_list, initialize_progress_bar
 
 
 def pytensor_euler_function_with_python_loop(
-    cge_model: CGEModel, f_step, f_system=None, f_grad=None, *, theta_final, n_steps, **data
+    x: np.ndarray,
+    theta: np.ndarray,
+    theta_final: np.ndarray,
+    n_steps: int,
+    *,
+    cge_model: CGEModel,
+    f_step,
+    f_system=None,
+    f_grad=None,
 ) -> list[np.ndarray]:
-    parameter_names = cge_model.parameter_names
-    variable_names = cge_model.variable_names
-    n_variables = len(variable_names)
-
-    parameters = cge_model.parameters
-    coords = cge_model.coords
-
-    current_params = {k: v for k, v in data.items() if k in parameter_names}
-    current_variables = {k: v for k, v in data.items() if k in variable_names}
-    theta_final = flat_array_to_variable_dict(theta_final, parameters, coords)
-
-    theta_final = {f"{k}_final": v for k, v in theta_final.items()}
-    theta_initial = {f"{k}_initial": v for k, v in data.items() if k in parameter_names}
-
-    results = {
-        k: np.empty((n_steps, *getattr(data[k], "shape", ())))
-        for k in variable_names + parameter_names
-    }
-
     stat_string = None
     if f_system is not None:
         stat_string = "f = {task.fields[RMSE]:,.5g}"
     if f_grad is not None:
         stat_string = "f = {task.fields[RMSE]:,.5g}, ||grad|| = {task.fields[grad_norm]:,.5g}"
 
+    trajectory = np.empty((n_steps, x.shape[0] + theta.shape[0]))
+    theta_initial = theta
+
     progress = initialize_progress_bar(stat_string)
-    value_dict = get_step_statistics(current_variables, current_params, f_system, f_grad)
+    value_dict = get_step_statistics(x, theta, f_system, f_grad)
     task = progress.add_task("[green]Euler Approximation", total=n_steps, **value_dict)
 
     with progress:
         for t in range(n_steps):
-            current_step = f_step(
-                **current_params,
-                **current_variables,
-                **theta_final,
-                **theta_initial,
-                n_steps=n_steps,
-            )
+            x, theta = f_step(x, theta, theta_initial, theta_final, n_steps)
+            trajectory[t] = np.concatenate([x, theta])
 
-            current_variable_vals = current_step[:n_variables]
-            current_parameter_vals = current_step[n_variables:]
-
-            current_variables = {k: current_variable_vals[i] for i, k in enumerate(variable_names)}
-            current_params = {k: current_parameter_vals[i] for i, k in enumerate(parameter_names)}
-
-            for k in data.keys():
-                results[k][t] = current_variables[k] if k in variable_names else current_params[k]
-
-            value_dict = get_step_statistics(current_variables, current_params, f_system, f_grad)
+            value_dict = get_step_statistics(x, theta, f_system, f_grad)
             progress.update(task, advance=1, **value_dict)
 
-        value_dict = get_step_statistics(current_variables, current_params, f_system, f_grad)
+        value_dict = get_step_statistics(x, theta, f_system, f_grad)
         progress.update(task, completed=n_steps, refresh=True, **value_dict)
 
-    return list(results.values())
+    results = []
+    cursor = 0
+    for obj in cge_model.variables + cge_model.parameters:
+        shape = infer_object_shape_from_coords(obj, cge_model.coords)
+        size = int(np.prod(shape))
+        results.append(trajectory[:, cursor : cursor + size].reshape(n_steps, *shape))
+        cursor += size
+
+    return results
 
 
 def symbolic_euler_approximation(
@@ -224,16 +210,14 @@ def symbolic_euler_approximation(
     return theta_final, n_steps, final_result
 
 
-def get_step_statistics(
-    current_variables, current_params, f_system=None, f_grad=None
-) -> dict[str, float]:
+def get_step_statistics(x, theta, f_system=None, f_grad=None) -> dict[str, float]:
     value_dict = {}
     if f_system is not None:
-        errors = f_system(**current_variables, **current_params)
+        errors = np.asarray(f_system(x, theta))
         rmse = (errors**2).sum() / min(1, int(np.prod(errors.shape)))
         value_dict["RMSE"] = rmse
     if f_grad is not None:
-        grad_norm = np.linalg.norm(f_grad(**current_variables, **current_params))
+        grad_norm = np.linalg.norm(f_grad(x, theta))
         value_dict["grad_norm"] = grad_norm
 
     return value_dict

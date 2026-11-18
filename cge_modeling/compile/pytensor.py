@@ -19,6 +19,7 @@ from cge_modeling.compile.euler import (
     symbolic_euler_approximation,
 )
 from cge_modeling.compile.pytensor_tools import (
+    compile_with_packed_inputs,
     flat_tensor_to_ragged_list,
     flatten_equations,
     make_jacobian,
@@ -71,8 +72,8 @@ def cge_primitives_to_pytensor(
 
 
 def make_jvp(
-    grad: pt.TensorVariable, x: list[pt.TensorVariable], p: list[pt.TensorVariable] | None = None
-) -> tuple[pt.TensorVariable, list[pt.TensorVariable]]:
+    grad: pt.TensorVariable, x: list[pt.TensorVariable], p: pt.TensorVariable
+) -> pt.TensorVariable:
     """
     Compute the jacobian-vector product between a system of equations and a vector of variables.
 
@@ -82,26 +83,22 @@ def make_jvp(
         Vector of partial derivatives of a loss function with respect to input variables
     x: list[pytensor.tensor.TensorVariable]
         A list of variables
+    p: pytensor.tensor.TensorVariable
+        Flat vector where the JVP is evaluated, ordered like the raveled and concatenated ``x``.
 
     Returns
     -------
     jvp: pytensor.tensor.TensorVariable
         The jacobian-vector product of the original loss function
-    p: list of pytensor.tensor.TensorVariable
-        The symbolic variables representing each component of ``p``, the point vector where the JVP is evaluated.
     """
     n_eq = grad.type.shape[0]
     rewrite_pregrad(grad)
-
-    if p is None:
-        p_vars = [var.type(name=f"{var.name}_point") for var in x]
-        p = pt.concatenate([v.ravel() for v in p_vars], axis=0)
 
     jvp_chunks = pt.grad(pt.sum(grad * p), x)
     jvp = pt.concatenate([x.ravel() for x in jvp_chunks], axis=-1)
     jvp = pt.specify_shape(jvp, shape=(n_eq,))
 
-    return jvp, p_vars
+    return jvp
 
 
 def validate_pytensor_parsing_result(flat_equations, variables, parameters, cache) -> None:
@@ -137,11 +134,8 @@ def compile_pytensor_jacobian_function(
     # It's possible that certain variables/parameters don't influence the jacobian at all (for example if they
     # enter as additive constants in the equations). In this case, we still want to be able to pass them as
     # inputs, but they will be unused.
-    f_jac = pytensor.function(
-        inputs=[*variables, *parameters],
-        outputs=jac,
-        mode=mode,
-        on_unused_input="ignore",
+    f_jac = compile_with_packed_inputs(
+        [("x", variables), ("theta", parameters)], jac, mode=mode, on_unused_input="ignore"
     )
 
     return jac, f_jac
@@ -157,7 +151,9 @@ def compile_pytensor_error_function(
     squared_loss.name = "squared_loss"
     rewrite_pregrad(squared_loss)
 
-    f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
+    f_loss = compile_with_packed_inputs(
+        [("x", variables), ("theta", parameters)], squared_loss, mode=mode
+    )
 
     return squared_loss, f_loss
 
@@ -173,11 +169,8 @@ def compile_pytensor_gradient_function(
     grad = pt.specify_shape(pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]), n_variables)
     rewrite_pregrad(grad)
 
-    f_grad = pytensor.function(
-        inputs=[*variables, *parameters],
-        outputs=grad,
-        mode=mode,
-        on_unused_input="ignore",
+    f_grad = compile_with_packed_inputs(
+        [("x", variables), ("theta", parameters)], grad, mode=mode, on_unused_input="ignore"
     )
 
     return grad, f_grad
@@ -192,11 +185,8 @@ def compile_pytensor_hess_function(
     hess = make_jacobian(grad, variables)
     hess.name = "hessian"
 
-    f_hess = pytensor.function(
-        inputs=[*variables, *parameters],
-        outputs=hess,
-        mode=mode,
-        on_unused_input="ignore",
+    f_hess = compile_with_packed_inputs(
+        [("x", variables), ("theta", parameters)], hess, mode=mode, on_unused_input="ignore"
     )
 
     return hess, f_hess
@@ -208,17 +198,20 @@ def compile_pytensor_hessp_function(
     parameters: list[pt.TensorVariable],
     mode: str | None = None,
 ) -> tuple[pt.TensorVariable, Function]:
-    hessp, p_vars = make_jvp(grad, variables)
+    p = pt.tensor("p", shape=grad.type.shape, dtype=grad.type.dtype)
+    hessp = make_jvp(grad, variables, p)
     hessp.name = "hessp"
 
-    f_hessp = pytensor.function(inputs=[*variables, *parameters, *p_vars], outputs=hessp, mode=mode)
+    f_hessp = compile_with_packed_inputs(
+        [("x", variables), p, ("theta", parameters)], hessp, mode=mode
+    )
 
     return hessp, f_hessp
 
 
 def pytensor_euler_step(
     system, variables, parameters, jacobian=None, grad=None, use_rk4=False
-) -> tuple[list[pt.TensorVariable], list[pt.TensorVariable]]:
+) -> tuple[list, list[pt.TensorVariable]]:
     if use_rk4:
         raise NotImplementedError("RK4 not yet implemented for Pytensor")
 
@@ -254,8 +247,14 @@ def pytensor_euler_step(
 
     theta_next = [theta + dtheta for theta, dtheta in zip(theta_list, step_size)]
 
-    inputs = x_list + theta_list + theta0 + theta_final + [n_steps]
-    outputs = x_next + theta_next
+    inputs = [
+        ("x", x_list),
+        ("theta", theta_list),
+        ("theta_initial", theta0),
+        ("theta_final", theta_final),
+        n_steps,
+    ]
+    outputs = [flatten_equations(x_next), flatten_equations(theta_next)]
 
     return inputs, outputs
 
@@ -275,11 +274,8 @@ def compile_pytensor_cge_functions(
     _log.info(f"Compiling model to Pytensor using {mode} mode")
 
     # Always compile the system -- used to check residuals
-    f_system = pytensor.function(
-        inputs=[*variables, *parameters],
-        outputs=system,
-        mode=mode,
-        on_unused_input="raise",
+    f_system = compile_with_packed_inputs(
+        [("x", variables), ("theta", parameters)], system, mode=mode
     )
 
     # Optional functions
@@ -288,7 +284,7 @@ def compile_pytensor_cge_functions(
     f_grad = None
     f_hess = None
     f_hessp = None
-    f_euler = None
+    f_euler: Callable[..., Any] | None = None
 
     # jac and grad can be reused if both root/minimize and euler are requested
     jac = None
@@ -313,7 +309,7 @@ def compile_pytensor_cge_functions(
                 system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
             )
 
-            f_step = pytensor.function(inputs, outputs, mode=mode)
+            f_step = compile_with_packed_inputs(inputs, outputs, mode=mode)
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -326,9 +322,9 @@ def compile_pytensor_cge_functions(
             theta_final, n_steps, euler_output = symbolic_euler_approximation(
                 system, variables, parameters, jacobian=jac, use_rk4=use_rk4
             )
-            f_euler = pytensor.function(
-                inputs=[*variables, *parameters, theta_final, n_steps],
-                outputs=euler_output,
+            f_euler = compile_with_packed_inputs(
+                [("x", variables), ("theta", parameters), theta_final, n_steps],
+                euler_output,
                 mode=mode,
             )
 
