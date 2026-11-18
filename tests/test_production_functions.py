@@ -11,6 +11,8 @@ from cge_modeling.production_functions import (
     CES,
     CESValue,
     CobbDouglas,
+    DixitStiglitz,
+    DixitStiglitzValue,
 )
 
 
@@ -233,6 +235,57 @@ def test_ces_value_zero_profit_fails_off_the_unit_cost():
     assert np.all(np.abs(evaluate_residual(equations[0], objects, point)) > 1e-3)
 
 
+def dixit_stiglitz_block(helper):
+    with CGEModel(coords={"v": ["a", "b", "c"]}) as model:
+        Y = cm.Variable("Y")
+        X = cm.Variable("X", dims="v")
+        P_Y = cm.Variable("P_Y")
+        P_X = cm.Parameter("P_X", dims="v")
+        alpha = cm.Parameter("alpha", dims="v")
+        A = cm.Parameter("A")
+        epsilon = cm.Parameter("epsilon")
+        equations = helper(
+            "Composite good",
+            output=Y,
+            output_price=P_Y,
+            factor=X,
+            factor_price=P_X,
+            factor_dim="v",
+            epsilon=epsilon,
+            tfp=A,
+            factor_share=alpha,
+        )
+    return (
+        model,
+        equations,
+        {"Y": Y, "X": X, "P_Y": P_Y, "P_X": P_X, "alpha": alpha, "A": A, "epsilon": epsilon},
+    )
+
+
+def dixit_stiglitz_unit_cost_point():
+    alpha, A, epsilon, P_X, Y = np.array([0.2, 0.5, 0.3]), 1.4, 2.5, np.array([1.0, 1.5, 0.7]), 4.0
+    P_Y = (alpha**epsilon * P_X ** (1 - epsilon)).sum() ** (1 / (1 - epsilon)) / A
+    X = Y / A * (alpha * P_Y * A / P_X) ** epsilon
+    return {"Y": Y, "X": X, "P_Y": P_Y, "P_X": P_X, "alpha": alpha, "A": A, "epsilon": epsilon}
+
+
+@pytest.mark.parametrize("helper", [DixitStiglitz, DixitStiglitzValue], ids=["technology", "value"])
+def test_dixit_stiglitz_blocks_hold_when_the_output_price_is_the_unit_cost(helper):
+    model, equations, objects = dixit_stiglitz_block(helper)
+    point = dixit_stiglitz_unit_cost_point()
+
+    assert model.unpacked_equation_names == [
+        "Composite good",
+        "Composite good: demand for X [v=a]",
+        "Composite good: demand for X [v=b]",
+        "Composite good: demand for X [v=c]",
+    ]
+    for equation in equations:
+        np.testing.assert_allclose(
+            evaluate_residual(equation, objects, point), 0.0, atol=1e-12, err_msg=equation.name
+        )
+
+
 def test_a_name_clash_leaves_the_model_unchanged():
     with CGEModel() as model:
         Y, K, L, P = (cm.Variable(name) for name in ("Y", "K", "L", "P"))
@@ -291,3 +344,23 @@ def test_cobb_douglas_with_one_factor_and_no_share_uses_a_share_of_one():
 
     np.testing.assert_allclose(evaluate_residual(production, objects, point), 0.0)
     np.testing.assert_allclose(evaluate_residual(demand, objects, point), 0.0)
+
+
+def test_dixit_stiglitz_rejects_an_output_indexed_by_the_varieties():
+    with pytest.raises(ValueError, match="output has the factor dim 'v'"):
+        with CGEModel(coords={"v": ["a", "b"]}):
+            Y = cm.Variable("Y", dims="v")
+            X = cm.Variable("X", dims="v")
+            P_Y = cm.Variable("P_Y")
+            P_X = cm.Parameter("P_X", dims="v")
+            DixitStiglitz(
+                "Composite good",
+                output=Y,
+                output_price=P_Y,
+                factor=X,
+                factor_price=P_X,
+                factor_dim="v",
+                factor_share=1.0,
+                tfp=1.0,
+                epsilon=2.0,
+            )

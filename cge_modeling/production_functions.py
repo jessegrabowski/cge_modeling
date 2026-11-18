@@ -790,6 +790,14 @@ def _ces_demand_specs(
     ]
 
 
+def _check_without_factor_dim(factor_dim: str, **objects: XTensorVariable) -> None:
+    for label, value in objects.items():
+        if factor_dim in value.type.dims:
+            raise ValueError(
+                f"{label} has the factor dim {factor_dim!r}, which the block sums over."
+            )
+
+
 def CobbDouglas(
     name: str,
     *,
@@ -963,3 +971,119 @@ def CESValue(
         epsilon=epsilon,
     )
     return _register_equations(model, [(name, output_price * output, factor_cost), *demands])
+
+
+def DixitStiglitz(
+    name: str,
+    *,
+    output: XTensorVariable,
+    output_price: XTensorVariable,
+    factor: XTensorVariable,
+    factor_price: XTensorVariable,
+    factor_dim: str,
+    factor_share: XTensorVariable | float,
+    tfp: XTensorVariable | float,
+    epsilon: XTensorVariable | float,
+    model: "CGEModel | None" = None,
+) -> tuple[XTensorEquation, ...]:
+    r"""
+    Register a Dixit-Stiglitz aggregate on ``model``, or on the active :class:`CGEModel`.
+
+    The varieties are the entries of ``factor`` along ``factor_dim``. The block is the aggregate and the demand for
+    each variety:
+
+    .. math::
+
+        Y = A \left( \sum_i \alpha_i X_i^{\frac{\epsilon - 1}{\epsilon}} \right)^{\frac{\epsilon}{\epsilon - 1}},
+        \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
+
+    :func:`DixitStiglitzValue` registers the same demand with the zero-profit condition in place of the aggregate.
+
+    Parameters
+    ----------
+    name : str
+        Name of the aggregate equation. The demand equation is named ``"{name}: demand for {factor}"``.
+    output, output_price : XTensorVariable
+        The aggregate :math:`Y` and its price :math:`P_Y`. Neither may have ``factor_dim``.
+    factor, factor_price : XTensorVariable
+        The varieties :math:`X_i`, a model object, and their prices :math:`P_i`, indexed by ``factor_dim``.
+    factor_dim : str
+        The dim along which ``factor`` lists the varieties.
+    factor_share : XTensorVariable or float
+        The shares :math:`\alpha_i`.
+    tfp : XTensorVariable or float
+        Total factor productivity :math:`A`.
+    epsilon : XTensorVariable or float
+        Elasticity of substitution :math:`\epsilon`.
+    model : CGEModel, optional
+        Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
+
+    Returns
+    -------
+    equations : tuple of XTensorEquation
+        The aggregate equation, then the demand equation.
+    """
+    model = modelcontext(model)
+    _check_factors_named([factor])
+    _check_without_factor_dim(factor_dim, output=output, output_price=output_price)
+
+    exponent = (epsilon - 1) / epsilon
+    aggregate = tfp * (factor_share * factor**exponent).sum(factor_dim) ** (1 / exponent)
+    demands = _ces_demand_specs(
+        name=name,
+        output=output,
+        output_price=output_price,
+        factors=[factor],
+        factor_prices=[factor_price],
+        factor_shares=[factor_share],
+        tfp=tfp,
+        epsilon=epsilon,
+    )
+    return _register_equations(model, [(name, output, aggregate), *demands])
+
+
+def DixitStiglitzValue(
+    name: str,
+    *,
+    output: XTensorVariable,
+    output_price: XTensorVariable,
+    factor: XTensorVariable,
+    factor_price: XTensorVariable,
+    factor_dim: str,
+    factor_share: XTensorVariable | float,
+    tfp: XTensorVariable | float,
+    epsilon: XTensorVariable | float,
+    model: "CGEModel | None" = None,
+) -> tuple[XTensorEquation, ...]:
+    r"""
+    Register a Dixit-Stiglitz aggregate in its dual form on ``model``, or on the active :class:`CGEModel`.
+
+    The block is the zero-profit condition and the demand of :func:`DixitStiglitz`:
+
+    .. math::
+
+        P_Y Y = \sum_i P_i X_i, \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
+
+    The parameters are those of :func:`DixitStiglitz`.
+
+    Returns
+    -------
+    equations : tuple of XTensorEquation
+        The zero-profit equation, then the demand equation.
+    """
+    model = modelcontext(model)
+    _check_factors_named([factor])
+    _check_without_factor_dim(factor_dim, output=output, output_price=output_price)
+
+    demands = _ces_demand_specs(
+        name=name,
+        output=output,
+        output_price=output_price,
+        factors=[factor],
+        factor_prices=[factor_price],
+        factor_shares=[factor_share],
+        tfp=tfp,
+        epsilon=epsilon,
+    )
+    zero_profit = (name, output_price * output, (factor_price * factor).sum(factor_dim))
+    return _register_equations(model, [zero_profit, *demands])
