@@ -164,16 +164,20 @@ $RECYCLE.BIN/
 
 # End of https://www.toptal.com/developers/gitignore/api/pycharm+all,macos,windows,jupyternotebooks
 
-tests/__pycache__/
-cge_modeling/__pycache__/
-cge_modeling/base/__pycache__/
-cge_modeling/pytensorf/__pycache__/
-cge_modeling/tools/__pycache__/
-tests/utilities/__pycache__/
+# Python bytecode and numba caches
+__pycache__/
+
+# Package build output
+/dist/
 
 # Locally built docs
 docs/build/
 docs/jupyter_execute/
+/docs/source/api/**/generated/
+
+# Editor swap files
+*.swp
+.swp
 
 # pixi environments
 .pixi/
