@@ -158,7 +158,6 @@ def compile_sympytensor_jacobian(
         outputs=jac,
         on_unused_input="ignore",
         mode=mode,
-        trust_input=True,
     )
 
     if (
@@ -185,9 +184,7 @@ def compile_sympytensor_error_function(
     squared_loss.name = "squared_loss"
     rewrite_pregrad(squared_loss)
 
-    f_loss = pytensor.function(
-        inputs=[*variables, *parameters], outputs=squared_loss, mode=mode, trust_input=True
-    )
+    f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
 
     if (
         mode == "JAX"
@@ -220,7 +217,6 @@ def compile_sympytensor_gradient_function(
         outputs=grad,
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
     if (
@@ -254,7 +250,6 @@ def compile_sympytensor_hess_function(
         outputs=hess,
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
     if (
@@ -292,7 +287,6 @@ def compile_sympytensor_hessp_function(
         outputs=hessp.ravel(),
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
     if (
@@ -331,7 +325,6 @@ def compile_sympytensor_cge_functions(
         outputs=system,
         mode=mode,
         on_unused_input="raise",
-        trust_input=True,
     )
 
     if (
@@ -407,7 +400,7 @@ def compile_sympytensor_cge_functions(
                 system, variables, parameters, jacobian=None, grad=None, use_rk4=use_rk4
             )
 
-            f_step = pytensor.function(inputs, outputs, mode=mode, trust_input=True)
+            f_step = pytensor.function(inputs, outputs, mode=mode)
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -424,7 +417,6 @@ def compile_sympytensor_cge_functions(
                 inputs=[*variables, *parameters, *theta_final],
                 outputs=euler_output,
                 mode=mode,
-                trust_input=True,
             )
 
     return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler

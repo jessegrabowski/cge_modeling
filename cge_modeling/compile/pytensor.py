@@ -144,7 +144,6 @@ def compile_pytensor_jacobian_function(
         outputs=jac,
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
     return jac, f_jac
@@ -160,9 +159,7 @@ def compile_pytensor_error_function(
     squared_loss.name = "squared_loss"
     rewrite_pregrad(squared_loss)
 
-    f_loss = pytensor.function(
-        inputs=[*variables, *parameters], outputs=squared_loss, mode=mode, trust_input=True
-    )
+    f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
 
     return squared_loss, f_loss
 
@@ -183,7 +180,6 @@ def compile_pytensor_gradient_function(
         outputs=grad,
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
     return grad, f_grad
@@ -203,7 +199,6 @@ def compile_pytensor_hess_function(
         outputs=hess,
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
     return hess, f_hess
@@ -218,9 +213,7 @@ def compile_pytensor_hessp_function(
     hessp, p_vars = make_jvp(grad, variables)
     hessp.name = "hessp"
 
-    f_hessp = pytensor.function(
-        inputs=[*variables, *parameters, *p_vars], outputs=hessp, mode=mode, trust_input=True
-    )
+    f_hessp = pytensor.function(inputs=[*variables, *parameters, *p_vars], outputs=hessp, mode=mode)
 
     return hessp, f_hessp
 
@@ -289,7 +282,6 @@ def compile_pytensor_cge_functions(
         outputs=system,
         mode=mode,
         on_unused_input="raise",
-        trust_input=True,
     )
 
     if mode == "JAX":
@@ -328,7 +320,7 @@ def compile_pytensor_cge_functions(
                 system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
             )
 
-            f_step = pytensor.function(inputs, outputs, mode=mode, trust_input=True)
+            f_step = pytensor.function(inputs, outputs, mode=mode)
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -345,7 +337,6 @@ def compile_pytensor_cge_functions(
                 inputs=[*variables, *parameters, *theta_final],
                 outputs=euler_output,
                 mode=mode,
-                trust_input=True,
             )
 
     def unwrap_jit_fn(f, mode):
