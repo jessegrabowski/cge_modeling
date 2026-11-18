@@ -5,12 +5,9 @@ from collections.abc import Callable
 import numpy as np
 import pytensor.compile
 
-from numba_progress.progress import ProgressBar as NumbaProgressBar
-
 from cge_modeling.base.primitives import Parameter, Variable
 from cge_modeling.base.utilities import (
     flat_array_to_variable_dict,
-    infer_object_shape_from_coords,
     variable_dict_to_flat_array,
 )
 
@@ -165,36 +162,6 @@ def wrap_fixed_values(
         return res[return_mask, :][:, return_mask]
 
     return inner
-
-
-def wrap_numba_euler_function(euler_approx, variables, parameters, coords):
-    @ft.wraps(euler_approx)
-    def f_euler(*, theta_final, n_steps, mode=None, **data):
-        # Extract the variable and parameter names from the data dictionary
-        x0 = np.concatenate([np.atleast_1d(data[x.name]).ravel() for x in variables], axis=0)
-        theta0 = np.concatenate([np.atleast_1d(data[x.name]).ravel() for x in parameters], axis=0)
-
-        with NumbaProgressBar(total=n_steps) as progress_bar:
-            result = euler_approx(
-                x0=x0,
-                theta0=theta0,
-                theta_final=theta_final,
-                n_steps=n_steps,
-                progress_bar=progress_bar,
-            )
-
-        # Decompose the result back to a list of numpy arrays
-        shapes = [infer_object_shape_from_coords(x, coords) for x in variables + parameters]
-        out = []
-        cursor = 0
-        for shape in shapes:
-            s = int(np.prod(shape))
-            out.append(result[:, cursor : cursor + s].reshape(-1, *shape))
-            cursor += s
-
-        return out
-
-    return f_euler
 
 
 def return_array_from_jax_wrapper(f):

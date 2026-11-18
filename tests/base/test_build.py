@@ -1,7 +1,5 @@
 import importlib.util
 
-from inspect import signature
-
 import pytest
 
 from cge_modeling.base import build
@@ -42,7 +40,7 @@ def test_parse_compile_kwarg(compile_arg, expected_output):
     assert build._parse_compile_kwarg(compile_arg) == expected_output
 
 
-@pytest.mark.parametrize("backend", ["numba", "pytensor", "sympytensor"])
+@pytest.mark.parametrize("backend", ["pytensor", "sympytensor"])
 @pytest.mark.parametrize(
     "functions_to_compile, expected_compiled_list",
     [
@@ -95,21 +93,13 @@ def test_cge_model_factory(backend, functions_to_compile, expected_compiled_list
     else:
         assert model.f_euler is None
 
-    if backend in ["numba", "sympytensor", None]:
-        assert model.parse_equations_to_sympy is True
-    else:  # backend == "pytensor"
-        assert model.parse_equations_to_sympy is False
+    assert model.parse_equations_to_sympy is (backend == "sympytensor")
 
 
-def check_function_signature(func, backend, expected_input_names):
-    if backend == "numba":
-        assert func.__code__.co_argcount == len(expected_input_names)
-        func_sig = signature(func)
-        assert all(x in func_sig.parameters for x in expected_input_names)
-    else:
-        input_names = [x.name for x in func.maker.fgraph.inputs]
-        assert len(input_names) == len(expected_input_names)
-        assert all(x in input_names for x in expected_input_names)
+def check_function_signature(func, expected_input_names):
+    input_names = [x.name for x in func.maker.fgraph.inputs]
+    assert len(input_names) == len(expected_input_names)
+    assert all(x in input_names for x in expected_input_names)
 
 
 @pytest.mark.parametrize("backend", ["pytensor", "sympytensor"])
@@ -122,9 +112,6 @@ def test_compiled_functions_have_correct_signature(backend):
     The canonical form is now f(**variables, **parameters), and all compiled functions should have this signature in all
     backends.
     """
-    # TODO: Add numba test
-    # TODO: Add sympytensor test
-
     # Skip compiling Euler because it has a much more complex signature
     model = load_and_cache_model(
         model_id=1, backend=backend, mode="FAST_RUN", functions_to_compile=("root", "minimize")
@@ -140,9 +127,7 @@ def test_compiled_functions_have_correct_signature(backend):
         model.f_grad,
         model.f_hess,
     ]:
-        check_function_signature(func, backend, variable_names + parameter_names)
+        check_function_signature(func, variable_names + parameter_names)
 
     variable_points = [f"{x}_point" for x in variable_names]
-    check_function_signature(
-        model.f_hessp, backend, variable_names + parameter_names + variable_points
-    )
+    check_function_signature(model.f_hessp, variable_names + parameter_names + variable_points)

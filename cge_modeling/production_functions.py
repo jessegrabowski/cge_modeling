@@ -7,7 +7,7 @@ from typing import Literal, cast
 
 from cge_modeling.tools.utils import at_least_list
 
-BACKEND_TYPE = Literal["numba", "pytensor"]
+BACKEND_TYPE = Literal["sympytensor", "pytensor"]
 
 
 def _check_pairwise_lengths_match(names, args):
@@ -342,7 +342,7 @@ def dixit_stiglitz(
     epsilon: str,
     dims: str,
     coords: dict[str, list[str, ...]],
-    backend: BACKEND_TYPE = "numba",
+    backend: BACKEND_TYPE = "sympytensor",
     TFP: str | None = None,
     factor_shares: str | None = None,
     use_value_definition=True,
@@ -399,7 +399,7 @@ def dixit_stiglitz(
     coords: dict of str: list of str
         Dictionary of coordinates for the model, mapping dimension names to lists of labels.
 
-    backend: str, one of 'numba' or 'pytensor'
+    backend: str, one of 'sympytensor' or 'pytensor'
         Backend that will parse the equations. Only relevant for aggregation functions like Sum and Prod. Elementwise
         operations are interoperable between backends.
 
@@ -435,12 +435,12 @@ def dixit_stiglitz(
 
     dim_len = len(coords[dims]) - 1
 
-    if backend == "numba":
+    if backend == "sympytensor":
         rhs_str = "Sum($kernel, ($dims, 0, $dim_len)) ** ($epsilon / ($epsilon - 1))"
     elif backend == "pytensor":
         rhs_str = "($kernel).sum() ** ($epsilon / ($epsilon - 1))"
     else:
-        raise ValueError(f"backend must be one of 'numba' or 'pytensor', found {backend}")
+        raise ValueError(f"backend must be one of 'sympytensor' or 'pytensor', found {backend}")
 
     if not use_value_definition:
         production_function = Template(f"$output = {TFP_str}{rhs_str}").safe_substitute(
@@ -510,7 +510,7 @@ def _2d_leontief(
     sum_dim: str | None = None,
     expand_price_dim: bool = True,
     transpose_output: bool = True,
-    backend: Literal["numba", "pytensor"] = "numba",
+    backend: BACKEND_TYPE = "sympytensor",
 ) -> tuple[str, ...]:
     r"""
     Helper function to generate Leontief production equations for the case where ndim == 2.
@@ -568,7 +568,7 @@ def _2d_leontief(
         unwrap_singleton_list, (factors, factor_prices, factor_shares)
     )
 
-    if backend == "numba":
+    if backend == "sympytensor":
         batch_dim = dims.pop(sum_axis)
         core_dim = dims[0]
         n_core, n_batch = (len(coords[x]) for x in [core_dim, batch_dim])
@@ -589,7 +589,7 @@ def _2d_leontief(
         factor_demands = f"{factors} = {factor_shares} * {output}[None]"
 
     else:
-        raise ValueError(f"backend must be one of 'numba' or 'pytensor', found {backend}")
+        raise ValueError(f"backend must be one of 'sympytensor' or 'pytensor', found {backend}")
 
     return zero_profit, factor_demands
 
@@ -605,7 +605,7 @@ def leontief(
     sum_dim: str | None = None,
     expand_price_dim: bool = True,
     transpose_output: bool = True,
-    backend: Literal["numba", "pytensor"] = "numba",
+    backend: BACKEND_TYPE = "sympytensor",
 ) -> tuple[str, ...]:
     """
     Generate string equations representing a Leontief production process.
@@ -659,7 +659,7 @@ def leontief(
     coords: dict of str: list of str
         Dictionary of coordinates for the model, mapping dimension names to lists of labels.
 
-    backend: str, one of 'numba' or 'pytensor'
+    backend: str, one of 'sympytensor' or 'pytensor'
         Backend that will parse the equations. Only relevant for aggregation functions like Sum and Prod. Elementwise
         operations are interoperable between backends.
 

@@ -105,7 +105,7 @@ class CGEModel:
 
         parse_equations_to_sympy: bool, default
             If True, the equations will be parsed to sympy expressions. This is required for the model to be compiled to
-            the "numba" backend. If False, the equations will be converted to symbolic pytensor expressions.
+            the "sympytensor" backend. If False, the equations will be converted to symbolic pytensor expressions.
             This is required for the model to be compiled to the "pytensor" backend. Defaults to True.
 
         Notes
@@ -179,7 +179,7 @@ class CGEModel:
         self.scenarios: dict[str, Result] = {}
 
         self._compiled: list[str] = []
-        self._compile_backend: Literal["pytensor", "numba"] | None = None
+        self._compile_backend: Literal["pytensor", "sympytensor"] | None = None
         self.mode = None
 
         self.f_system: Callable | None = None
@@ -680,12 +680,11 @@ class CGEModel:
         if use_jac and "root" not in self._compiled:
             raise ValueError("Jacobian has not been compiled.")
 
-        if self._compile_backend in ["pytensor", "sympytensor"]:
-            parameters = self.parameters
-            coords = self.coords
+        parameters = self.parameters
+        coords = self.coords
 
-            f_system = wrap_pytensor_func_for_scipy(f_system, free_variables, parameters, coords)
-            f_jac = wrap_pytensor_func_for_scipy(f_jac, free_variables, parameters, coords)
+        f_system = wrap_pytensor_func_for_scipy(f_system, free_variables, parameters, coords)
+        f_jac = wrap_pytensor_func_for_scipy(f_jac, free_variables, parameters, coords)
 
         x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
 
@@ -1124,13 +1123,7 @@ class CGEModel:
             parameters = flat_array_to_variable_dict(data.args, self.parameters, self.coords)
             data = {**variables, **parameters}
 
-        if self._compile_backend in ["pytensor", "sympytensor"]:
-            errors = self.f_system(**data)
-        else:
-            var_inputs, param_inputs = variable_dict_to_flat_array(
-                data, self.variables, self.parameters
-            )
-            errors = self.f_system(var_inputs, param_inputs)
+        errors = self.f_system(**data)
         sse = (errors**2).sum()
 
         if sse < tol:

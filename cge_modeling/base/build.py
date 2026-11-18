@@ -8,20 +8,18 @@ from pytensor.compile import get_mode
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Equation, Parameter, Variable
 from cge_modeling.compile.constants import CompiledFunctions
-from cge_modeling.compile.numba import compile_numba_cge_functions
 from cge_modeling.compile.pytensor import compile_pytensor_cge_functions
 from cge_modeling.compile.sympytensor import compile_sympytensor_cge_functions
 
 COMPILE_FUNC_FACTORY = {
     "pytensor": compile_pytensor_cge_functions,
-    "numba": compile_numba_cge_functions,
     "sympytensor": compile_sympytensor_cge_functions,
 }
 
 
 def determine_default_backend(
     equations: list[Equation],
-) -> Literal["pytensor", "numba", "sympytensor"]:
+) -> Literal["pytensor", "sympytensor"]:
     # Check for Sum/Prod in the equations, if found, use sympytensor
     if any("Sum(" in eq.equation or "Prod(" in eq.equation for eq in equations):
         return "sympytensor"
@@ -48,7 +46,7 @@ def _parse_compile_kwarg(compile: list[str] | str | None = None) -> list[Compile
 
 def compile_model(
     model: CGEModel,
-    backend: Literal["pytensor", "numba", "sympytensor"] | None = None,
+    backend: Literal["pytensor", "sympytensor"] | None = None,
     mode: str | None = None,
     use_sparse_matrices: bool = False,
     functions_to_compile: list[CompiledFunctions] | tuple[CompiledFunctions] | None = "all",
@@ -102,7 +100,7 @@ def cge_model(
     equations: list[Equation] | dict[str, Equation] | None = None,
     numeraire: Variable | None = None,
     apply_sympy_simplify: bool = False,
-    backend: Literal["pytensor", "numba", "sympytensor"] | None = None,
+    backend: Literal["pytensor", "sympytensor"] | None = None,
     mode: str | None = None,
     use_sparse_matrices: bool = False,
     functions_to_compile: list[CompiledFunctions] | tuple[CompiledFunctions] | None = "all",
@@ -118,7 +116,7 @@ def cge_model(
         parameters=parameters,
         equations=equations,
         numeraire=numeraire,
-        parse_equations_to_sympy=backend in ["numba", "sympytensor"],
+        parse_equations_to_sympy=backend == "sympytensor",
     )
 
     return compile_model(

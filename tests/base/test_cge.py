@@ -350,9 +350,7 @@ def test_long_unpack():
     ],
     ids=["simple_model", "3-goods simple"],
 )
-@pytest.mark.parametrize(
-    "backend", ["numba", "sympytensor", "pytensor"], ids=["numba", "sympytensor", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["sympytensor", "pytensor"], ids=["sympytensor", "pytensor"])
 def test_model_gradients(model_id, jac_function, backend):
     mod = load_and_cache_model(
         model_id, mode="FAST_RUN", backend=backend, functions_to_compile=("root", "minimize")
@@ -363,19 +361,12 @@ def test_model_gradients(model_id, jac_function, backend):
 
     J_expected = jac_function(**data)
 
-    if backend == "numba":
-        x, theta = variable_dict_to_flat_array(data, mod.variables, mod.parameters)
+    J_actual = mod.f_jac(**data)
+    H_actual = mod.f_hess(**data)
+    p_vals = flat_array_to_variable_dict(p, mod.variables, mod.coords).values()
 
-        J_actual = mod.f_jac(x, theta)
-        H_actual = mod.f_hess(x, theta)
-        Hp_actual = mod.f_hessp(x, p, theta)
-    else:
-        J_actual = mod.f_jac(**data)
-        H_actual = mod.f_hess(**data)
-        p_vals = flat_array_to_variable_dict(p, mod.variables, mod.coords).values()
-
-        points = {f"{var.name}_point": value for var, value in zip(mod.variables, p_vals)}
-        Hp_actual = mod.f_hessp(**data, **points)
+    points = {f"{var.name}_point": value for var, value in zip(mod.variables, p_vals)}
+    Hp_actual = mod.f_hessp(**data, **points)
 
     np.testing.assert_allclose(J_expected, J_actual, atol=1e-8)
     np.testing.assert_allclose(H_actual[:, 0], Hp_actual.ravel())
@@ -452,8 +443,11 @@ def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sp
     ],
     ids=["minimize_hess", "minimize_hessp", "root", "euler"],
 )
-@pytest.mark.parametrize("mode", ["FAST_RUN", "JAX"], ids=["FAST_RUN", "JAX"])
-@pytest.mark.parametrize("pt_backend", ["pytensor", "sympytensor"], ids=["pytensor", "sympytensor"])
+@pytest.mark.parametrize(
+    "pt_backend, mode",
+    [("pytensor", "FAST_RUN"), ("pytensor", "JAX"), ("sympytensor", "JAX")],
+    ids=["pytensor-FAST_RUN", "pytensor-JAX", "sympytensor-JAX"],
+)
 def test_backends_agree(
     model_id: int,
     calibrate_model: Callable,
@@ -466,10 +460,10 @@ def test_backends_agree(
 ):
     if mode in ["JAX"]:
         pytest.importorskip(mode.lower())
-    model_numba = load_and_cache_model(
-        model_id=model_id, backend="numba", functions_to_compile=functions_to_compile
+    model_reference = load_and_cache_model(
+        model_id=model_id, backend="sympytensor", functions_to_compile=functions_to_compile
     )
-    model_pytensor = load_and_cache_model(
+    model_candidate = load_and_cache_model(
         model_id=model_id, backend=pt_backend, mode=mode, functions_to_compile=functions_to_compile
     )
 
@@ -508,32 +502,31 @@ def test_backends_agree(
                 )
 
     calibrated_data = calibrate_model(**data)
-    x0, theta0 = variable_dict_to_flat_array(
-        calibrated_data, model_numba.variables, model_numba.parameters
-    )
-    resid_numba = model_numba.f_system(x0, theta0)
-    resid_pytensor = model_pytensor.f_system(**calibrated_data)
+    resid_reference = model_reference.f_system(**calibrated_data)
+    resid_candidate = model_candidate.f_system(**calibrated_data)
 
-    np.testing.assert_allclose(resid_numba, 0, atol=1e-8)
-    np.testing.assert_allclose(resid_pytensor, 0, atol=1e-8)
+    np.testing.assert_allclose(resid_reference, 0, atol=1e-8)
+    np.testing.assert_allclose(resid_candidate, 0, atol=1e-8)
 
     labor_increase = calibrated_data.copy()
     labor_increase["L_s"] = 10_000
 
     _, theta_labor_increase = variable_dict_to_flat_array(
-        labor_increase, model_numba.variables, model_numba.parameters
+        labor_increase, model_reference.variables, model_reference.parameters
     )
 
-    res_numba = getattr(model_numba, method)(calibrated_data, theta_labor_increase, **solver_kwargs)
-    res_pytensor = getattr(model_pytensor, method)(
+    res_reference = getattr(model_reference, method)(
+        calibrated_data, theta_labor_increase, **solver_kwargs
+    )
+    res_candidate = getattr(model_candidate, method)(
         calibrated_data, theta_labor_increase, **solver_kwargs
     )
 
     if method == "_solve_with_euler_approximation":
-        res_numba = res_numba["parameters"].dataset.isel(step=-1).to_array().values
-        res_pytensor = res_pytensor["parameters"].dataset.isel(step=-1).to_array().values
+        res_reference = res_reference["parameters"].dataset.isel(step=-1).to_array().values
+        res_candidate = res_candidate["parameters"].dataset.isel(step=-1).to_array().values
 
-    solver_agreement_checks([res_numba, res_pytensor], ["Numba", "PyTensor"])
+    solver_agreement_checks([res_reference, res_candidate], ["Reference", "Candidate"])
 
 
 def test_generate_SAM():
@@ -569,7 +562,9 @@ def test_generate_SAM():
 
 
 def test_invalid_simulation_raises():
-    mod = load_and_cache_model(model_id=1, backend="numba", functions_to_compile=("root", "euler"))
+    mod = load_and_cache_model(
+        model_id=1, backend="sympytensor", functions_to_compile=("root", "euler")
+    )
     initial_state = calibrate_model_1(**model_1_data)
 
     with pytest.raises(
@@ -618,7 +613,7 @@ def test_invalid_simulation_raises():
     ids=["final_values", "final_delta_pct", "final_delta", "combined"],
 )
 def test_simulate(scenario_kwargs, expected_result):
-    mod = load_and_cache_model(model_id=1, backend="numba")
+    mod = load_and_cache_model(model_id=1, backend="sympytensor")
     initial_state = calibrate_model_1(**model_1_data)
 
     res = mod.simulate(initial_state, **scenario_kwargs)
