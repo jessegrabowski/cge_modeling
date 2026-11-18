@@ -1,12 +1,8 @@
-import importlib.util
-
 import pytest
 
 from cge_modeling.base import build
 from cge_modeling.base.primitives import Equation
 from tests.utilities.models import load_and_cache_model
-
-JAX_INSTALLED = importlib.util.find_spec("jax") is not None
 
 
 @pytest.mark.parametrize(
@@ -63,55 +59,29 @@ def test_cge_model_factory(backend, functions_to_compile, expected_compiled_list
     else:
         assert not model._compiled
 
-    should_compile_root = "root" in expected_compiled_list if expected_compiled_list else False
-    should_compile_minimize = (
-        "minimize" in expected_compiled_list if expected_compiled_list else False
-    )
-    should_compile_euler = "euler" in expected_compiled_list if expected_compiled_list else False
-
     # f_system is always compiled
     assert model.f_system is not None
 
-    if should_compile_root:
-        assert model.f_jac is not None
-    else:
-        assert model.f_jac is None
+    compiled_root = "root" in expected_compiled_list
+    compiled_minimize = "minimize" in expected_compiled_list
+    compiled_euler = "euler" in expected_compiled_list
 
-    if should_compile_minimize:
-        assert model.f_resid is not None
-        assert model.f_grad is not None
-        assert model.f_hess is not None
-        assert model.f_hessp is not None
-    else:
-        assert model.f_resid is None
-        assert model.f_grad is None
-        assert model.f_hess is None
-        assert model.f_hessp is None
-
-    if should_compile_euler:
-        assert model.f_euler is not None
-    else:
-        assert model.f_euler is None
+    assert (model.f_jac is not None) == compiled_root
+    for func in [model.f_resid, model.f_grad, model.f_hess, model.f_hessp]:
+        assert (func is not None) == compiled_minimize
+    assert (model.f_euler is not None) == compiled_euler
 
     assert model.parse_equations_to_sympy is (backend == "sympytensor")
 
 
 def check_function_signature(func, expected_input_names):
     input_names = [x.name for x in func.maker.fgraph.inputs]
-    assert len(input_names) == len(expected_input_names)
-    assert all(x in input_names for x in expected_input_names)
+    assert sorted(input_names) == sorted(expected_input_names)
 
 
 @pytest.mark.parametrize("backend", ["pytensor", "sympytensor"])
 def test_compiled_functions_have_correct_signature(backend):
-    """
-    Smoke test to ensure that all compiled functions have the expected signature. The code has
-    gone though several iterations on this point, vacillating between f(variables, parameters) (form expected by scipy)
-    and f(**variables, **parameters) (a more natural form for users).
-
-    The canonical form is now f(**variables, **parameters), and all compiled functions should have this signature in all
-    backends.
-    """
+    """Compiled functions take every variable and parameter by name, as f(**variables, **parameters)."""
     # Skip compiling Euler because it has a much more complex signature
     model = load_and_cache_model(
         model_id=1, backend=backend, mode="FAST_RUN", functions_to_compile=("root", "minimize")
