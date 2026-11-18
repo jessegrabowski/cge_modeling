@@ -548,6 +548,64 @@ def test_generate_SAM():
     )
 
 
+def test_generate_SAM_with_fixed_value_matches_free_solution():
+    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
+    param_dict = {"alpha": 0.75, "A": 2.0, "L_s": 1000, "K_s": 5000, "w": 1.0}
+    initial_guess = {
+        "C": 10000,
+        "Y": 10000,
+        "income": 10000,
+        "K_d": 5000,
+        "L_d": 1000,
+        "r": 1.0,
+        "P": 1.0,
+        "resid": 0.0,
+    }
+    solver_kwargs = {
+        "solve_method": "minimize",
+        "method": "trust-ncg",
+        "progressbar": False,
+        "verbose": False,
+    }
+
+    free_solution = mod.generate_SAM(
+        param_dict=param_dict, initial_variable_guess=initial_guess, **solver_kwargs
+    )
+
+    # Y is the first variable, so mapping the solution onto the free variables by position would
+    # shift every other variable by one.
+    fixed_solution = mod.generate_SAM(
+        param_dict=param_dict,
+        initial_variable_guess=initial_guess,
+        fixed_values={"Y": free_solution["Y"]},
+        **solver_kwargs,
+    )
+
+    for name in mod.variable_names:
+        np.testing.assert_allclose(fixed_solution[name], free_solution[name], rtol=1e-6, atol=1e-4)
+
+
+def test_generate_SAM_rejects_fixed_values_outside_minimize():
+    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
+
+    with pytest.raises(ValueError, match="only supported with solve_method='minimize'"):
+        mod.generate_SAM(
+            param_dict={}, initial_variable_guess={}, fixed_values={"Y": 1.0}, solve_method="root"
+        )
+
+
+def test_generate_SAM_rejects_unknown_fixed_value_names():
+    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
+
+    with pytest.raises(ValueError, match=r"not model variables: \{'alpha'\}"):
+        mod.generate_SAM(
+            param_dict={},
+            initial_variable_guess={},
+            fixed_values={"alpha": 0.5},
+            solve_method="minimize",
+        )
+
+
 def test_invalid_simulation_raises():
     mod = load_and_cache_model(
         model_id=1, backend="sympytensor", functions_to_compile=("root", "euler")

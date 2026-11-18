@@ -21,7 +21,10 @@ from cloudpickle import cloudpickle
 from pytensor.compile.mode import Mode
 from scipy.optimize import OptimizeResult
 
-from cge_modeling.base.function_wrappers import wrap_pytensor_func_for_scipy
+from cge_modeling.base.function_wrappers import (
+    select_free_variable_entries,
+    wrap_pytensor_func_for_scipy,
+)
 from cge_modeling.base.primitives import (
     Equation,
     Parameter,
@@ -36,6 +39,7 @@ from cge_modeling.base.utilities import (
     ensure_input_is_sequence,
     flat_array_to_variable_dict,
     get_method_defaults,
+    make_flat_array_return_mask,
     unpack_equation_strings,
     variable_dict_to_flat_array,
 )
@@ -725,10 +729,13 @@ class CGEModel:
         use_hessp: bool = True,
         progressbar: bool = True,
         verbose: bool = True,
+        fixed_values: dict[str, np.ndarray] | None = None,
         **optimizer_kwargs,
     ):
         if "minimize" not in self._compiled:
             raise ValueError("Minimization functions have not been compiled.")
+
+        fixed_values = {} if fixed_values is None else fixed_values
 
         method: minimize_method = optimizer_kwargs.pop("method", "trust-ncg")
         use_jac, use_hess, use_hessp = get_method_defaults(use_jac, use_hess, use_hessp, method)
@@ -737,7 +744,7 @@ class CGEModel:
         f_grad = self.f_grad
         f_hess = self.f_hess
         f_hessp = self.f_hessp
-        free_variables = self.variables
+        free_variables = [var for var in self.variables if var.name not in fixed_values]
 
         if not use_jac and use_hess:
             use_hess = False
@@ -748,23 +755,27 @@ class CGEModel:
         ) or self._compile_backend == "sympytensor":
             parameters = self.parameters
             coords = self.coords
+            free_mask = make_flat_array_return_mask(
+                np.zeros(self.n_variables), self.variables, list(fixed_values), coords
+            )
 
-            f_resid = wrap_pytensor_func_for_scipy(
-                self._compiled_function("f_resid"), free_variables, parameters, coords
-            )
-            f_grad = wrap_pytensor_func_for_scipy(
-                self._compiled_function("f_grad"), free_variables, parameters, coords
-            )
-            f_hess = wrap_pytensor_func_for_scipy(
-                self._compiled_function("f_hess"), free_variables, parameters, coords
-            )
-            f_hessp = wrap_pytensor_func_for_scipy(
-                self._compiled_function("f_hessp"),
-                free_variables,
-                parameters,
-                coords,
-                include_p=True,
-            )
+            def wrap(name, variable_axes, include_p=False):
+                f = wrap_pytensor_func_for_scipy(
+                    self._compiled_function(name),
+                    free_variables,
+                    parameters,
+                    coords,
+                    include_p=include_p,
+                    fixed_values=fixed_values,
+                )
+                return select_free_variable_entries(f, free_mask, variable_axes)
+
+            f_resid = wrap("f_resid", variable_axes=())
+            f_grad = wrap("f_grad", variable_axes=(0,))
+            f_hess = wrap("f_hess", variable_axes=(0, 1))
+            f_hessp = wrap("f_hessp", variable_axes=(0,), include_p=True)
+        elif fixed_values:
+            raise ValueError("fixed_values is not supported for models compiled in JAX mode.")
 
         x0, _theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
 
@@ -807,8 +818,9 @@ class CGEModel:
             the values should be numpy arrays of the same shape as the variable.
 
         fixed_values: dict[str, np.ndarray], optional
-            A dictionary of exact values for a subset of model variables. The keys should be the names of the variables
-            to be changed, and the values should be numpy arrays of the same shape as the variable.
+            Values at which to hold a subset of model variables while solving for the rest. The keys are variable
+            names, and the values are numpy arrays of the same shape as the variable. Only supported with
+            solve_method='minimize', because fixing variables leaves more equations than unknowns.
 
         solve_method: str
             The method to use to solve the model. One of 'root', 'minimize', or 'euler'. Defaults to 'root'.
@@ -835,8 +847,8 @@ class CGEModel:
         Returns
         -------
         variable_dict: dict[str, np.ndarray]
-            A dictionary of variable values. The keys are the names of the variables, and the values are numpy arrays
-            of the same shape as the variable.
+            A dictionary of variable values, including any fixed values. The keys are the names of the variables, and
+            the values are numpy arrays of the same shape as the variable.
 
         Notes
         -----
@@ -849,9 +861,27 @@ class CGEModel:
         number of solutions exist for a given set of parameter values. What is returned is just one solution, which is
         close to the provided initial values.
         """
+        fixed_values = {} if fixed_values is None else fixed_values
+
+        unknown_names = set(fixed_values) - set(self.variable_names)
+        if unknown_names:
+            raise ValueError(
+                f"fixed_values contains names that are not model variables: {unknown_names}"
+            )
+        if fixed_values and solve_method != "minimize":
+            raise ValueError(
+                "fixed_values is only supported with solve_method='minimize', because fixing variables leaves "
+                "more equations than unknowns."
+            )
+
         SOLVER_FACTORY = {
             "root": ft.partial(self._solve_with_root, use_jac=use_jac),
-            "minimize": ft.partial(self._solve_with_minimize, use_jac=use_jac, use_hess=use_hess),
+            "minimize": ft.partial(
+                self._solve_with_minimize,
+                use_jac=use_jac,
+                use_hess=use_hess,
+                fixed_values=fixed_values,
+            ),
             "euler": ft.partial(self._solve_with_euler_approximation, n_steps=n_steps),
         }
 
@@ -859,9 +889,8 @@ class CGEModel:
             raise ValueError(
                 f"Unknown method {solve_method}. Must be one of {list(SOLVER_FACTORY.keys())}"
             )
-        fixed_values = {} if fixed_values is None else fixed_values
 
-        joint_dict = {**param_dict, **initial_variable_guess}
+        joint_dict = {**param_dict, **initial_variable_guess, **fixed_values}
         free_variables = [var for var in self.variables if var.name not in fixed_values]
         _, flat_params = variable_dict_to_flat_array(joint_dict, free_variables, self.parameters)
 
@@ -878,7 +907,10 @@ class CGEModel:
                     "Solver did not converge. Results do not represent a valid SAM, and are returned for "
                     "diagnostic purposes only"
                 )
-            result_dict = flat_array_to_variable_dict(res.x, free_variables, self.coords)
+            result_dict = {
+                **flat_array_to_variable_dict(res.x, free_variables, self.coords),
+                **fixed_values,
+            }
         else:
             result_dict = res
 
