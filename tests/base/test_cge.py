@@ -517,6 +517,30 @@ def test_backends_agree(
     solver_agreement_checks([res_reference, res_candidate], ["Reference", "Candidate"])
 
 
+@pytest.mark.parametrize("backend", ["pytensor", "sympytensor"])
+def test_scan_euler_matches_python_loop_euler(backend):
+    scan_model = load_model_1(backend=backend, functions_to_compile=("euler",), use_scan_euler=True)
+    loop_model = load_model_1(backend=backend, functions_to_compile=("euler",))
+    calibrated_data = calibrate_model_1(**model_1_data)
+    _, theta_final = variable_dict_to_flat_array(
+        {**calibrated_data, "L_s": 10_000}, scan_model.variables, scan_model.parameters
+    )
+
+    scan_result = scan_model._solve_with_euler_approximation(
+        calibrated_data, theta_final, n_steps=500
+    )
+    loop_result = loop_model._solve_with_euler_approximation(
+        calibrated_data, theta_final, n_steps=500
+    )
+
+    np.testing.assert_allclose(
+        scan_result["variables"].dataset.isel(step=-1).to_array().values,
+        loop_result["variables"].dataset.isel(step=-1).to_array().values,
+        rtol=1e-10,
+        atol=1e-8,
+    )
+
+
 def test_generate_SAM():
     mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
     param_dict = {

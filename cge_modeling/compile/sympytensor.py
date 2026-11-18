@@ -328,11 +328,11 @@ def compile_sympytensor_cge_functions(
                 f_grad=f_grad,
             )
         else:
-            theta_final, _n_steps, euler_output = symbolic_euler_approximation(
+            theta_final, n_steps, euler_output = symbolic_euler_approximation(
                 system, variables, parameters, jacobian=None
             )
             f_euler = pytensor.function(
-                inputs=[*variables, *parameters, *theta_final],
+                inputs=[*variables, *parameters, theta_final, n_steps],
                 outputs=euler_output,
                 mode=mode,
             )
