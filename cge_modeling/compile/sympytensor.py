@@ -160,9 +160,8 @@ def compile_sympytensor_jacobian(
         mode=mode,
     )
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_jac = return_array_from_jax_wrapper(f_jac)
@@ -186,9 +185,8 @@ def compile_sympytensor_error_function(
 
     f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_loss = return_array_from_jax_wrapper(f_loss)
@@ -219,9 +217,8 @@ def compile_sympytensor_gradient_function(
         on_unused_input="ignore",
     )
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_grad = return_array_from_jax_wrapper(f_grad)
@@ -252,9 +249,8 @@ def compile_sympytensor_hess_function(
         on_unused_input="ignore",
     )
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_hess = return_array_from_jax_wrapper(f_hess)
@@ -271,7 +267,7 @@ def compile_sympytensor_hessp_function(
     unpacked_to_indexed_dict: dict,
     mode: str | None = None,
 ) -> tuple[sp.Matrix, pt.TensorVariable, Function]:
-    sp_hessp, p_vars = make_sympy_hessp(sp_grad, sp_wrt)
+    sp_hessp, _p_vars = make_sympy_hessp(sp_grad, sp_wrt)
     unpacked_hessp = as_tensor(sp_hessp, cache=cache)
     hessp = unpacked_graph_to_packed_graph(unpacked_hessp, unpacked_to_indexed_dict)
     hessp.name = "hessp"
@@ -289,9 +285,8 @@ def compile_sympytensor_hessp_function(
         on_unused_input="ignore",
     )
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_hessp = return_array_from_jax_wrapper(f_hessp)
@@ -327,9 +322,8 @@ def compile_sympytensor_cge_functions(
         on_unused_input="raise",
     )
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_system = return_array_from_jax_wrapper(f_system)
@@ -342,12 +336,8 @@ def compile_sympytensor_cge_functions(
     f_hessp = None
     f_euler = None
 
-    # jac and grad can be reused if both root/minimize and euler are requested
-    jac = None
-    grad = None
-
     if "root" in functions_to_compile:
-        sp_jac, jac, f_jac = compile_sympytensor_jacobian(
+        _sp_jac, _jac, f_jac = compile_sympytensor_jacobian(
             sp_equations,
             sp_variables,
             variables,
@@ -359,11 +349,11 @@ def compile_sympytensor_cge_functions(
         )
 
     if "minimize" in functions_to_compile:
-        sp_squared_loss, squared_loss, f_resid = compile_sympytensor_error_function(
+        sp_squared_loss, _squared_loss, f_resid = compile_sympytensor_error_function(
             sp_equations, variables, parameters, unpacked_cache, unpacked_to_indexed_dict, mode=mode
         )
 
-        sp_grad, grad, f_grad = compile_sympytensor_gradient_function(
+        sp_grad, _grad, f_grad = compile_sympytensor_gradient_function(
             sp_squared_loss,
             sp_variables,
             variables,
@@ -373,7 +363,7 @@ def compile_sympytensor_cge_functions(
             mode=mode,
         )
 
-        sp_hess, hess, f_hess = compile_sympytensor_hess_function(
+        _sp_hess, _hess, f_hess = compile_sympytensor_hess_function(
             sp_grad,
             sp_variables,
             variables,
@@ -384,7 +374,7 @@ def compile_sympytensor_cge_functions(
             mode=mode,
         )
 
-        sp_hessp, hessp, f_hessp = compile_sympytensor_hessp_function(
+        _sp_hessp, _hessp, f_hessp = compile_sympytensor_hessp_function(
             sp_grad,
             sp_variables,
             variables,
@@ -410,7 +400,7 @@ def compile_sympytensor_cge_functions(
                 f_grad=f_grad,
             )
         else:
-            theta_final, n_steps, euler_output = symbolic_euler_approximation(
+            theta_final, _n_steps, euler_output = symbolic_euler_approximation(
                 system, variables, parameters, jacobian=None
             )
             f_euler = pytensor.function(

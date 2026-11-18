@@ -271,7 +271,7 @@ def compile_pytensor_cge_functions(
     *args,
     **kwargs,
 ) -> tuple[Function | None, ...]:
-    system, variables, parameters, (cache, unpacked_cache) = cge_primitives_to_pytensor(cge_model)
+    system, variables, parameters, (cache, _unpacked_cache) = cge_primitives_to_pytensor(cge_model)
     validate_pytensor_parsing_result(system, variables, parameters, cache)
 
     _log.info(f"Compiling model to Pytensor using {mode} mode")
@@ -311,8 +311,8 @@ def compile_pytensor_cge_functions(
         grad, f_grad = compile_pytensor_gradient_function(
             squared_loss, variables, parameters, cge_model.n_variables, mode=mode
         )
-        hess, f_hess = compile_pytensor_hess_function(grad, variables, parameters, mode=mode)
-        hessp, f_hessp = compile_pytensor_hessp_function(grad, variables, parameters, mode=mode)
+        _hess, f_hess = compile_pytensor_hess_function(grad, variables, parameters, mode=mode)
+        _hessp, f_hessp = compile_pytensor_hessp_function(grad, variables, parameters, mode=mode)
 
     if "euler" in functions_to_compile:
         if not use_scan_euler:
@@ -330,7 +330,7 @@ def compile_pytensor_cge_functions(
                 f_grad=f_grad,
             )
         else:
-            theta_final, n_steps, euler_output = symbolic_euler_approximation(
+            theta_final, _n_steps, euler_output = symbolic_euler_approximation(
                 system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
             )
             f_euler = pytensor.function(

@@ -208,7 +208,7 @@ def make_unpacked_to_packed_map(
         # Index the parent object with the integer indices
         indexed_parent = parent_pt[tuple(dim_idx)]
         name = f"{parent_pt.name}"
-        name += f'[{", ".join([str(x) for x in dim_idx])}]' if len(dim_idx) > 0 else ""
+        name += f"[{', '.join([str(x) for x in dim_idx])}]" if len(dim_idx) > 0 else ""
 
         indexed_parent.name = name
         unpacked_to_indexed_dict[var] = indexed_parent

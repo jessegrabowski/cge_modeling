@@ -78,21 +78,21 @@ def test_prepare_gridspec_figure(
     if expected_last_row_locs is not None:
         remainder = n_plots % n_cols
         # This check is for cases where the last row is not full and we expect specific centered locations.
-        assert (
-            remainder > 0
-        ), "expected_last_row_locs should only be provided if there's a remainder row to center."
-        assert (
-            len(expected_last_row_locs) == remainder
-        ), f"Expected {remainder} locations for the last row, but got {len(expected_last_row_locs)}"
+        assert remainder > 0, (
+            "expected_last_row_locs should only be provided if there's a remainder row to center."
+        )
+        assert len(expected_last_row_locs) == remainder, (
+            f"Expected {remainder} locations for the last row, but got {len(expected_last_row_locs)}"
+        )
 
         # Plots in the last row start after all full rows.
         # Index of the first plot in the last (partial) row within plot_locs list.
         start_index_of_last_row_plots = n_plots - remainder
         for i in range(remainder):
             actual_plot_loc_index = start_index_of_last_row_plots + i
-            assert (
-                plot_locs[actual_plot_loc_index] == expected_last_row_locs[i]
-            ), f"Mismatch for plot_locs[{actual_plot_loc_index}] (plot {i+1} in last row)"
+            assert plot_locs[actual_plot_loc_index] == expected_last_row_locs[i], (
+                f"Mismatch for plot_locs[{actual_plot_loc_index}] (plot {i + 1} in last row)"
+            )
 
 
 @pytest.mark.usefixtures("auto_close_all_figures")
@@ -141,7 +141,7 @@ def test_plot_areas_scalar_vars_raise_error(cge_model):
     var_names = ["w"]
 
     with pytest.raises(
-        ValueError, match="The selected variable is a scalar; cannot create an area plot."
+        ValueError, match=r"The selected variable is a scalar; cannot create an area plot\."
     ):
         plot_areas(idata, initial_calib_data, model, var_names=var_names)
 
@@ -190,13 +190,13 @@ def test_compute_bar_data_invalid_metric():
 
 @pytest.mark.usefixtures("auto_close_all_figures")
 def test_plot_one_bar_vertical(cge_model):
-    model, initial_calib_data, idata = cge_model
+    _model, _initial_calib_data, idata = cge_model
     var_name = "Y"
 
     data_xr = idata["optimizer"].isel(step=-1)["variables"][var_name]
     initial_data_xr = idata["optimizer"].isel(step=0)["variables"][var_name]
 
-    fig, ax = plt.subplots()
+    _fig, ax = plt.subplots()
     ax_out = _plot_one_bar(
         data_xr, initial_data_xr, ax, drop_vars=[], metric="pct_change", orientation="v"
     )
@@ -205,13 +205,13 @@ def test_plot_one_bar_vertical(cge_model):
 
 @pytest.mark.usefixtures("auto_close_all_figures")
 def test_plot_one_bar_horizontal(cge_model):
-    model, initial_calib_data, idata = cge_model
+    _model, _initial_calib_data, idata = cge_model
     var_name = "Y"
 
     data_xr = idata["optimizer"].isel(step=-1)["variables"][var_name]
     initial_data_xr = idata["optimizer"].isel(step=0)["variables"][var_name]
 
-    fig, ax = plt.subplots()
+    _fig, ax = plt.subplots()
     ax_out_h = _plot_one_bar(
         data_xr,
         initial_data_xr,

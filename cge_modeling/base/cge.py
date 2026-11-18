@@ -686,7 +686,7 @@ class CGEModel:
         f_system = wrap_pytensor_func_for_scipy(f_system, free_variables, parameters, coords)
         f_jac = wrap_pytensor_func_for_scipy(f_jac, free_variables, parameters, coords)
 
-        x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
+        x0, _theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
 
         res = root(
             f=f_system,
@@ -741,7 +741,7 @@ class CGEModel:
                 f_hessp, free_variables, parameters, coords, include_p=True
             )
 
-        x0, theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
+        x0, _theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
 
         res = minimize(
             f=f_resid,
@@ -962,7 +962,7 @@ class CGEModel:
             if use_euler_approximation:
                 simulation_name += f"_Euler[steps={n_iter_euler}]"
             if use_optimizer:
-                simulation_name += f'_{optimizer_mode}[{",".join([f"{k}={v}" for k, v in optimizer_kwargs.items()])}]'
+                simulation_name += f"_{optimizer_mode}[{','.join([f'{k}={v}' for k, v in optimizer_kwargs.items()])}]"
         if not overwrite and os.path.exists(os.path.join(output_path, simulation_name + ".pkl")):
             res = read_results(output_path, simulation_name, verbose=verbose)
             return res
@@ -1133,7 +1133,7 @@ class CGEModel:
             longest_name = max(len(x) for x in self.unpacked_equation_names)
 
             _log.info("\n")
-            _log.info(f'{"Equation":<{longest_name + 10}}' + "Residual")
+            _log.info(f"{'Equation':<{longest_name + 10}}" + "Residual")
             _log.info("=" * 100)
 
             for eq_name, resid in zip(self.unpacked_equation_names, errors):

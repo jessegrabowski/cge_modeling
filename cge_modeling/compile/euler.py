@@ -205,7 +205,7 @@ def symbolic_euler_approximation(
         assert len(theta_next) == len(theta_prev)
         return x_next + theta_next
 
-    result, updates = pytensor.scan(
+    result, _updates = pytensor.scan(
         step_func,
         outputs_info=x_list + theta_list,
         non_sequences=[*theta_list, theta_final, n_steps],

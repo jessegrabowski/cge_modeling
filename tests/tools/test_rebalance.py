@@ -39,7 +39,7 @@ def test_cross_entropy_rebalance(backend, method):
     else:
         minimizer_kwargs = {"delta": 1e-4}
 
-    df2, optim_res, success = balance_SAM(
+    df2, _optim_res, success = balance_SAM(
         df, use_cvxpy=backend == "cvxpy", method=method, **minimizer_kwargs
     )
     assert success

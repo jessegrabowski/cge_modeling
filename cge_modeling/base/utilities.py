@@ -144,8 +144,8 @@ def _expand_var_by_index(
     missing_dims = set(dims) - set(obj.dims)
     if len(missing_dims) > 0:
         raise ValueError(
-            f'Found indices {", ".join(missing_dims)} on the coords that are not among the variable '
-            f'indices: {", ".join(obj.dims)}'
+            f"Found indices {', '.join(missing_dims)} on the coords that are not among the variable "
+            f"indices: {', '.join(obj.dims)}"
         )
 
     cls = Variable if isinstance(obj, Variable) else Parameter

@@ -83,7 +83,7 @@ def scan_body(*args, F, J, initial_step_size, tol, has_exog, n_endog, n_exog):
     )
 
     flat_X, flat_new_X, flat_F_X, flat_F_new_X = (out[i] for i in range(4))
-    norm_X, norm_new_X, norm_root, norm_root_new, norm_step = compute_norms(
+    _norm_X, _norm_new_X, norm_root, norm_root_new, norm_step = compute_norms(
         flat_X, flat_new_X, flat_F_X, flat_F_new_X
     )
     is_converged = check_convergence(norm_step, norm_root, converged, tol)
@@ -181,7 +181,7 @@ def root(
         n_exog=n_exog,
     )
 
-    outputs, updates = pytensor.scan(
+    outputs, _updates = pytensor.scan(
         root_func,
         outputs_info=[*x0, converged, init_step_size, n_steps],
         non_sequences=exog,

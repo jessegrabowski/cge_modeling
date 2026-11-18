@@ -471,9 +471,9 @@ def test_backends_agree(
         solutions = []
         for res, name in zip(results, names):
             if hasattr(res, "success"):
-                assert res.success or np.allclose(
-                    res.fun, 0.0, rtol=1e-8, atol=1e-8
-                ), f"{name} solver failed to converge"
+                assert res.success or np.allclose(res.fun, 0.0, rtol=1e-8, atol=1e-8), (
+                    f"{name} solver failed to converge"
+                )
 
             solution = res.x if hasattr(res, "x") else res
             assert not np.all(np.isnan(solution)), f"{name} solver returned NaNs"
@@ -561,8 +561,8 @@ def test_invalid_simulation_raises():
 
     with pytest.raises(
         ValueError,
-        match="initial_state must contain values for all variables and parameters in the "
-        "model. Did not find values for alpha",
+        match=r"initial_state must contain values for all variables and parameters in the "
+        r"model\. Did not find values for alpha",
     ):
         bad_init = initial_state.copy()
         del bad_init["alpha"]
@@ -571,7 +571,7 @@ def test_invalid_simulation_raises():
 
     with pytest.raises(
         ValueError,
-        match="initial_state contains values for variables or parameters not in the " "model: lol",
+        match="initial_state contains values for variables or parameters not in the model: lol",
     ):
         bad_init = initial_state.copy()
         bad_init["lol"] = 3

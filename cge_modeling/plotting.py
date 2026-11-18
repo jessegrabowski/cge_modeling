@@ -248,7 +248,7 @@ def plot_areas(
     if shock_name is None:
         shock_name = "Shock"
 
-    fig, ax = plt.subplots(1, 2, figsize=(14, 4))
+    fig, _ax = plt.subplots(1, 2, figsize=(14, 4))
 
     if cmap is None:
         cmap = plt.colormaps["tab10"]

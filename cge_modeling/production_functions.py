@@ -571,7 +571,7 @@ def _2d_leontief(
     if backend == "sympytensor":
         batch_dim = dims.pop(sum_axis)
         core_dim = dims[0]
-        n_core, n_batch = (len(coords[x]) for x in [core_dim, batch_dim])
+        _n_core, n_batch = (len(coords[x]) for x in [core_dim, batch_dim])
         profit_output = output
         profit_price = output_price
 
