@@ -152,6 +152,9 @@ ignore = [
 lines-between-types = 1
 
 [tool.ruff.lint.per-file-ignores]
+'docs/**/*.ipynb' = [
+    'F841', # Calibration functions hand their locals to CGEModel.finalize_calibration by frame inspection
+]
 'tests/*.py' = [
     'F841', # Unused variable warning for test files -- common in pymc model declarations
     'D106',  # Missing docstring for public method -- unittest test subclasses don't need docstrings
