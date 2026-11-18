@@ -287,6 +287,40 @@ def test_dixit_stiglitz_blocks_hold_when_the_output_price_is_the_unit_cost(helpe
         )
 
 
+@pytest.mark.parametrize("helper", [DixitStiglitz, DixitStiglitzValue], ids=["technology", "value"])
+def test_dixit_stiglitz_defaults_to_the_elasticity_only_form(helper):
+    with CGEModel(coords={"v": ["a", "b", "c"]}):
+        Y = cm.Variable("Y")
+        X = cm.Variable("X", dims="v")
+        P_Y = cm.Variable("P_Y")
+        P_X = cm.Parameter("P_X", dims="v")
+        epsilon = cm.Parameter("epsilon")
+        equations = helper(
+            "Composite good",
+            output=Y,
+            output_price=P_Y,
+            factor=X,
+            factor_price=P_X,
+            factor_dim="v",
+            epsilon=epsilon,
+        )
+    objects = {"Y": Y, "X": X, "P_Y": P_Y, "P_X": P_X, "epsilon": epsilon}
+    P_X_value, epsilon_value, Y_value = np.array([1.0, 1.5, 0.7]), 2.5, 4.0
+    P_Y_value = (P_X_value ** (1 - epsilon_value)).sum() ** (1 / (1 - epsilon_value))
+    point = {
+        "Y": Y_value,
+        "X": Y_value * (P_Y_value / P_X_value) ** epsilon_value,
+        "P_Y": P_Y_value,
+        "P_X": P_X_value,
+        "epsilon": epsilon_value,
+    }
+
+    for equation in equations:
+        np.testing.assert_allclose(
+            evaluate_residual(equation, objects, point), 0.0, atol=1e-12, err_msg=equation.name
+        )
+
+
 def test_leontief_holds_when_the_output_price_is_the_unit_cost():
     with CGEModel() as model:
         Y, X_1, X_2, P_Y = (cm.Variable(name) for name in ("Y", "X_1", "X_2", "P_Y"))

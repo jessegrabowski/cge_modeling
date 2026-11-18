@@ -981,9 +981,9 @@ def DixitStiglitz(
     factor: XTensorVariable,
     factor_price: XTensorVariable,
     factor_dim: str,
-    factor_share: XTensorVariable | float,
-    tfp: XTensorVariable | float,
     epsilon: XTensorVariable | float,
+    factor_share: XTensorVariable | float = 1.0,
+    tfp: XTensorVariable | float = 1.0,
     model: "CGEModel | None" = None,
 ) -> tuple[XTensorEquation, ...]:
     r"""
@@ -1009,12 +1009,12 @@ def DixitStiglitz(
         The varieties :math:`X_i`, a model object, and their prices :math:`P_i`, indexed by ``factor_dim``.
     factor_dim : str
         The dim along which ``factor`` lists the varieties.
-    factor_share : XTensorVariable or float
-        The shares :math:`\alpha_i`.
-    tfp : XTensorVariable or float
-        Total factor productivity :math:`A`.
     epsilon : XTensorVariable or float
         Elasticity of substitution :math:`\epsilon`.
+    factor_share : XTensorVariable or float, optional
+        The shares :math:`\alpha_i`. Default is 1, which with the default ``tfp`` gives the elasticity-only form.
+    tfp : XTensorVariable or float, optional
+        Total factor productivity :math:`A`. Default is 1.
     model : CGEModel, optional
         Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
 
@@ -1050,9 +1050,9 @@ def DixitStiglitzValue(
     factor: XTensorVariable,
     factor_price: XTensorVariable,
     factor_dim: str,
-    factor_share: XTensorVariable | float,
-    tfp: XTensorVariable | float,
     epsilon: XTensorVariable | float,
+    factor_share: XTensorVariable | float = 1.0,
+    tfp: XTensorVariable | float = 1.0,
     model: "CGEModel | None" = None,
 ) -> tuple[XTensorEquation, ...]:
     r"""
