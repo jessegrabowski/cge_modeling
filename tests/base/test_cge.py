@@ -1,12 +1,12 @@
-import sys
+import logging
 
 from collections.abc import Callable
 from importlib.util import find_spec
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 import sympy as sp
+import xarray as xr
 
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Equation, Parameter, Variable
@@ -20,6 +20,7 @@ from tests.utilities.models import (
     expected_model_2_jacobian,
     load_and_cache_model,
     load_model_1,
+    load_model_1_components,
     model_1_data,
     model_2_data,
 )
@@ -350,9 +351,7 @@ def test_long_unpack():
     ],
     ids=["simple_model", "3-goods simple"],
 )
-@pytest.mark.parametrize(
-    "backend", ["numba", "sympytensor", "pytensor"], ids=["numba", "sympytensor", "pytensor"]
-)
+@pytest.mark.parametrize("backend", ["sympytensor", "pytensor"], ids=["sympytensor", "pytensor"])
 def test_model_gradients(model_id, jac_function, backend):
     mod = load_and_cache_model(
         model_id, mode="FAST_RUN", backend=backend, functions_to_compile=("root", "minimize")
@@ -363,19 +362,12 @@ def test_model_gradients(model_id, jac_function, backend):
 
     J_expected = jac_function(**data)
 
-    if backend == "numba":
-        x, theta = variable_dict_to_flat_array(data, mod.variables, mod.parameters)
+    J_actual = mod.f_jac(**data)
+    H_actual = mod.f_hess(**data)
+    p_vals = flat_array_to_variable_dict(p, mod.variables, mod.coords).values()
 
-        J_actual = mod.f_jac(x, theta)
-        H_actual = mod.f_hess(x, theta)
-        Hp_actual = mod.f_hessp(x, p, theta)
-    else:
-        J_actual = mod.f_jac(**data)
-        H_actual = mod.f_hess(**data)
-        p_vals = flat_array_to_variable_dict(p, mod.variables, mod.coords).values()
-
-        points = {f"{var.name}_point": value for var, value in zip(mod.variables, p_vals)}
-        Hp_actual = mod.f_hessp(**data, **points)
+    points = {f"{var.name}_point": value for var, value in zip(mod.variables, p_vals)}
+    Hp_actual = mod.f_hessp(**data, **points)
 
     np.testing.assert_allclose(J_expected, J_actual, atol=1e-8)
     np.testing.assert_allclose(H_actual[:, 0], Hp_actual.ravel())
@@ -452,8 +444,11 @@ def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sp
     ],
     ids=["minimize_hess", "minimize_hessp", "root", "euler"],
 )
-@pytest.mark.parametrize("mode", ["FAST_RUN", "JAX"], ids=["FAST_RUN", "JAX"])
-@pytest.mark.parametrize("pt_backend", ["pytensor", "sympytensor"], ids=["pytensor", "sympytensor"])
+@pytest.mark.parametrize(
+    "pt_backend, mode",
+    [("pytensor", "FAST_RUN"), ("pytensor", "JAX"), ("sympytensor", "JAX")],
+    ids=["pytensor-FAST_RUN", "pytensor-JAX", "sympytensor-JAX"],
+)
 def test_backends_agree(
     model_id: int,
     calibrate_model: Callable,
@@ -464,76 +459,99 @@ def test_backends_agree(
     mode: str,
     pt_backend: str,
 ):
-    if mode in ["JAX"]:
-        pytest.importorskip(mode.lower())
-    model_numba = load_and_cache_model(
-        model_id=model_id, backend="numba", functions_to_compile=functions_to_compile
+    if mode == "JAX":
+        pytest.importorskip("jax")
+    model_reference = load_and_cache_model(
+        model_id=model_id, backend="sympytensor", functions_to_compile=functions_to_compile
     )
-    model_pytensor = load_and_cache_model(
+    model_candidate = load_and_cache_model(
         model_id=model_id, backend=pt_backend, mode=mode, functions_to_compile=functions_to_compile
     )
 
     def solver_agreement_checks(results: list, names: list):
+        solutions = []
         for res, name in zip(results, names):
             if hasattr(res, "success"):
-                assert res.success or np.allclose(
-                    res.fun, 0.0, rtol=1e-8, atol=1e-8
-                ), f"{name} solver failed to converge"
-            if hasattr(res, "x"):
-                assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
-                assert np.all(np.isfinite(res.x)), f"{name} solver returned Infs"
-
-                (
-                    np.testing.assert_allclose(
-                        np.around(results[0].x, 4),
-                        np.around(results[1].x, 4),
-                        atol=1e-5,
-                        rtol=1e-5,
-                    ),
-                    "Solvers disagree",
+                assert res.success or np.allclose(res.fun, 0.0, rtol=1e-8, atol=1e-8), (
+                    f"{name} solver failed to converge"
                 )
 
-            else:
-                assert not np.all(np.isnan(res)), f"{name} solver returned NaNs"
-                assert np.all(np.isfinite(res)), f"{name} solver returned Infs"
+            solution = res.x if hasattr(res, "x") else res
+            assert not np.all(np.isnan(solution)), f"{name} solver returned NaNs"
+            assert np.all(np.isfinite(solution)), f"{name} solver returned Infs"
+            solutions.append(solution)
 
-                (
-                    np.testing.assert_allclose(
-                        np.around(results[0], 4),
-                        np.around(results[1], 4),
-                        atol=1e-5,
-                        rtol=1e-5,
-                    ),
-                    "Solvers disagree",
-                )
+        np.testing.assert_allclose(
+            np.around(solutions[0], 4),
+            np.around(solutions[1], 4),
+            atol=1e-5,
+            rtol=1e-5,
+            err_msg="Solvers disagree",
+        )
 
     calibrated_data = calibrate_model(**data)
-    x0, theta0 = variable_dict_to_flat_array(
-        calibrated_data, model_numba.variables, model_numba.parameters
-    )
-    resid_numba = model_numba.f_system(x0, theta0)
-    resid_pytensor = model_pytensor.f_system(**calibrated_data)
+    resid_reference = model_reference.f_system(**calibrated_data)
+    resid_candidate = model_candidate.f_system(**calibrated_data)
 
-    np.testing.assert_allclose(resid_numba, 0, atol=1e-8)
-    np.testing.assert_allclose(resid_pytensor, 0, atol=1e-8)
+    np.testing.assert_allclose(resid_reference, 0, atol=1e-8)
+    np.testing.assert_allclose(resid_candidate, 0, atol=1e-8)
 
     labor_increase = calibrated_data.copy()
     labor_increase["L_s"] = 10_000
 
     _, theta_labor_increase = variable_dict_to_flat_array(
-        labor_increase, model_numba.variables, model_numba.parameters
+        labor_increase, model_reference.variables, model_reference.parameters
     )
 
-    res_numba = getattr(model_numba, method)(calibrated_data, theta_labor_increase, **solver_kwargs)
-    res_pytensor = getattr(model_pytensor, method)(
+    res_reference = getattr(model_reference, method)(
+        calibrated_data, theta_labor_increase, **solver_kwargs
+    )
+    res_candidate = getattr(model_candidate, method)(
         calibrated_data, theta_labor_increase, **solver_kwargs
     )
 
     if method == "_solve_with_euler_approximation":
-        res_numba = res_numba.parameters.isel(step=-1).to_array().values
-        res_pytensor = res_pytensor.parameters.isel(step=-1).to_array().values
+        res_reference = res_reference["parameters"].dataset.isel(step=-1).to_array().values
+        res_candidate = res_candidate["parameters"].dataset.isel(step=-1).to_array().values
 
-    solver_agreement_checks([res_numba, res_pytensor], ["Numba", "PyTensor"])
+    solver_agreement_checks([res_reference, res_candidate], ["Reference", "Candidate"])
+
+
+@pytest.mark.parametrize("backend", ["pytensor", "sympytensor"])
+def test_scan_euler_matches_python_loop_euler(backend):
+    scan_model = load_model_1(backend=backend, functions_to_compile=("euler",), use_scan_euler=True)
+    loop_model = load_model_1(backend=backend, functions_to_compile=("euler",))
+    calibrated_data = calibrate_model_1(**model_1_data)
+    _, theta_final = variable_dict_to_flat_array(
+        {**calibrated_data, "L_s": 10_000}, scan_model.variables, scan_model.parameters
+    )
+
+    scan_result = scan_model._solve_with_euler_approximation(
+        calibrated_data, theta_final, n_steps=500
+    )
+    loop_result = loop_model._solve_with_euler_approximation(
+        calibrated_data, theta_final, n_steps=500
+    )
+
+    np.testing.assert_allclose(
+        scan_result["variables"].dataset.isel(step=-1).to_array().values,
+        loop_result["variables"].dataset.isel(step=-1).to_array().values,
+        rtol=1e-10,
+        atol=1e-8,
+    )
+
+
+def test_simulate_with_scan_euler_reports_no_nans(caplog):
+    mod = load_model_1(
+        backend="pytensor", functions_to_compile=("euler", "root"), use_scan_euler=True
+    )
+    initial_state = calibrate_model_1(**model_1_data)
+
+    with caplog.at_level(logging.WARNING, logger="cge_modeling"):
+        res = mod.simulate(initial_state, final_delta_pct={"L_s": 0.5}, n_iter_euler=100)
+
+    assert res["optim_res"].success
+    assert "NaNs were encountered" not in caplog.text
 
 
 def test_generate_SAM():
@@ -568,21 +586,68 @@ def test_generate_SAM():
     )
 
 
-def test_can_compile_without_jax_installed():
-    with patch.dict(sys.modules, {"jax": None}):
-        with pytest.raises(ImportError):
-            # Can't cache here, otherwise the error won't be raised if the model is already cached
-            load_model_1(backend="pytensor", mode="JAX")
+def test_generate_SAM_with_fixed_value_matches_free_solution():
+    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
+    param_dict = {"alpha": 0.75, "A": 2.0, "L_s": 1000, "K_s": 5000, "w": 1.0}
+    initial_guess = {
+        "C": 10000,
+        "Y": 10000,
+        "income": 10000,
+        "K_d": 5000,
+        "L_d": 1000,
+        "r": 1.0,
+        "P": 1.0,
+        "resid": 0.0,
+    }
+    solver_kwargs = {
+        "solve_method": "minimize",
+        "method": "trust-ncg",
+        "progressbar": False,
+        "verbose": False,
+    }
 
-        mod = load_and_cache_model(
-            model_id=1, backend="pytensor", functions_to_compile=("root", "euler")
+    free_solution = mod.generate_SAM(
+        param_dict=param_dict, initial_variable_guess=initial_guess, **solver_kwargs
+    )
+
+    # Y is the first variable, so mapping the solution onto the free variables by position would
+    # shift every other variable by one.
+    fixed_solution = mod.generate_SAM(
+        param_dict=param_dict,
+        initial_variable_guess=initial_guess,
+        fixed_values={"Y": free_solution["Y"]},
+        **solver_kwargs,
+    )
+
+    for name in mod.variable_names:
+        np.testing.assert_allclose(fixed_solution[name], free_solution[name], rtol=1e-6, atol=1e-4)
+
+
+def test_generate_SAM_rejects_fixed_values_outside_minimize():
+    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
+
+    with pytest.raises(ValueError, match="only supported with solve_method='minimize'"):
+        mod.generate_SAM(
+            param_dict={}, initial_variable_guess={}, fixed_values={"Y": 1.0}, solve_method="root"
         )
-        inital_data = calibrate_model_1(**model_1_data)
-        mod.simulate(inital_data, final_delta_pct={"L_s": 0.5})
+
+
+def test_generate_SAM_rejects_unknown_fixed_value_names():
+    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
+
+    with pytest.raises(ValueError, match=r"not model variables: \{'alpha'\}"):
+        mod.generate_SAM(
+            param_dict={},
+            initial_variable_guess={},
+            fixed_values={"alpha": 0.5},
+            solve_method="minimize",
+        )
 
 
 def test_invalid_simulation_raises():
-    mod = load_and_cache_model(model_id=1, backend="numba", functions_to_compile=("root", "euler"))
+    mod = load_and_cache_model(
+        model_id=1, backend="sympytensor", functions_to_compile=("root", "euler")
+    )
     initial_state = calibrate_model_1(**model_1_data)
 
     with pytest.raises(
@@ -592,8 +657,8 @@ def test_invalid_simulation_raises():
 
     with pytest.raises(
         ValueError,
-        match="initial_state must contain values for all variables and parameters in the "
-        "model. Did not find values for alpha",
+        match=r"initial_state must contain values for all variables and parameters in the "
+        r"model\. Did not find values for alpha",
     ):
         bad_init = initial_state.copy()
         del bad_init["alpha"]
@@ -602,7 +667,7 @@ def test_invalid_simulation_raises():
 
     with pytest.raises(
         ValueError,
-        match="initial_state contains values for variables or parameters not in the " "model: lol",
+        match="initial_state contains values for variables or parameters not in the model: lol",
     ):
         bad_init = initial_state.copy()
         bad_init["lol"] = 3
@@ -631,11 +696,84 @@ def test_invalid_simulation_raises():
     ids=["final_values", "final_delta_pct", "final_delta", "combined"],
 )
 def test_simulate(scenario_kwargs, expected_result):
-    mod = load_and_cache_model(model_id=1, backend="numba")
+    mod = load_and_cache_model(model_id=1, backend="sympytensor")
     initial_state = calibrate_model_1(**model_1_data)
 
     res = mod.simulate(initial_state, **scenario_kwargs)
 
     for key in expected_result:
-        final_param = res["optimizer"].parameters[key].isel(step=-1)
+        final_param = res["optimizer"]["parameters"][key].isel(step=-1)
         assert final_param == expected_result[key](initial_state[key])
+
+
+def test_simulate_compiles_an_uncompiled_model():
+    variables, parameters, equations, coords = load_model_1_components()
+    mod = CGEModel(coords=coords, variables=variables, parameters=parameters, equations=equations)
+    initial_state = calibrate_model_1(**model_1_data)
+
+    res = mod.simulate(initial_state, final_values={"L_s": 1500}, n_iter_euler=100)
+
+    assert mod._compile_backend == "sympytensor"
+    assert list(mod._compiled) == ["euler", "root"]
+    assert res["optimizer"]["parameters"]["L_s"].isel(step=-1) == 1500
+
+
+def test_calibrate_reproduces_sequential_calibration():
+    variables, parameters, equations, coords = load_model_1_components()
+    mod = CGEModel(coords=coords, variables=variables, parameters=parameters, equations=equations)
+    expected = calibrate_model_1(**model_1_data)
+
+    result = mod.calibrate(data={**model_1_data, "w": 1.0})
+
+    assert result.success
+    fitted = result.to_dict()["fitted"]
+    for name, value in expected.items():
+        np.testing.assert_allclose(fitted[name], value)
+
+
+def test_calibrate_flags_inconsistent_data():
+    variables, parameters, equations, coords = load_model_1_components()
+    mod = CGEModel(coords=coords, variables=variables, parameters=parameters, equations=equations)
+
+    # The budget constraint already pins consumption to income, so supplying C as well
+    # over-determines the system.
+    result = mod.calibrate(data={**model_1_data, "w": 1.0, "C": 5.0})
+
+    assert not result.success
+
+
+def test_check_for_equilibrium_reads_simulation_datatree(caplog):
+    mod = load_and_cache_model(model_id=1, backend="sympytensor")
+    initial_state = calibrate_model_1(**model_1_data)
+    res = mod.simulate(initial_state, final_delta_pct={"L_s": 0.5})
+
+    with caplog.at_level(logging.INFO, logger="cge_modeling"):
+        mod.check_for_equilibrium(res["optimizer"])
+
+    assert "Equilibrium found!" in caplog.text
+
+
+def test_check_for_equilibrium_flags_mismatched_state(caplog):
+    mod = load_and_cache_model(model_id=1, backend="sympytensor")
+    initial_state = calibrate_model_1(**model_1_data)
+    optimizer = mod.simulate(initial_state, final_delta_pct={"L_s": 0.5})["optimizer"]
+
+    pre_shock_variables_post_shock_parameters = xr.DataTree.from_dict(
+        {
+            "variables": optimizer["variables"].dataset.isel(step=0),
+            "parameters": optimizer["parameters"].dataset.isel(step=-1),
+        }
+    )
+
+    with caplog.at_level(logging.INFO, logger="cge_modeling"):
+        mod.check_for_equilibrium(pre_shock_variables_post_shock_parameters)
+
+    assert "Equilibrium not found" in caplog.text
+
+
+def test_check_for_equilibrium_requires_variables_and_parameters():
+    mod = load_and_cache_model(model_id=1, backend="sympytensor")
+    variables_only = xr.DataTree.from_dict({"variables": xr.Dataset()})
+
+    with pytest.raises(ValueError, match="DataTree must contain variables and parameters children"):
+        mod.check_for_equilibrium(variables_only)

@@ -1,26 +1,25 @@
 import functools as ft
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 import pytensor.compile
 
-from numba_progress.progress import ProgressBar as NumbaProgressBar
-
 from cge_modeling.base.primitives import Parameter, Variable
 from cge_modeling.base.utilities import (
     flat_array_to_variable_dict,
-    infer_object_shape_from_coords,
     variable_dict_to_flat_array,
 )
 
 
 def wrap_pytensor_func_for_scipy(
-    f: pytensor.compile.function.types.Function,
+    f: Callable[..., Any],
     variable_list: list[Variable],
     parameter_list: list[Parameter],
-    coords: dict[str, list[str | int, ...]],
+    coords: Mapping[str, Sequence[str | int]],
     include_p: bool = False,
+    fixed_values: Mapping[str, np.ndarray | float] | None = None,
 ) -> Callable:
     """
     Wrap a PyTensor function for use with scipy.optimize.root or scipy.optimize.minimize.
@@ -28,17 +27,20 @@ def wrap_pytensor_func_for_scipy(
     Parameters
     ----------
     f: Callable
-        A compiled PyTensor function with an input signature f(**data), where data is a dictionary mapping variable
+        A compiled PyTensor function with an input signature ``f(**data)``, where ``data`` is a dictionary mapping variable
         and parameter names to numpy arrays containing the values of those variables and parameters.
 
     variable_list: list[Variable]
         List of model variables
     parameter_list: list[Parameter]
         List of model parameters
-    coords: dict[str, list[str, ...]]
+    coords: dict[str, list[str]]
         Dictionary of coordinates mapping dimension names to lists of labels associated with that dimension.
     include_p: bool
-        If true, a 3rd argument is included in the inner function (useful
+        If true, the inner function takes the hessp point as a middle argument: ``inner_f(x0, p, theta)``.
+    fixed_values: dict of str to np.ndarray, optional
+        Values for model variables that are held fixed. These variables are excluded from ``variable_list`` and the
+        solver vector, and are passed to ``f`` at the given values. Their hessp point is zero.
 
     Returns
     -------
@@ -47,6 +49,12 @@ def wrap_pytensor_func_for_scipy(
         long vector of parameters as second input. The wrapped function will unpack these vectors into a dictionary of
         variables and parameters, and then unpack that dictionary into keyword arguments to the original function.
     """
+    fixed_values = {} if fixed_values is None else fixed_values
+    fixed_points = {
+        f"{name}_point": np.zeros_like(np.asarray(value, dtype=float))
+        for name, value in fixed_values.items()
+    }
+
     if not include_p:
 
         @ft.wraps(f)
@@ -54,7 +62,7 @@ def wrap_pytensor_func_for_scipy(
             # Scipy will pass x0 as a single long vector, and theta separately (but also as a single long vector).
             inputs = np.r_[x0, theta]
             data = flat_array_to_variable_dict(inputs, variable_list + parameter_list, coords)
-            return f(**data)
+            return f(**data, **fixed_values)
 
     else:
 
@@ -69,13 +77,13 @@ def wrap_pytensor_func_for_scipy(
             point_dict = {f"{name}_point": point for name, point in point_dict.items()}
             data.update(point_dict)
 
-            return f(**data)
+            return f(**data, **fixed_values, **fixed_points)
 
     return inner_f
 
 
 def wrap_scipy_func_for_pytensor(
-    f: pytensor.compile.function.types.Function,
+    f: pytensor.compile.Function,
     variable_list: list[Variable],
     parameter_list: list[Parameter],
     wrapping_hessp: bool = False,
@@ -104,97 +112,38 @@ def wrap_scipy_func_for_pytensor(
     return inner
 
 
-def wrap_fixed_values(
-    f: Callable,
-    fixed_values: dict[str, float | int | np.ndarray],
-    model,
-) -> Callable:
+def select_free_variable_entries(
+    f: Callable[..., np.ndarray], free_mask: np.ndarray, variable_axes: tuple[int, ...]
+) -> Callable[..., np.ndarray]:
     """
-    Wrap a CGE function to require only a subset of its inputs. Useful when optimizing under a constraint that
-    certain variables are fixed at initial values.
+    Drop the entries of a function's output that belong to fixed variables.
 
     Parameters
     ----------
     f: Callable
-        A compiled CGE function with signature f(**variables, **parameters)
-
-    fixed_values: dict[str, Union[float, int, np.ndarray]]
-        Dictionary mapping variable names to numpy arrays containing the fixed values of those variables. Keys should
-        be a subset of the variable names accepted by the function f.
-
-    model: CGEModel
-        CGE model associated with the function being wrapped
+        Function whose output is indexed by the flattened model variables along ``variable_axes``.
+    free_mask: np.ndarray
+        Boolean mask over the flattened model variables, True for variables that are not fixed.
+    variable_axes: tuple of int
+        Output axes indexed by the flattened model variables.
 
     Returns
     -------
-    inner: Callable
-        A wrapped version of the input function that accepts only the variables not in fixed_values as keyword arguments.
+    inner_f: Callable
+        ``f`` with the fixed-variable entries removed along each axis in ``variable_axes``. ``f`` itself when no
+        variable is fixed.
     """
-
-    variables = model.variables
-    parameters = model.parameters
-    coords = model.coords
-
-    var_names = model.unpacked_variable_names
-
-    if any(var not in var_names for var in fixed_values.keys()):
-        raise ValueError(
-            "User asked to fix the following variables, but these variables are not in the model: "
-            f"{set(fixed_values.keys()) - set(var_names)}"
-        )
-    fixed_vars = list(fixed_values.keys())
-    return_mask = np.array([x in fixed_values for x in model.unpacked_variable_names])
+    if free_mask.all():
+        return f
 
     @ft.wraps(f)
-    def inner(x, theta):
-        data = flat_array_to_variable_dict(np.r_[x, theta], variables, coords)
-        if any(var in fixed_vars for var in data.keys()):
-            raise ValueError(
-                f"Values for the following variables were passed to a function that expected them to be "
-                f"fixed: {set(fixed_vars) & set(data.keys())}"
-            )
-        data.update(fixed_values)
-        new_x, new_theta = variable_dict_to_flat_array(data, variables, parameters)
-
-        res = f(new_x, new_theta)
-        if isinstance(res, float | int) or res.ndim == 0:
-            return res
-
-        if res.ndim == 1:
-            return res[return_mask]
-        return res[return_mask, :][:, return_mask]
-
-    return inner
-
-
-def wrap_numba_euler_function(euler_approx, variables, parameters, coords):
-    @ft.wraps(euler_approx)
-    def f_euler(*, theta_final, n_steps, mode=None, **data):
-        # Extract the variable and parameter names from the data dictionary
-        x0 = np.concatenate([np.atleast_1d(data[x.name]).ravel() for x in variables], axis=0)
-        theta0 = np.concatenate([np.atleast_1d(data[x.name]).ravel() for x in parameters], axis=0)
-
-        with NumbaProgressBar(total=n_steps) as progress_bar:
-            result = euler_approx(
-                x0=x0,
-                theta0=theta0,
-                theta_final=theta_final,
-                n_steps=n_steps,
-                progress_bar=progress_bar,
-            )
-
-        # Decompose the result back to a list of numpy arrays
-        shapes = [infer_object_shape_from_coords(x, coords) for x in variables + parameters]
-        out = []
-        cursor = 0
-        for shape in shapes:
-            s = int(np.prod(shape))
-            out.append(result[:, cursor : cursor + s].reshape(-1, *shape))
-            cursor += s
-
+    def inner_f(*args):
+        out = f(*args)
+        for axis in variable_axes:
+            out = np.compress(free_mask, out, axis=axis)
         return out
 
-    return f_euler
+    return inner_f
 
 
 def return_array_from_jax_wrapper(f):

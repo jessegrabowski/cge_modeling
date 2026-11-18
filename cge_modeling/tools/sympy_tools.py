@@ -386,7 +386,7 @@ def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim="raise") -> 
 
 def expand_obj_by_indices(
     obj: ModelObject,
-    coords: dict[str : list[str]],
+    coords: dict[str, list[str]],
     dims: list[str] | None = None,
     on_unused_dim: Literal["raise", "ignore"] = "raise",
 ) -> list[ModelObject]:
@@ -413,18 +413,18 @@ def expand_obj_by_indices(
     """
     out = []
 
-    dims = getattr(obj, "dims", "no_dims") if dims is None else dims
-    if dims == "no_dims":
-        return [obj]
+    if dims is None:
+        if not hasattr(obj, "dims"):
+            return [obj]
+        dims = obj.dims
     dims = _validate_dims(obj, dims, on_unused_dim)
 
     # Take the cartesian product of dimensions to be expanded to form all possible combinations of labels
     labels = [coords[dim] for dim in dims]
-    label_prod = product(*labels)
 
-    for labels in label_prod:
+    for label_combination in product(*labels):
         new_obj = obj.copy()
-        for dim, label in zip(dims, labels):
+        for dim, label in zip(dims, label_combination):
             new_obj.update_dim_value(dim, label)
         out.append(new_obj)
     return out
@@ -578,7 +578,7 @@ def recursive_solve_symbolic(equations, known_values=None, max_iter=100):
         unsolved = simplified_equations.copy()
 
         # Break if the system is solved, or if we're stuck
-        if len(known_values) == len(equations):
+        if not unsolved:
             break
         if not new_solution_found:
             break

@@ -18,7 +18,7 @@ _log = logging.getLogger(__name__)
 
 
 class SAMTransformer:
-    __slots__ = ("_fit", "scale", "negative_locs", "n_levels")
+    __slots__ = ("_fit", "n_levels", "negative_locs", "scale")
 
     def __init__(self):
         self._fit = False
@@ -28,9 +28,9 @@ class SAMTransformer:
 
     def fit(self, df):
         n_levels = self.n_levels = len(df.index.names)
-        assert self.n_levels == len(
-            df.columns.names
-        ), "Index and columns must have the same number of levels"
+        assert self.n_levels == len(df.columns.names), (
+            "Index and columns must have the same number of levels"
+        )
 
         self.scale = df.sum().sum()
         negative_cells = (

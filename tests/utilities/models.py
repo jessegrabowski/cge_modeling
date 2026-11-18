@@ -117,7 +117,7 @@ def expected_model_1_jacobian(Y, L_d, K_d, C, income, r, P, resid, alpha, A, L_s
 
 
 def load_modeL_2_components(**kwargs):
-    backend = kwargs.get("backend", "numba")
+    backend = kwargs.get("backend", "sympytensor")
 
     sectors = ["0", "1", "2"]
     coords = {"i": sectors, "j": sectors}

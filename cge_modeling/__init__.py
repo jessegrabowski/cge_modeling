@@ -31,15 +31,15 @@ except PackageNotFoundError:
         __version__ = "0.0.0"
 
 __all__ = [
+    "CGEModel",
+    "Equation",
+    "Parameter",
+    "Variable",
     "cge_model",
     "compile_model",
-    "CGEModel",
-    "Variable",
-    "Parameter",
-    "Equation",
-    "latex_print_equations",
     "display_info_as_table",
-    "plot_lines",
+    "latex_print_equations",
     "plot_areas",
     "plot_bar",
+    "plot_lines",
 ]

@@ -1,30 +1,25 @@
 """
-Sphinx plugin to run generate a gallery for notebooks
+Sphinx plugin to run generate a gallery for notebooks.
 
-Modified from the pymc project, whihch modified the seaborn project, which modified the mpld3 project.
+Modified from the pymc project, which modified the seaborn project, which modified the mpld3 project.
 """
 
 import base64
 import json
 import os
-import shutil
+import subprocess
 
-from glob import glob
+from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import sphinx
 
 from matplotlib import image
+from sphinx.util import logging as sphinx_logging
 
-logger = sphinx.util.logging.getLogger(__name__)
-
-DOC_SRC = os.path.dirname(os.path.abspath(__file__))
-
-DEFAULT_IMG_LOC = None
-external_nbs = {}
+logger = sphinx_logging.getLogger(__name__)
 
 HEAD = """
 Example Gallery
@@ -36,7 +31,7 @@ Example Gallery
 """
 
 SECTION_TEMPLATE = """
-.. _{section_id}:
+.. _gallery-{section_id}:
 
 {section_title}
 {underlines}
@@ -56,15 +51,58 @@ ITEM_TEMPLATE = """
 
 folder_title_map = {"getting_started": "Getting Started"}
 
+# Cell tag that picks the cell whose first image becomes the notebook's gallery thumbnail.
+THUMBNAIL_TAG = "gallery-thumbnail"
+
+
+def _cell_images(cell):
+    return [
+        output["data"]["image/png"]
+        for output in cell.get("outputs", [])
+        if "image/png" in output.get("data", {})
+    ]
+
+
+def is_tracked_by_git(filepath):
+    """Check if a file is tracked by git."""
+    # Git indexes a symlink as one entry and reports nothing for paths that run through it, so resolve first. A git
+    # hook exports GIT_DIR, and with GIT_DIR set git takes the current directory, here the Sphinx source directory,
+    # as the top of the work tree, so every notebook would fall outside it. Dropping it lets git find the repository.
+    env = {
+        key: value for key, value in os.environ.items() if key not in ("GIT_DIR", "GIT_WORK_TREE")
+    }
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(Path(filepath).resolve())],
+            capture_output=True,
+            check=False,
+            env=env,
+        )
+    except FileNotFoundError:
+        # git not available, assume all files are valid
+        return True
+    else:
+        return result.returncode == 0
+
+
+def write_placeholder(outfile, title, width=275, height=275):
+    """Write a plain thumbnail carrying the notebook name, for notebooks with no image output."""
+    dpi = 100
+    fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi)
+    ax = fig.add_axes((0, 0, 1, 1), frameon=False, xticks=[], yticks=[])
+    ax.text(0.5, 0.5, title.replace("_", " "), ha="center", va="center", wrap=True, fontsize=14)
+    fig.savefig(outfile, dpi=dpi)
+    plt.close(fig)
+
 
 def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
-    """Overwrites `infile` with a new file of the given size"""
+    """Overwrite `infile` with a new file of the given size."""
     im = image.imread(infile)
     rows, cols = im.shape[:2]
     size = min(rows, cols)
     if size == cols:
         xslice = slice(0, size)
-        ymin = min(max(0, int(cx * rows - size // 2)), rows - size)
+        ymin = min(max(0, int(cy * rows - size // 2)), rows - size)
         yslice = slice(ymin, ymin + size)
     else:
         yslice = slice(0, size)
@@ -77,7 +115,7 @@ def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
     dpi = 100
     fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi)
 
-    ax = fig.add_axes([0, 0, 1, 1], aspect="auto", frameon=False, xticks=[], yticks=[])
+    ax = fig.add_axes((0, 0, 1, 1), aspect="auto", frameon=False, xticks=[], yticks=[])
     ax.imshow(thumb, aspect="auto", resample=True, interpolation="bilinear")
     fig.savefig(infile, dpi=dpi)
     plt.close(fig)
@@ -85,95 +123,109 @@ def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
 
 
 class NotebookGenerator:
-    """Tools for generating an example page from a file"""
+    """Tools for generating an example page from a file."""
 
-    def __init__(self, filename, root_dir, folder):
-        self.folder = folder
-        self.basename = os.path.basename(filename)
-        self.stripped_name = os.path.splitext(self.basename)[0]
-        self.image_dir = os.path.join(root_dir, "_thumbnails", folder)
-        self.png_path = os.path.join(self.image_dir, f"{self.stripped_name}.png")
-        with open(filename, encoding="utf-8") as fid:
+    def __init__(self, filename, thumbnail_dir):
+        self.basename = Path(filename).name
+        self.stripped_name = Path(filename).stem
+        self.png_path = Path(thumbnail_dir) / f"{self.stripped_name}.png"
+
+        with filename.open(encoding="utf-8") as fid:
             self.json_source = json.load(fid)
-        self.default_image_loc = DEFAULT_IMG_LOC
 
     def extract_preview_pic(self):
-        """By default, just uses the last image in the notebook."""
-        pic = None
-        for cell in self.json_source["cells"]:
-            for output in cell.get("outputs", []):
-                if "image/png" in output.get("data", []):
-                    pic = output["data"]["image/png"]
-        if pic is not None:
-            return base64.b64decode(pic)
+        """Return the first image of the cell tagged ``THUMBNAIL_TAG``, or else the last image in the notebook."""
+        cells = self.json_source["cells"]
+        tagged_cells = [
+            cell for cell in cells if THUMBNAIL_TAG in cell.get("metadata", {}).get("tags", [])
+        ]
+        if tagged_cells:
+            tagged_pics = _cell_images(tagged_cells[0])
+            if tagged_pics:
+                return base64.b64decode(tagged_pics[0])
+            logger.warning(
+                f"The cell tagged {THUMBNAIL_TAG!r} in {self.basename} has no image output, using the last image",
+                type="thumbnail_extractor",
+            )
+
+        pics = [pic for cell in cells for pic in _cell_images(cell)]
+        if pics:
+            return base64.b64decode(pics[-1])
         return None
 
     def gen_previews(self):
-        preview = self.extract_preview_pic()
-        if preview is not None:
-            print(self.png_path)
-            with open(self.png_path, "wb") as buff:
-                buff.write(preview)
-        else:
-            logger.warning(
-                f"Didn't find any pictures in {self.basename}",
+        if self.png_path.exists():
+            logger.info(
+                f"Custom thumbnail already exists for {self.basename}, skipping extraction",
                 type="thumbnail_extractor",
             )
-            shutil.copy(self.default_image_loc, self.png_path)
+            return
+
+        preview = self.extract_preview_pic()
+        if preview is not None:
+            with self.png_path.open("wb") as buff:
+                buff.write(preview)
+        else:
+            logger.info(
+                f"Didn't find any pictures in {self.basename}, using a placeholder thumbnail",
+                type="thumbnail_extractor",
+            )
+            write_placeholder(self.png_path, self.stripped_name)
         create_thumbnail(self.png_path)
 
 
 def main(app):
     logger.info("Starting thumbnail extractor.")
 
-    working_dir = os.getcwd()
+    working_dir = Path.cwd()
     os.chdir(app.builder.srcdir)
+    try:
+        write_gallery()
+    finally:
+        os.chdir(working_dir)
 
-    file = [HEAD]
+
+def write_gallery():
+    """Write examples/gallery.rst and the thumbnails, relative to the Sphinx source directory."""
+    toc_entries = []
+    sections = []
 
     for folder, title in folder_title_map.items():
-        file.append(
+        sections.append(
             SECTION_TEMPLATE.format(
                 section_title=title, section_id=folder, underlines="-" * len(title)
             )
         )
 
-        thumbnail_dir = os.path.join("..", "..", "_thumbnails", folder)
-        if not os.path.exists(thumbnail_dir):
-            os.makedirs(thumbnail_dir)
+        thumbnail_dir = Path("_thumbnails") / folder
+        thumbnail_dir.mkdir(parents=True, exist_ok=True)
 
-        if folder in external_nbs.keys():
-            for descr in external_nbs[folder]:
-                file.append(
-                    ITEM_TEMPLATE.format(
-                        doc_name=descr["doc_name"],
-                        image=descr["image"],
-                        doc_reference=descr["doc_reference"],
-                        link_type=descr["link_type"],
-                    )
+        for nb_path in sorted(Path("examples", folder).glob("*.ipynb")):
+            if not is_tracked_by_git(nb_path):
+                logger.info(
+                    f"Skipping {nb_path.name}, not tracked by git",
+                    type="thumbnail_extractor",
                 )
+                continue
 
-        nb_paths = glob(f"examples/{folder}/*.ipynb")
-        for nb_path in nb_paths:
-            nbg = NotebookGenerator(
-                filename=nb_path, root_dir=os.path.join("..", ".."), folder=folder
-            )
+            nbg = NotebookGenerator(filename=nb_path, thumbnail_dir=thumbnail_dir)
             nbg.gen_previews()
 
-            file.append(
+            doc_name = f"{folder}/{nbg.stripped_name}"
+            toc_entries.append(f"   {doc_name}")
+            sections.append(
                 ITEM_TEMPLATE.format(
-                    doc_name=os.path.join(folder, nbg.stripped_name),
-                    image="/" + nbg.png_path,
-                    doc_reference=os.path.join(folder, nbg.stripped_name),
+                    doc_name=doc_name,
+                    image=f"/{nbg.png_path}",
+                    doc_reference=doc_name,
                     link_type="doc",
                 )
             )
 
-    with open(os.path.join("examples", "gallery.rst"), "w", encoding="utf-8") as f:
-        f.write("\n".join(file))
-
-    os.chdir(working_dir)
+    with Path("examples", "gallery.rst").open("w", encoding="utf-8") as f:
+        f.write(HEAD + "\n".join(toc_entries) + "\n" + "\n".join(sections))
 
 
 def setup(app):
     app.connect("builder-inited", main)
+    return {"parallel_read_safe": True, "parallel_write_safe": True}

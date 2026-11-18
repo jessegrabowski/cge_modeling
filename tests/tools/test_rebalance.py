@@ -35,11 +35,13 @@ def test_SAM_transformer(index):
 def test_cross_entropy_rebalance(backend, method):
     df = pd.read_csv("tests/data/unbalanced_sam.csv", index_col=[0, 1], header=[0, 1]).fillna(0.0)
     if backend == "scipy":
-        minimizer_kwargs = {"maxiter": 5000}
+        # SLSQP's default tolerance leaves row and column sums apart by up to 6e-5 relative, depending on the
+        # random starting point, which np.allclose rejects about half the time.
+        minimizer_kwargs = {"maxiter": 5000, "tol": 1e-10}
     else:
         minimizer_kwargs = {"delta": 1e-4}
 
-    df2, optim_res, success = balance_SAM(
+    df2, _optim_res, success = balance_SAM(
         df, use_cvxpy=backend == "cvxpy", method=method, **minimizer_kwargs
     )
     assert success

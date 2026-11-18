@@ -1,13 +1,14 @@
 import logging
 
 from functools import partial
-from typing import Literal, cast
+from typing import Any, cast
 
 import pytensor
 import sympy as sp
 
 from pytensor import tensor as pt
 from pytensor.compile import Function
+from pytensor.graph.replace import graph_replace
 from sympytensor import as_tensor
 
 from cge_modeling import CGEModel
@@ -39,7 +40,7 @@ def sympy_cge_primitives_to_pytensor(
     pt.TensorVariable, list[pt.TensorVariable], list[pt.TensorVariable], tuple[dict, dict, dict]
 ]:
     variables, parameters, cache = vars_and_params_to_pytensor(cge_model)
-    unpacked_cache = {}
+    unpacked_cache: dict[Any, Any] = {}
 
     # This will be a flat list of equations with a unique variable for each unpacked object
     # We want to rewrite this graph so that it will accept the packed array inputs (held in the cache dictionary)
@@ -61,78 +62,6 @@ def sympy_cge_primitives_to_pytensor(
     rewrite_pregrad(flat_equations)
 
     return flat_equations, variables, parameters, (cache, unpacked_cache, unpacked_to_indexed_dict)
-
-
-def make_sympytensor_jacobian(
-    cge_model: CGEModel,
-    cache,
-    unpacked_cache,
-    equations=None,
-    wrt: Literal["variables", "parameters"] = "variables",
-    sparse=False,
-) -> pt.TensorVariable:
-    if equations is None:
-        equations = cge_model.unpacked_equation_symbols
-
-    variables = cge_model.unpacked_variable_symbols
-    parameters = cge_model.unpacked_parameter_symbols
-
-    wrt_symbols = variables if wrt == "variables" else parameters
-    jac = (
-        sp.Matrix(equations).jacobian(wrt_symbols)
-        if not sparse
-        else sparse_jacobian(equations, wrt_symbols)
-    )
-
-    unpacked_jac = as_tensor(jac, cache=unpacked_cache)
-    packed_jac = unpacked_graph_to_packed_graph(unpacked_jac, cge_model, cache, unpacked_cache)
-
-    return packed_jac
-
-
-def make_sympytensor_jvp(
-    cge_model: CGEModel,
-    cache,
-    unpacked_cache,
-    grad,
-    wrt: Literal["variables", "parameters"] = "variables",
-    sparse=False,
-) -> tuple[pt.TensorVariable, list[pt.TensorVariable]]:
-    """
-    Compute the jacobian-vector product between a system of equations and a vector of variables.
-
-    Parameters
-    ----------
-    cge_model: CGEModel
-        The CGE model
-    cache: dict
-
-    unpacked_cache: dict
-
-    grad: pt.TensorVariable
-        The gradient tensor of the loss function.
-    wrt: Literal["variables", "parameters"], optional
-        Specifies whether to compute the JVP with respect to variables or parameters. Default is "variables".
-    sparse: bool, optional
-        If True, use sparse matrices for the computation. Default is False.
-
-    Returns
-    -------
-    jvp: pytensor.tensor.TensorVariable
-        The jacobian-vector product of the original loss function
-    p: list of pytensor.tensor.TensorVariable
-        The symbolic variables representing each component of ``p``, the point vector where the JVP is evaluated.
-    """
-    variables = cge_model.unpacked_variable_symbols
-    parameters = cge_model.unpacked_parameter_symbols
-
-    wrt_symbols = variables if wrt == "variables" else parameters
-    jvp, p_vars = make_sympy_hessp(grad, wrt_symbols)
-
-    unpacked_jvp = as_tensor(jvp, cache=unpacked_cache)
-    packed_jvp = unpacked_graph_to_packed_graph(unpacked_jvp, cge_model, cache, unpacked_cache)
-
-    return packed_jvp, p_vars
 
 
 def compile_sympytensor_jacobian(
@@ -157,12 +86,10 @@ def compile_sympytensor_jacobian(
         outputs=jac,
         on_unused_input="ignore",
         mode=mode,
-        trust_input=True,
     )
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_jac = return_array_from_jax_wrapper(f_jac)
@@ -184,13 +111,10 @@ def compile_sympytensor_error_function(
     squared_loss.name = "squared_loss"
     rewrite_pregrad(squared_loss)
 
-    f_loss = pytensor.function(
-        inputs=[*variables, *parameters], outputs=squared_loss, mode=mode, trust_input=True
-    )
+    f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_loss = return_array_from_jax_wrapper(f_loss)
@@ -219,12 +143,10 @@ def compile_sympytensor_gradient_function(
         outputs=grad,
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_grad = return_array_from_jax_wrapper(f_grad)
@@ -253,12 +175,10 @@ def compile_sympytensor_hess_function(
         outputs=hess,
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_hess = return_array_from_jax_wrapper(f_hess)
@@ -275,7 +195,7 @@ def compile_sympytensor_hessp_function(
     unpacked_to_indexed_dict: dict,
     mode: str | None = None,
 ) -> tuple[sp.Matrix, pt.TensorVariable, Function]:
-    sp_hessp, p_vars = make_sympy_hessp(sp_grad, sp_wrt)
+    sp_hessp, _p_vars = make_sympy_hessp(sp_grad, sp_wrt)
     unpacked_hessp = as_tensor(sp_hessp, cache=cache)
     hessp = unpacked_graph_to_packed_graph(unpacked_hessp, unpacked_to_indexed_dict)
     hessp.name = "hessp"
@@ -284,19 +204,17 @@ def compile_sympytensor_hessp_function(
     point_vars = [var.type(name=f"{var.name}_point") for var in variables]
     p = pt.concatenate([v.ravel() for v in point_vars], axis=0)
 
-    hessp = pytensor.graph_replace(hessp, {p_vars_pt: p}, strict=True)
+    hessp = graph_replace(hessp, {p_vars_pt: p}, strict=True)
 
     f_hessp = pytensor.function(
         inputs=[*variables, *parameters, *point_vars],
         outputs=hessp.ravel(),
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_hessp = return_array_from_jax_wrapper(f_hessp)
@@ -330,12 +248,10 @@ def compile_sympytensor_cge_functions(
         outputs=system,
         mode=mode,
         on_unused_input="raise",
-        trust_input=True,
     )
 
-    if (
-        mode == "JAX"
-        or isinstance(mode, pytensor.compile.mode.Mode)
+    if mode == "JAX" or (
+        isinstance(mode, pytensor.compile.mode.Mode)
         and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
     ):
         f_system = return_array_from_jax_wrapper(f_system)
@@ -348,12 +264,8 @@ def compile_sympytensor_cge_functions(
     f_hessp = None
     f_euler = None
 
-    # jac and grad can be reused if both root/minimize and euler are requested
-    jac = None
-    grad = None
-
     if "root" in functions_to_compile:
-        sp_jac, jac, f_jac = compile_sympytensor_jacobian(
+        _sp_jac, _jac, f_jac = compile_sympytensor_jacobian(
             sp_equations,
             sp_variables,
             variables,
@@ -365,11 +277,11 @@ def compile_sympytensor_cge_functions(
         )
 
     if "minimize" in functions_to_compile:
-        sp_squared_loss, squared_loss, f_resid = compile_sympytensor_error_function(
+        sp_squared_loss, _squared_loss, f_resid = compile_sympytensor_error_function(
             sp_equations, variables, parameters, unpacked_cache, unpacked_to_indexed_dict, mode=mode
         )
 
-        sp_grad, grad, f_grad = compile_sympytensor_gradient_function(
+        sp_grad, _grad, f_grad = compile_sympytensor_gradient_function(
             sp_squared_loss,
             sp_variables,
             variables,
@@ -379,7 +291,7 @@ def compile_sympytensor_cge_functions(
             mode=mode,
         )
 
-        sp_hess, hess, f_hess = compile_sympytensor_hess_function(
+        _sp_hess, _hess, f_hess = compile_sympytensor_hess_function(
             sp_grad,
             sp_variables,
             variables,
@@ -390,7 +302,7 @@ def compile_sympytensor_cge_functions(
             mode=mode,
         )
 
-        sp_hessp, hessp, f_hessp = compile_sympytensor_hessp_function(
+        _sp_hessp, _hessp, f_hessp = compile_sympytensor_hessp_function(
             sp_grad,
             sp_variables,
             variables,
@@ -406,7 +318,7 @@ def compile_sympytensor_cge_functions(
                 system, variables, parameters, jacobian=None, grad=None, use_rk4=use_rk4
             )
 
-            f_step = pytensor.function(inputs, outputs, mode=mode, trust_input=True)
+            f_step = pytensor.function(inputs, outputs, mode=mode)
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -420,10 +332,9 @@ def compile_sympytensor_cge_functions(
                 system, variables, parameters, jacobian=None
             )
             f_euler = pytensor.function(
-                inputs=[*variables, *parameters, *theta_final],
+                inputs=[*variables, *parameters, theta_final, n_steps],
                 outputs=euler_output,
                 mode=mode,
-                trust_input=True,
             )
 
     return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler

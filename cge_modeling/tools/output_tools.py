@@ -4,7 +4,6 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 
-import arviz as az
 import numpy as np
 import sympy as sp
 import xarray as xr
@@ -409,6 +408,14 @@ def latex_print_equations(equation_info, return_latex=False):
         display(Latex(tex_output))
 
 
+def datatree_to_value_dict(tree: xr.DataTree) -> dict[str, np.ndarray]:
+    return {
+        str(name): data.values
+        for group in ("variables", "parameters")
+        for name, data in tree[group].data_vars.items()
+    }
+
+
 def list_of_array_to_idata(list_of_arrays: list, cge_model):
     """
     Convert a list of arrays to an xarray dataset
@@ -425,9 +432,9 @@ def list_of_array_to_idata(list_of_arrays: list, cge_model):
 
     Returns
     -------
-    idata: az.InferenceData
-        arviz InferenceData object with two groups -- variables and parameters -- each containing an xarray dataset
-        with the same dimensions as the input arrays. Dimensions are labeled using coordinates from the CGEModel object.
+    idata: xr.DataTree
+        DataTree with two children -- variables and parameters -- each holding a dataset with the same dimensions as
+        the input arrays. Dimensions are labeled using coordinates from the CGEModel object.
 
     """
 
@@ -449,11 +456,7 @@ def list_of_array_to_idata(list_of_arrays: list, cge_model):
     ds_vars = xr.Dataset(xr_var_dict, coords=coords)
     ds_params = xr.Dataset(xr_param_dict, coords=coords)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        idata = az.InferenceData(variables=ds_vars, parameters=ds_params)
-
-    return idata
+    return xr.DataTree.from_dict({"variables": ds_vars, "parameters": ds_params})
 
 
 def optimizer_result_to_idata(res, theta, initial_values, mod):
@@ -479,9 +482,11 @@ def optimizer_result_to_idata(res, theta, initial_values, mod):
             )
             for obj in mod.parameters
         }
-        optim_idata = az.InferenceData(
-            variables=xr.Dataset(optim_var_dict, coords=coords),
-            parameters=xr.Dataset(optim_param_dict, coords=coords),
+        optim_idata = xr.DataTree.from_dict(
+            {
+                "variables": xr.Dataset(optim_var_dict, coords=coords),
+                "parameters": xr.Dataset(optim_param_dict, coords=coords),
+            }
         )
 
     return optim_idata

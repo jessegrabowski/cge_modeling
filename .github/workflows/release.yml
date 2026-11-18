@@ -5,43 +5,70 @@ on:
     types:
       - created
 
+permissions:
+  contents: read
+
 jobs:
   release-job:
     runs-on: ubuntu-latest
-    env:
-      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
     steps:
-    - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.11
-    - name: Install release tooling
-      run: |
-        pip install twine wheel numpy setuptools versioneer
-    - name: Build package
-      run: |
-        python setup.py sdist bdist_wheel
-    - name: Check version number match
-      run: |
-        echo "GITHUB_REF: ${GITHUB_REF}"
-        # The GITHUB_REF should be something like "refs/tags/v1.2.3"
-        # Make sure the package version is the same as the tag
-        grep -Rq "^Version: ${GITHUB_REF:11}$" cge_modeling.egg-info/PKG-INFO
-    - name: Publish to PyPI
-      run: |
-        twine check dist/*
-        twine upload --repository pypi --username __token__ --password ${PYPI_TOKEN} dist/*
-  test-install-job:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: 3.12
+      - name: Install release tooling
+        run: |
+          pip install hatch
+      - name: Build package
+        run: |
+          hatch build
+      - name: Check version number match
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          TAG_VERSION=${TAG_NAME#v}
+          PACKAGE_VERSION=$(hatch version)
+          echo "Tag version: $TAG_VERSION"
+          echo "Package version: $PACKAGE_VERSION"
+          if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package version ($PACKAGE_VERSION)"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bdist
+          path: dist/*
+  pypi-publish:
     needs: release-job
+    name: upload release to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bdist
+          path: dist
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+  test-install-job:
+    needs: pypi-publish
     runs-on: ubuntu-latest
     steps:
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
-        python-version: 3.11
-    - name: Give PyPI a chance to update the index
-      run: sleep 240
+        python-version: 3.12
     - name: Install from PyPI
+      env:
+        TAG_NAME: ${{ github.ref_name }}
+      # The new version can take a few minutes to reach the index, so retry for up to ten minutes.
       run: |
-        pip install cge_modeling==${GITHUB_REF:11}
+        for attempt in $(seq 20); do
+          pip install "cge_modeling==${TAG_NAME#v}" && exit 0
+          sleep 30
+        done
+        exit 1

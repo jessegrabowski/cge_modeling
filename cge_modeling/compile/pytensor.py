@@ -35,12 +35,10 @@ _log = logging.getLogger(__name__)
 def vars_and_params_to_pytensor(
     cge_model: CGEModel,
 ) -> tuple[list[pt.TensorVariable], list[pt.TensorVariable], dict]:
-    variables = cge_model.variables
-    parameters = cge_model.parameters
     coords = cge_model.coords
 
-    variables = [object_to_pytensor(var, coords) for var in variables]
-    parameters = [object_to_pytensor(param, coords) for param in parameters]
+    variables = [object_to_pytensor(var, coords) for var in cge_model.variables]
+    parameters = [object_to_pytensor(param, coords) for param in cge_model.parameters]
 
     cache = make_printer_cache(variables, parameters)
 
@@ -144,7 +142,6 @@ def compile_pytensor_jacobian_function(
         outputs=jac,
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
     return jac, f_jac
@@ -160,9 +157,7 @@ def compile_pytensor_error_function(
     squared_loss.name = "squared_loss"
     rewrite_pregrad(squared_loss)
 
-    f_loss = pytensor.function(
-        inputs=[*variables, *parameters], outputs=squared_loss, mode=mode, trust_input=True
-    )
+    f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
 
     return squared_loss, f_loss
 
@@ -183,7 +178,6 @@ def compile_pytensor_gradient_function(
         outputs=grad,
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
     return grad, f_grad
@@ -203,7 +197,6 @@ def compile_pytensor_hess_function(
         outputs=hess,
         mode=mode,
         on_unused_input="ignore",
-        trust_input=True,
     )
 
     return hess, f_hess
@@ -218,9 +211,7 @@ def compile_pytensor_hessp_function(
     hessp, p_vars = make_jvp(grad, variables)
     hessp.name = "hessp"
 
-    f_hessp = pytensor.function(
-        inputs=[*variables, *parameters, *p_vars], outputs=hessp, mode=mode, trust_input=True
-    )
+    f_hessp = pytensor.function(inputs=[*variables, *parameters, *p_vars], outputs=hessp, mode=mode)
 
     return hessp, f_hessp
 
@@ -278,7 +269,7 @@ def compile_pytensor_cge_functions(
     *args,
     **kwargs,
 ) -> tuple[Function | None, ...]:
-    system, variables, parameters, (cache, unpacked_cache) = cge_primitives_to_pytensor(cge_model)
+    system, variables, parameters, (cache, _unpacked_cache) = cge_primitives_to_pytensor(cge_model)
     validate_pytensor_parsing_result(system, variables, parameters, cache)
 
     _log.info(f"Compiling model to Pytensor using {mode} mode")
@@ -289,7 +280,6 @@ def compile_pytensor_cge_functions(
         outputs=system,
         mode=mode,
         on_unused_input="raise",
-        trust_input=True,
     )
 
     if mode == "JAX":
@@ -319,8 +309,8 @@ def compile_pytensor_cge_functions(
         grad, f_grad = compile_pytensor_gradient_function(
             squared_loss, variables, parameters, cge_model.n_variables, mode=mode
         )
-        hess, f_hess = compile_pytensor_hess_function(grad, variables, parameters, mode=mode)
-        hessp, f_hessp = compile_pytensor_hessp_function(grad, variables, parameters, mode=mode)
+        _hess, f_hess = compile_pytensor_hess_function(grad, variables, parameters, mode=mode)
+        _hessp, f_hessp = compile_pytensor_hessp_function(grad, variables, parameters, mode=mode)
 
     if "euler" in functions_to_compile:
         if not use_scan_euler:
@@ -328,7 +318,7 @@ def compile_pytensor_cge_functions(
                 system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
             )
 
-            f_step = pytensor.function(inputs, outputs, mode=mode, trust_input=True)
+            f_step = pytensor.function(inputs, outputs, mode=mode)
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -339,13 +329,12 @@ def compile_pytensor_cge_functions(
             )
         else:
             theta_final, n_steps, euler_output = symbolic_euler_approximation(
-                system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
+                system, variables, parameters, jacobian=jac, use_rk4=use_rk4
             )
             f_euler = pytensor.function(
-                inputs=[*variables, *parameters, *theta_final],
+                inputs=[*variables, *parameters, theta_final, n_steps],
                 outputs=euler_output,
                 mode=mode,
-                trust_input=True,
             )
 
     def unwrap_jit_fn(f, mode):

@@ -2,10 +2,10 @@ import logging
 import re
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from itertools import product
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 
@@ -23,8 +23,8 @@ CGETypes = Variable | Parameter | Equation
 
 
 def unpack_equation_strings(
-    equations: list[Equation, ...], coords: dict[str, list[str | int, ...]]
-) -> list[str, ...]:
+    equations: list[Equation], coords: Mapping[str, Sequence[str | int]]
+) -> list[str]:
     """
     Helper function to unpack equations names with <dim:i> tags to a long list of equations.
 
@@ -37,7 +37,7 @@ def unpack_equation_strings(
 
     Returns
     -------
-    unpacked_names: list[str, ...]
+    unpacked_names: list[str]
         List of unpacked equation names
     """
 
@@ -54,16 +54,15 @@ def unpack_equation_strings(
             unpacked_names.append(name)
             continue
         labels = [coords[dim] for dim in named_dims]
-        label_prod = product(*labels)
-        for labels in label_prod:
-            sub_dict = dict(zip(named_dims, labels))
+        for label_combination in product(*labels):
+            sub_dict = dict(zip(named_dims, label_combination))
             new_name = _pretty_print_dim_flags(name, named_dims, sub_dict)
             unpacked_names.append(new_name)
 
     return unpacked_names
 
 
-def _validate_input(obj: Any, cls: CGETypes):
+def _validate_input(obj: Any, cls: type[CGETypes]):
     """
     Validate that an input is an instance of a class.
 
@@ -75,7 +74,7 @@ def _validate_input(obj: Any, cls: CGETypes):
         The class to validate against
     """
 
-    if not isinstance(obj, cast(type, cls)):
+    if not isinstance(obj, cls):
         raise ValueError(f"Expected instance of type {cls.__name__}, found {type(obj).__name__}")
 
 
@@ -99,7 +98,7 @@ def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
 
 
 def _expand_var_by_index(
-    obj: Variable | Parameter, coords: dict[str, list[str | int, ...]]
+    obj: Variable | Parameter, coords: Mapping[str, Sequence[str | int]]
 ) -> list[Variable | Parameter]:
     """
     Create a set of CGE Model objects from a single object using the cartesian product of the object's dimensions
@@ -144,8 +143,8 @@ def _expand_var_by_index(
     missing_dims = set(dims) - set(obj.dims)
     if len(missing_dims) > 0:
         raise ValueError(
-            f'Found indices {", ".join(missing_dims)} on the coords that are not among the variable '
-            f'indices: {", ".join(obj.dims)}'
+            f"Found indices {', '.join(missing_dims)} on the coords that are not among the variable "
+            f"indices: {', '.join(obj.dims)}"
         )
 
     cls = Variable if isinstance(obj, Variable) else Parameter
@@ -208,8 +207,8 @@ def _replace_dim_marker_with_dim_name(s: str) -> str:
 
 
 def infer_object_shape_from_coords(
-    obj: Variable | Parameter, coords: dict[str, list[str | int, ...]]
-) -> tuple[int]:
+    obj: Variable | Parameter, coords: Mapping[str, Sequence[str | int]]
+) -> tuple[int, ...]:
     """
     Infer the shape of a CGE Model object from a provided coordinate dictionary.
 
@@ -238,6 +237,7 @@ def infer_object_shape_from_coords(
     Examples
     --------
     .. code-block:: python
+
         from cge_modeling.base.primitives import Variable
         from cge_modeling.base.utilities import infer_object_shape_from_coords
 
@@ -258,9 +258,9 @@ def infer_object_shape_from_coords(
 
 def make_flat_array_return_mask(
     x: np.ndarray,
-    all_objects: list[Variable | Parameter],
+    all_objects: Sequence[Variable | Parameter],
     omit_object_names: list[str],
-    coords: dict[str, list[str | int, ...]],
+    coords: Mapping[str, Sequence[str | int]],
 ) -> np.ndarray:
     mask = np.full(x.shape[0], True)
     cursor = 0
@@ -277,8 +277,8 @@ def make_flat_array_return_mask(
 
 def flat_array_to_variable_dict(
     x: np.ndarray,
-    objects: list[Variable | Parameter],
-    coords: dict[str, list[str | int, ...]],
+    objects: Sequence[Variable | Parameter],
+    coords: Mapping[str, Sequence[str | int]],
 ) -> dict[str, np.ndarray]:
     """
     Convert a flat array to a dictionary of variables and parameters.
@@ -316,6 +316,9 @@ def flat_array_to_variable_dict(
     Examples
     --------
     .. code-block:: python
+
+        import numpy as np
+
         from cge_modeling.base.primitives import Variable
         from cge_modeling.base.utilities import flat_array_to_variable_dict
 
@@ -343,7 +346,7 @@ def flat_array_to_variable_dict(
 
 def variable_dict_to_flat_array(
     d: dict[str, np.ndarray],
-    variable_list: [list[Variable]],
+    variable_list: list[Variable],
     parameter_list: list[Parameter],
 ) -> tuple[np.ndarray, np.ndarray]:
     """

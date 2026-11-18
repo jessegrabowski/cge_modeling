@@ -12,16 +12,15 @@ Utility Functions for CGE Models
     make_flat_array_return_mask
     flat_array_to_variable_dict
     variable_dict_to_flat_array
-    wrap_fixed_values
-    wrap_pytensor_func_for_scipy
     flat_mask_from_param_names
 
-Optimization Wrapper
-********************
+Function Wrappers
+*****************
 
-.. currentmodule:: cge_modeling.base.utilities
+.. currentmodule:: cge_modeling.base.function_wrappers
 
 .. autosummary::
     :toctree: generated/
 
-    CostFuncWrapper
+    wrap_pytensor_func_for_scipy
+    select_free_variable_entries

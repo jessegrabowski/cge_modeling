@@ -147,8 +147,8 @@ def jax_loss_grad_hessp(system, variables, parameters):
 
 def compile_jax_cge_functions(
     cge_model: CGEModel, functions_to_compile: list[CompiledFunctions], *args, **kwargs
-) -> tuple[Callable, Callable, Callable, Callable, Callable, Callable, Callable]:
-    system, variables, parameters, (cache, unpacked_cache) = cge_primitives_to_pytensor(cge_model)
+) -> tuple[Callable | None, ...]:
+    system, variables, parameters, (cache, _unpacked_cache) = cge_primitives_to_pytensor(cge_model)
     validate_pytensor_parsing_result(system, variables, parameters, cache)
 
     _log.info("Compiling function to JAX")

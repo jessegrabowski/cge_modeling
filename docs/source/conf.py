@@ -39,9 +39,9 @@ extensions = [
     "myst_nb",
     "sphinx_design",
     "sphinx_copybutton",
-    "sphinxcontrib.bibtex",
     "sphinx_codeautolink",
     "generate_gallery",
+    "simplebib",
     "sphinx.ext.autodoc",
     "numpydoc",
     "sphinx.ext.doctest",
@@ -123,6 +123,9 @@ autodoc_typehints = "none"
 autoclass_content = "class"
 remove_from_toctrees = ["**/classmethods/*"]
 
+# Prefix section labels with their document so headings repeated across pages stay unique.
+autosectionlabel_prefix_document = True
+
 numpydoc_show_class_members = False
 numpydoc_xref_param_type = True
 numpydoc_xref_ignore = {
@@ -142,6 +145,11 @@ numpydoc_xref_ignore = {
     "M",
     "N",
 }
+
+# Bibliographic citations: add entries to docs/source/references.bib and cite from prose with
+# `{cite:t}` / `{cite:p}`. Each page renders its own numbered reference list via `{bibliography}`
+# (see sphinxext/simplebib.py).
+simplebib_bibfiles = ["references.bib"]
 
 # -- MyST config  -------------------------------------------------
 myst_enable_extensions = [
@@ -164,11 +172,6 @@ nbsphinx_execute = "never"
 nbsphinx_allow_errors = True
 
 
-# -- Bibtex config  -------------------------------------------------
-bibtex_bibfiles = ["references.bib"]
-bibtex_default_style = "unsrt"
-bibtex_reference_style = "author_year"
-
 # -- ABlog config  -------------------------------------------------
 # blog_baseurl = "https://docs.pymc.io/projects/examples/en/latest/"
 # blog_title = "PyMC Examples"
@@ -185,7 +188,6 @@ bibtex_reference_style = "author_year"
 intersphinx_mapping = {
     "arviz": ("https://python.arviz.org/en/latest/", None),
     "pytensor": ("https://pytensor.readthedocs.io/en/latest/", None),
-    "pmx": ("https://www.pymc.io/projects/experimental/en/latest", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "myst": ("https://myst-parser.readthedocs.io/en/latest", None),
     "myst-nb": ("https://myst-nb.readthedocs.io/en/latest/", None),

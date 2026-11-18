@@ -6,6 +6,7 @@ import sympy as sp
 
 from pytensor import tensor as pt
 from pytensor.graph import node_rewriter, rewrite_graph
+from pytensor.graph.replace import graph_replace
 from pytensor.tensor.math import Prod
 from pytensor.tensor.rewriting.basic import register_stabilize
 
@@ -138,7 +139,7 @@ def flat_tensor_to_ragged_list(tensor, shapes):
     return out
 
 
-def object_to_pytensor(obj: Parameter | Variable, coords: dict[str, list[str, ...]]):
+def object_to_pytensor(obj: Parameter | Variable, coords: dict[str, list[str]]):
     """
     Convert a CGE model object to a PyTensor object.
 
@@ -207,7 +208,7 @@ def make_unpacked_to_packed_map(
         # Index the parent object with the integer indices
         indexed_parent = parent_pt[tuple(dim_idx)]
         name = f"{parent_pt.name}"
-        name += f'[{", ".join([str(x) for x in dim_idx])}]' if len(dim_idx) > 0 else ""
+        name += f"[{', '.join([str(x) for x in dim_idx])}]" if len(dim_idx) > 0 else ""
 
         indexed_parent.name = name
         unpacked_to_indexed_dict[var] = indexed_parent
@@ -218,7 +219,7 @@ def make_unpacked_to_packed_map(
 def unpacked_graph_to_packed_graph(
     unpacked_graph: pt.TensorVariable | list[pt.TensorVariable], unpacked_to_indexed_dict: dict
 ) -> pt.TensorVariable | list[pt.TensorVariable]:
-    packed_graph = pytensor.graph_replace(unpacked_graph, unpacked_to_indexed_dict, strict=False)
+    packed_graph = graph_replace(unpacked_graph, unpacked_to_indexed_dict, strict=False)
     return packed_graph
 
 

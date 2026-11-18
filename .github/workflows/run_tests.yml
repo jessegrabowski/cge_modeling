@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
 
+
 # Cancels all previous workflow runs for pull requests that have not completed.
 concurrency:
   # The concurrency group contains the workflow name and the branch name for pull requests
@@ -12,132 +13,167 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+
 jobs:
-  unittest:
+  test:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            name: "Full Test Suite"
-            python-version: "3.12"
-            test-subset: |
-              tests/base --ignore tests/base/test_cge.py
-              tests/base/test_cge.py -k "not test_model_gradients and not test_backends_agree and not test_can_compile_without_jax_installed and not test_invalid_simulation_raises"
-              tests/compile
-              tests/tools
-              tests/utilities
-              tests/test_plotting.py
-              tests/test_production_functions.py
-          - os: ubuntu-latest
-            name: "Test Model Gradients"
-            python-version: "3.12"
-            test-subset: |
-              tests/base/test_cge.py::test_model_gradients
-          - os: ubuntu-latest
-            name: "Test Backends Agree"
-            python-version: "3.12"
-            test-subset: |
-              tests/base/test_cge.py::test_backends_agree
-              tests/base/test_cge.py::test_can_compile_without_jax_installed
-          - os: windows-latest
-            name: "Partial Test Suite"
-            python-version: "3.11"
-            test-subset: |
-              tests/base --ignore tests/base/test_cge.py
-              tests/compile
-              tests/tools
-              tests/utilities
-              tests/test_plotting.py
-              tests/test_production_functions.py
+          - subset-name: "Model Tests"
+            os: ubuntu-latest
+            environment: default
+            test-subset: "tests/base/test_cge.py --deselect tests/base/test_cge.py::test_model_gradients --deselect tests/base/test_cge.py::test_backends_agree"
+            test-marker: ""
 
+          - subset-name: "Model Gradients"
+            os: ubuntu-latest
+            environment: default
+            test-subset: "tests/base/test_cge.py::test_model_gradients"
+            test-marker: ""
+
+          - subset-name: "Backends Agree"
+            os: ubuntu-latest
+            environment: default
+            test-subset: "tests/base/test_cge.py::test_backends_agree"
+            test-marker: ""
+
+          - subset-name: "Other Tests"
+            os: ubuntu-latest
+            environment: default
+            test-subset: "tests/ --ignore=tests/base/test_cge.py"
+            test-marker: ""
+
+          # Windows is a smoke test of the OS-sensitive machinery (pytensor's compile toolchain), not a
+          # correctness sweep. The slow model tests in tests/base/test_cge.py run on Ubuntu only.
+          - subset-name: "Windows Partial Test Suite"
+            os: windows-latest
+            environment: py313
+            test-subset: "tests/ --ignore=tests/base/test_cge.py"
+            test-marker: ""
+
+    name: ${{ matrix.subset-name }} (${{ matrix.os }}, ${{ matrix.environment }})
     runs-on: ${{ matrix.os }}
 
     env:
       TEST_SUBSET: ${{ matrix.test-subset }}
+      TEST_MARKER: ${{ matrix.test-marker }}
 
     defaults:
       run:
         shell: bash -leo pipefail {0}
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: mamba-org/setup-micromamba@v2
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0  # hatch-vcs derives the version from tags
+        persist-credentials: false
+    - uses: prefix-dev/setup-pixi@9936258fee697aff89b3fed6ca1f80a382ef694e # v0.11.3
+      with:
+        pixi-version: v0.81.0
+        environments: ${{ matrix.environment }}
+        cache: true
+
+    - name: List installed packages
+      run: pixi list -e ${{ matrix.environment }}
+
+    - name: Create matrix id
+      id: matrix-id
+      env:
+        MATRIX_CONTEXT: ${{ toJson(matrix) }}
+      run: |
+        echo $MATRIX_CONTEXT
+        export MATRIX_ID=`echo $MATRIX_CONTEXT | sha256sum | cut -c 1-32`
+        echo $MATRIX_ID
+        echo "id=$MATRIX_ID" >> $GITHUB_OUTPUT
+
+    # Persist pytensor's compiled-function cache across runs. pytensor content-hashes
+    # each module and invalidates on its side, so a stale entry just misses and
+    # recompiles. The run-id suffix + restore-keys prefix make the cache roll forward.
+    # Both C module keys and numba cache index keys include the host CPU model, and runners
+    # alternate between Intel and AMD, so the test step pins the CPU target to keep entries
+    # loadable on any runner.
+    - name: Cache pytensor compiledir
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .pytensor-compiledir
+        key: pytensor-compiledir-v3-${{ steps.matrix-id.outputs.id }}-${{ github.run_id }}
+        restore-keys: |
+          pytensor-compiledir-v3-${{ steps.matrix-id.outputs.id }}-
+
+    - name: Run tests
+      run: |
+        pixi run -e ${{ matrix.environment }} test $TEST_SUBSET -m "$TEST_MARKER"
+        mkdir -p coverage && mv coverage.xml coverage/coverage-${MATRIX_ID}.xml
+      env:
+        MATRIX_ID: ${{ steps.matrix-id.outputs.id }}
+        # pytensor's default compiledir is ~/.pytensor on Linux but under %LOCALAPPDATA% on Windows, so it is set
+        # explicitly to the one path the cache step names on every OS. It is relative because the PYTENSOR_FLAGS parser
+        # drops backslashes, which turns an absolute Windows path such as D:\a\_temp into D:a_temp.
+        # With numba fastmath on, a cache-loaded function and a freshly compiled one round differently, and tests that
+        # bake those results into graphs as constants then miss the cache on every run.
+        PYTENSOR_FLAGS: base_compiledir=.pytensor-compiledir,gcc__cxxflags=-march=x86-64-v3,numba__fastmath=False
+        NUMBA_CPU_NAME: generic
+
+    - name: Upload coverage file
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: coverage-${{ steps.matrix-id.outputs.id }}
+        path: coverage/coverage-${{ steps.matrix-id.outputs.id }}.xml
+
+
+  docs:
+    name: "Docs"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          environment-file: conda_envs/cge_test.yml
-          create-args: >-
-            python=${{matrix.python-version}}
-          environment-name: cge-test
-          init-shell: bash
-          cache-environment: true
-
-      - name: Create matrix ID
-        id: matrix_id
-        env:
-          MATRIX_CONTENT: ${{ toJson(matrix) }}
-        run: |
-          echo $MATRIX_CONTENT
-          export MATRIX_ID=`echo $MATRIX_CONTENT | sha256sum | cut -c 1-32`
-          echo $MATRIX_ID
-          echo "id=$MATRIX_ID" >> $GITHUB_OUTPUT
-
-      - name: Install current branch
-        run: |
-          pip install -e .
-          python --version
-
-      - name: Run ${{ matrix.name }}
-        run: |
-          echo "$TEST_SUBSET" |
-          xargs python -m pytest --color=yes -vv --cov=cge_modeling/ --cov-report=xml:coverage/coverage-${MATRIX_ID}.xml --no-cov-on-fail --durations=50
-        env:
-          MATRIX_ID: ${{ steps.matrix_id.outputs.id }}
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+          fetch-depth: 0  # hatch-vcs derives the version from tags
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@9936258fee697aff89b3fed6ca1f80a382ef694e # v0.11.3
         with:
-          name: coverage-${{ steps.matrix_id.outputs.id }}
-          path: coverage/coverage-${{ steps.matrix_id.outputs.id }}.xml
+          pixi-version: v0.81.0
+          environments: docs
+          cache: true
 
-  all_tests:
+      # docs-build carries -W, so a broken reference or an orphaned page fails here rather than
+      # shipping a page with a hole in it. The same command runs locally.
+      - name: Build the docs
+        run: pixi run -e docs docs-build
+
+  all-checks:
     if: ${{ always() }}
     runs-on: ubuntu-latest
-    name: "Check All Tests Pass"
-    needs: [ unittest ]
+    name: "All tests"
+    needs: [test, docs]
     steps:
-      - name: Check all tests pass
-        if: ${{ needs.unittest.result != 'success' }}
+      - name: Check build matrix status
+        if: ${{ needs.test.result != 'success' || needs.docs.result != 'success' }}
         run: exit 1
 
-
-  upload_coverage:
+  upload-coverage:
     runs-on: ubuntu-latest
-    name: "Upload Coverage Report"
-    needs: [ all_tests]
-    if: ${{ needs.all_tests.result == 'success' }}
+    name: "Upload coverage"
+    needs: [all-checks]
+    # Dependabot runs get no repository secrets, and codecov rejects a tokenless upload.
+    if: ${{ needs.all-checks.result == 'success' && github.event.pull_request.user.login != 'dependabot[bot]' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade coverage>=5.1 coveralls
-
       - name: Download coverage file
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: coverage-*
           path: coverage
           merge-multiple: true
 
-      - name: Upload coverage report to Codecov
-        uses: codecov/codecov-action@v5
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           directory: ./coverage/
           fail_ci_if_error: true

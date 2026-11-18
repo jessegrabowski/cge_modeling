@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "cge_modeling"
 dynamic = ['version']
-requires-python = ">=3.10, <3.13"
+requires-python = ">=3.12"
 authors = [{name="Jesse Grabowski", email='jessegrabowski@gmail.com'}]
 description = "Computable general equlibrium models and policy simulation via autodiff with Pytensor"
 readme = 'README.md'
@@ -20,9 +20,8 @@ classifiers = [
   "Operating System :: Unix",
   "Operating System :: MacOS",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
 ]
 
 keywords = [
@@ -36,45 +35,48 @@ keywords = [
 ]
 
 dependencies = [
-    "setuptools",
-    "numba",
-    "numpy",
-    "sympy>=1.14.0",
-    "scipy",
-    "pandas",
-    "joblib",
-    "pytensor",
-    "latextable",
-    "texttable",
-    "sympytensor>=1.3.3",
-    "xarray",
-    "arviz",
-    "numba-progress",
-    "matplotlib",
-    "better-optimize>=0.1.2",
-    "IPython",
+    "arviz<2",
+    "better-optimize>=0.5.1,<1",
+    "cvxpy<2",
+    "ipython<10",
+    "joblib<2",
+    "latextable<2",
+    "matplotlib<4",
+    "numba<1",
+    "numpy<3",
+    "pandas<4",
+    "pytensor>=3.3.8,<4",
+    "rich<16",
+    "scipy<2",
+    "sympy>=1.14.0,<2",
+    "sympytensor>=2.2.0,<3",
+    "texttable<2",
+    "xarray<2027",
   ]
 
+# pixi turns these extras into features of the same name.
 [project.optional-dependencies]
 dev = [
     "pre-commit",
-    "pytest",
-    "pytest-cov",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "pytest-env",
+    "jax",
+    "squarify",
 ]
 
 docs = [
-  "ipython",
+  "ipython<10",
   "jupyter-sphinx",
   "myst-nb",
   "numpydoc",
-  "pre-commit",
-  "sphinx>=5",
+  "sphinx>=9.1.0",
   "sphinx-copybutton",
   "sphinx-design",
   "sphinx-notfound-page",
   "sphinx-sitemap",
   "sphinx-codeautolink",
-  "sphinxcontrib-bibtex",
+  "pybtex",
   "pydata-sphinx-theme",
   "watermark",
 ]
@@ -102,8 +104,24 @@ allow-direct-references = true
 [tool.pytest.ini_options]
 minversion = "6.0"
 xfail_strict = true
-env = ["NUMBA_DISABLE_JIT = 1"]
+# Force the non-interactive matplotlib backend so plotting tests never need a GUI toolkit.
+env = ["MPLBACKEND=Agg"]
 
+
+[[tool.mypy.overrides]]
+module = [
+    "better_optimize.*",
+    "cloudpickle",
+    "joblib",
+    "latextable",
+    "pandas",
+    "scipy.*",
+    "squarify",
+    "sympy.*",
+    "sympytensor",
+    "texttable",
+]
+ignore_missing_imports = true
 
 [tool.coverage.report]
 exclude_lines = [
@@ -151,16 +169,57 @@ ignore = [
 lines-between-types = 1
 
 [tool.ruff.lint.per-file-ignores]
+'docs/**/*.ipynb' = [
+    'F841', # Calibration functions hand their locals to CGEModel.finalize_calibration by frame inspection
+]
 'tests/*.py' = [
     'F841', # Unused variable warning for test files -- common in pymc model declarations
     'D106',  # Missing docstring for public method -- unittest test subclasses don't need docstrings
     'F401', # Unused import warning for test files -- this check removes imports of fixtures
     'F811',  # Redefine while unused -- this check fails on imported fixtures
 ]
-'cge_modeling/compile/numba_tools.py' = [
-    'F401', # Unused import warning -- imports are used in generated code strings
-]
 'cge_modeling/__init__.py' = [
     'F401', # Unused import warning -- need to import (but not use) pytensor rewrite
     'I001' # Import order matters to avoid circular imports
 ]
+
+# pixi reads [project].dependencies, requires-python and the extras above on its own. The tables
+# here only add what the project metadata cannot say: which packages come from conda-forge instead
+# of PyPI (a conda entry overrides the PyPI requirement of the same name), and platform toolchains.
+# The pixi-export-env pre-commit hook renders the `default` environment to
+# conda_envs/environment_dev.yml.
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64", "win-64"]
+
+# The compiled stack resolves from conda-forge.
+[tool.pixi.dependencies]
+numpy = "<3"
+numba = "<1"
+pytensor = ">=3.3.8,<4"
+cvxpy = "<2"
+
+# gxx 16.2.0 on conda-forge win-64 cannot link (ld cannot find dllcrt2.o);
+# see conda-forge/ctng-compilers-feedstock#229 and m2w64-sysroot-feedstock#23.
+[tool.pixi.target.win-64.dependencies]
+gxx_win-64 = "16.1.*"
+
+[tool.pixi.pypi-dependencies]
+cge_modeling = { path = ".", editable = true }
+
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+
+[tool.pixi.feature.py313.dependencies]
+python = "3.13.*"
+
+[tool.pixi.environments]
+default = { features = ["dev", "docs", "py312"], solve-group = "py312" }
+docs = { features = ["docs", "py312"], solve-group = "py312" }
+py313 = { features = ["dev", "py313"] }
+
+[tool.pixi.tasks]
+# Extra arguments pass through, e.g. `pixi run test tests/base`.
+test = "python -m pytest -vv --cache-clear --cov=cge_modeling --cov-report=xml:coverage.xml --no-cov-on-fail --cov-report term --durations=50"
+lint = "pre-commit run --all-files"
+docs-build = { cmd = "python -m sphinx -W --keep-going -j auto -b html source build/html", cwd = "docs" }
