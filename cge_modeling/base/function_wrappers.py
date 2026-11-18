@@ -37,7 +37,7 @@ def wrap_pytensor_func_for_scipy(
     coords: dict[str, list[str]]
         Dictionary of coordinates mapping dimension names to lists of labels associated with that dimension.
     include_p: bool
-        If true, a 3rd argument is included in the inner function (useful
+        If true, the inner function takes the hessp point as a middle argument: ``inner_f(x0, p, theta)``.
     fixed_values: dict of str to np.ndarray, optional
         Values for model variables that are held fixed. These variables are excluded from ``variable_list`` and the
         solver vector, and are passed to ``f`` at the given values. Their hessp point is zero.
