@@ -4,7 +4,7 @@ from collections.abc import Callable
 from functools import partial
 from typing import Any, cast
 
-import pytensor
+import numpy as np
 import sympy as sp
 
 from pytensor import tensor as pt
@@ -24,6 +24,7 @@ from cge_modeling.compile.pytensor import (
     vars_and_params_to_pytensor,
 )
 from cge_modeling.compile.pytensor_tools import (
+    compile_with_packed_inputs,
     make_unpacked_to_packed_map,
     rewrite_pregrad,
     unpacked_graph_to_packed_graph,
@@ -81,11 +82,8 @@ def compile_sympytensor_jacobian(
     jac = unpacked_graph_to_packed_graph(unpacked_jac, unpacked_to_indexed_dict)
     rewrite_pregrad(jac)
 
-    f_jac = pytensor.function(
-        inputs=[*variables, *parameters],
-        outputs=jac,
-        on_unused_input="ignore",
-        mode=mode,
+    f_jac = compile_with_packed_inputs(
+        [("x", variables), ("theta", parameters)], jac, mode=mode, on_unused_input="ignore"
     )
 
     return sp_jac, jac, f_jac
@@ -105,7 +103,9 @@ def compile_sympytensor_error_function(
     squared_loss.name = "squared_loss"
     rewrite_pregrad(squared_loss)
 
-    f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
+    f_loss = compile_with_packed_inputs(
+        [("x", variables), ("theta", parameters)], squared_loss, mode=mode
+    )
 
     return sp_squared_loss, squared_loss, f_loss
 
@@ -126,11 +126,8 @@ def compile_sympytensor_gradient_function(
 
     rewrite_pregrad(grad)
 
-    f_grad = pytensor.function(
-        inputs=[*variables, *parameters],
-        outputs=grad,
-        mode=mode,
-        on_unused_input="ignore",
+    f_grad = compile_with_packed_inputs(
+        [("x", variables), ("theta", parameters)], grad, mode=mode, on_unused_input="ignore"
     )
 
     return sp_grad, grad, f_grad
@@ -152,11 +149,8 @@ def compile_sympytensor_hess_function(
     hess = unpacked_graph_to_packed_graph(unpacked_hess, unpacked_to_indexed_dict)
     rewrite_pregrad(hess)
 
-    f_hess = pytensor.function(
-        inputs=[*variables, *parameters],
-        outputs=hess,
-        mode=mode,
-        on_unused_input="ignore",
+    f_hess = compile_with_packed_inputs(
+        [("x", variables), ("theta", parameters)], hess, mode=mode, on_unused_input="ignore"
     )
 
     return sp_hess, hess, f_hess
@@ -177,14 +171,14 @@ def compile_sympytensor_hessp_function(
     hessp.name = "hessp"
 
     p_vars_pt = next(x for x in cache.values() if x.name == "hess_point")
-    point_vars = [var.type(name=f"{var.name}_point") for var in variables]
-    p = pt.concatenate([v.ravel() for v in point_vars], axis=0)
+    n_variables = sum(int(np.prod(var.type.shape)) for var in variables)
+    p = pt.tensor("p", shape=(n_variables,), dtype=p_vars_pt.type.dtype)
 
     hessp = graph_replace(hessp, {p_vars_pt: p}, strict=True)
 
-    f_hessp = pytensor.function(
-        inputs=[*variables, *parameters, *point_vars],
-        outputs=hessp.ravel(),
+    f_hessp = compile_with_packed_inputs(
+        [("x", variables), p, ("theta", parameters)],
+        hessp.ravel(),
         mode=mode,
         on_unused_input="ignore",
     )
@@ -213,11 +207,8 @@ def compile_sympytensor_cge_functions(
     validate_pytensor_parsing_result(system, variables, parameters, cache)
 
     # Always compile the system -- used to check residuals
-    f_system = pytensor.function(
-        inputs=[*variables, *parameters],
-        outputs=system,
-        mode=mode,
-        on_unused_input="raise",
+    f_system = compile_with_packed_inputs(
+        [("x", variables), ("theta", parameters)], system, mode=mode
     )
 
     # Optional functions
@@ -226,7 +217,7 @@ def compile_sympytensor_cge_functions(
     f_grad = None
     f_hess = None
     f_hessp = None
-    f_euler = None
+    f_euler: Callable[..., Any] | None = None
 
     if "root" in functions_to_compile:
         _sp_jac, _jac, f_jac = compile_sympytensor_jacobian(
@@ -282,7 +273,7 @@ def compile_sympytensor_cge_functions(
                 system, variables, parameters, jacobian=None, grad=None, use_rk4=use_rk4
             )
 
-            f_step = pytensor.function(inputs, outputs, mode=mode)
+            f_step = compile_with_packed_inputs(inputs, outputs, mode=mode)
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -295,9 +286,9 @@ def compile_sympytensor_cge_functions(
             theta_final, n_steps, euler_output = symbolic_euler_approximation(
                 system, variables, parameters, jacobian=None
             )
-            f_euler = pytensor.function(
-                inputs=[*variables, *parameters, theta_final, n_steps],
-                outputs=euler_output,
+            f_euler = compile_with_packed_inputs(
+                [("x", variables), ("theta", parameters), theta_final, n_steps],
+                euler_output,
                 mode=mode,
             )
 

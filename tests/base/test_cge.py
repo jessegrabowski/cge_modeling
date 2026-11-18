@@ -358,16 +358,14 @@ def test_model_gradients(model_id, jac_function, backend):
     )
 
     data = generate_data(mod.variables + mod.parameters, mod.coords)
+    x, theta = variable_dict_to_flat_array(data, mod.variables, mod.parameters)
     p = np.eye(mod.n_equations)[:, 0]
 
     J_expected = jac_function(**data)
 
-    J_actual = mod.f_jac(**data)
-    H_actual = mod.f_hess(**data)
-    p_vals = flat_array_to_variable_dict(p, mod.variables, mod.coords).values()
-
-    points = {f"{var.name}_point": value for var, value in zip(mod.variables, p_vals)}
-    Hp_actual = mod.f_hessp(**data, **points)
+    J_actual = mod.f_jac(x, theta)
+    H_actual = mod.f_hess(x, theta)
+    Hp_actual = mod.f_hessp(x, p, theta)
 
     np.testing.assert_allclose(J_expected, J_actual, atol=1e-8)
     np.testing.assert_allclose(H_actual[:, 0], Hp_actual.ravel())
@@ -392,10 +390,11 @@ def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sp
     )
 
     calibated_data = calibrate_model(**data)
-    resid = mod.f_system(**calibated_data)
+    x, theta = variable_dict_to_flat_array(calibated_data, mod.variables, mod.parameters)
+    resid = mod.f_system(x, theta)
     np.testing.assert_allclose(resid, 0, atol=1e-8)
 
-    jac = mod.f_jac(**calibated_data)
+    jac = mod.f_jac(x, theta)
     if sparse:
         jac = jac.todense()
     expected_jac = f_expected_jac(**calibated_data)
@@ -482,8 +481,11 @@ def test_jax_mode_agrees_with_default_mode(
         )
 
     calibrated_data = calibrate_model(**data)
-    np.testing.assert_allclose(model_default.f_system(**calibrated_data), 0, atol=1e-8)
-    np.testing.assert_allclose(model_jax.f_system(**calibrated_data), 0, atol=1e-8)
+    x, theta = variable_dict_to_flat_array(
+        calibrated_data, model_default.variables, model_default.parameters
+    )
+    np.testing.assert_allclose(model_default.f_system(x, theta), 0, atol=1e-8)
+    np.testing.assert_allclose(model_jax.f_system(x, theta), 0, atol=1e-8)
 
     labor_increase = calibrated_data.copy()
     labor_increase["L_s"] = 10_000

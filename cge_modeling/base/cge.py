@@ -23,7 +23,7 @@ from scipy.optimize import OptimizeResult
 
 from cge_modeling.base.function_wrappers import (
     select_free_variable_entries,
-    wrap_pytensor_func_for_scipy,
+    wrap_compiled_function_for_scipy,
 )
 from cge_modeling.base.primitives import (
     Equation,
@@ -658,10 +658,7 @@ class CGEModel:
             fitted_values[len(self.unpacked_variable_names) :],
         )
 
-        f_resid = wrap_pytensor_func_for_scipy(
-            self._compiled_function("f_resid"), self.variables, self.parameters, self.coords
-        )
-        success = f_resid(x0, theta0) < 1e-6
+        success = self._compiled_function("f_resid")(x0, theta0) < 1e-6
 
         result = Result(
             name=name,
@@ -675,7 +672,8 @@ class CGEModel:
         return result
 
     def _solve_with_euler_approximation(self, data, theta_final, n_steps):
-        result = self.f_euler(**data, theta_final=theta_final, n_steps=n_steps)
+        x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
+        result = self._compiled_function("f_euler")(x0, theta0, theta_final, n_steps)
         return list_of_array_to_idata(result, self)
 
     def _solve_with_root(
@@ -689,8 +687,6 @@ class CGEModel:
     ):
         method: root_method = optimizer_kwargs.pop("method", "hybr")
 
-        free_variables = self.variables
-
         use_hess = optimizer_kwargs.pop("use_hess", None)
         _ = optimizer_kwargs.pop("use_hessp", None)
 
@@ -701,21 +697,12 @@ class CGEModel:
         if use_jac and "root" not in self._compiled:
             raise ValueError("Jacobian has not been compiled.")
 
-        parameters = self.parameters
-        coords = self.coords
-
-        f_system = wrap_pytensor_func_for_scipy(
-            self._compiled_function("f_system"), free_variables, parameters, coords
-        )
+        f_system = wrap_compiled_function_for_scipy(self._compiled_function("f_system"))
         f_jac = (
-            wrap_pytensor_func_for_scipy(
-                self._compiled_function("f_jac"), free_variables, parameters, coords
-            )
-            if use_jac
-            else None
+            wrap_compiled_function_for_scipy(self._compiled_function("f_jac")) if use_jac else None
         )
 
-        x0, _theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
+        x0, _theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
 
         res = root(
             f=f_system,
@@ -750,26 +737,23 @@ class CGEModel:
         method: minimize_method = optimizer_kwargs.pop("method", "trust-ncg")
         use_jac, use_hess, use_hessp = get_method_defaults(use_jac, use_hess, use_hessp, method)
 
-        free_variables = [var for var in self.variables if var.name not in fixed_values]
-
         if not use_jac and use_hess:
             use_hess = False
             _log.warning("use_hess is ignored when use_jac=False. Setting use_hess=False.")
 
-        parameters = self.parameters
-        coords = self.coords
         free_mask = make_flat_array_return_mask(
-            np.zeros(self.n_variables), self.variables, list(fixed_values), coords
+            np.zeros(self.n_variables), self.variables, list(fixed_values), self.coords
+        )
+        x_full, _theta0 = variable_dict_to_flat_array(
+            {**data, **fixed_values}, self.variables, self.parameters
         )
 
         def wrap(name, variable_axes, include_p=False):
-            f = wrap_pytensor_func_for_scipy(
+            f = wrap_compiled_function_for_scipy(
                 self._compiled_function(name),
-                free_variables,
-                parameters,
-                coords,
                 include_p=include_p,
-                fixed_values=fixed_values,
+                free_mask=free_mask,
+                x_full=x_full,
             )
             return select_free_variable_entries(f, free_mask, variable_axes)
 
@@ -778,7 +762,7 @@ class CGEModel:
         f_hess = wrap("f_hess", variable_axes=(0, 1))
         f_hessp = wrap("f_hessp", variable_axes=(0,), include_p=True)
 
-        x0, _theta0 = variable_dict_to_flat_array(data, free_variables, self.parameters)
+        x0 = x_full[free_mask]
 
         res = minimize(
             f=f_resid,
@@ -1182,7 +1166,8 @@ class CGEModel:
             parameters = flat_array_to_variable_dict(data.args, self.parameters, self.coords)
             data = {**variables, **parameters}
 
-        errors = self._compiled_function("f_system")(**data)
+        x, theta = variable_dict_to_flat_array(data, self.variables, self.parameters)
+        errors = np.asarray(self._compiled_function("f_system")(x, theta))
         sse = (errors**2).sum()
 
         if sse < tol:

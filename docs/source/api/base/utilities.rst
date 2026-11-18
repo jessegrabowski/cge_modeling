@@ -22,5 +22,5 @@ Function Wrappers
 .. autosummary::
     :toctree: generated/
 
-    wrap_pytensor_func_for_scipy
+    wrap_compiled_function_for_scipy
     select_free_variable_entries

@@ -76,31 +76,21 @@ def test_cge_model_factory(backend, functions_to_compile, expected_compiled_list
 
 def check_function_signature(func, expected_input_names):
     input_names = [x.name for x in func.maker.fgraph.inputs]
-    assert sorted(input_names) == sorted(expected_input_names)
+    assert input_names == expected_input_names
 
 
 @pytest.mark.parametrize("backend", ["pytensor", "sympytensor"])
-def test_compiled_functions_have_correct_signature(backend):
-    """Compiled functions take every variable and parameter by name, as f(**variables, **parameters)."""
-    # Skip compiling Euler because it has a much more complex signature
+def test_compiled_functions_take_packed_inputs(backend):
     model = load_and_cache_model(
-        model_id=1, backend=backend, mode="FAST_RUN", functions_to_compile=("root", "minimize")
+        model_id=1, backend=backend, mode="FAST_RUN", functions_to_compile="all"
     )
 
-    variable_names = [x.name for x in model.variables]
-    parameter_names = [x.name for x in model.parameters]
-
-    for func in [
-        model.f_system,
-        model.f_jac,
-        model.f_resid,
-        model.f_grad,
-        model.f_hess,
-    ]:
-        check_function_signature(func, variable_names + parameter_names)
-
-    variable_points = [f"{x}_point" for x in variable_names]
-    check_function_signature(model.f_hessp, variable_names + parameter_names + variable_points)
+    for func in [model.f_system, model.f_jac, model.f_resid, model.f_grad, model.f_hess]:
+        check_function_signature(func, ["x", "theta"])
+    check_function_signature(model.f_hessp, ["x", "p", "theta"])
+    check_function_signature(
+        model.f_euler.keywords["f_step"], ["x", "theta", "theta_initial", "theta_final", "n_steps"]
+    )
 
 
 def test_compile_model_requires_backend():
