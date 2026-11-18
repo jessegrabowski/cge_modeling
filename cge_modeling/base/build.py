@@ -1,3 +1,5 @@
+import logging
+
 from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any, Literal
@@ -9,6 +11,8 @@ from cge_modeling.base.primitives import Equation, Parameter, Variable
 from cge_modeling.compile.constants import CompiledFunctions
 from cge_modeling.compile.pytensor import compile_pytensor_cge_functions
 from cge_modeling.compile.sympytensor import compile_sympytensor_cge_functions
+
+_log = logging.getLogger(__name__)
 
 COMPILE_FUNC_FACTORY: dict[str, Callable[..., tuple[Any, ...]]] = {
     "pytensor": compile_pytensor_cge_functions,
@@ -54,6 +58,14 @@ def compile_model(
 ) -> CGEModel:
     if backend is None:
         raise ValueError(f"backend must be one of {list(COMPILE_FUNC_FACTORY)}, found None")
+
+    model.check_initialization()
+    if model._model_objects:
+        raise NotImplementedError("Compiling models built in a `with` block is not supported yet.")
+    _log.info(
+        f"Compiling a model with {model.n_equations} equations, {model.n_variables} variables, "
+        f"{model.n_parameters} parameters"
+    )
 
     func_maker = partial(COMPILE_FUNC_FACTORY[backend], use_rk4=use_rk4)
 

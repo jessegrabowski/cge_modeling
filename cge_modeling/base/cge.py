@@ -185,10 +185,6 @@ class CGEModel:
             del self._variables[numeraire]
 
         self.check_initialization()
-        _log.info(
-            f"Initial pre-processing complete, found {self.n_equations} equations, {self.n_variables} variables, "
-            f"{self.n_parameters} parameters"
-        )
 
         self.scenarios: dict[str, Result] = {}
 
