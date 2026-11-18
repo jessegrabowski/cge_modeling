@@ -1,11 +1,13 @@
 from string import Template
 
 import numpy as np
+import pytest
 
 from cge_modeling import Parameter, Variable
 from cge_modeling.base.utilities import (
     _expand_var_by_index,
     flat_array_to_variable_dict,
+    unpack_equation_name,
     variable_dict_to_flat_array,
 )
 
@@ -69,3 +71,28 @@ def test_pack_and_unpack_is_bijective():
     assert all(
         [np.allclose(data_dict[x.name], data_dict_2[x.name]) for x in variables + parameters]
     )
+
+
+@pytest.mark.parametrize(
+    "name, dims, expected",
+    [
+        ("Numeraire", (), ["Numeraire"]),
+        ("Demand for <dim:i>", ("i",), ["Demand for A", "Demand for B"]),
+        ("Clearing", ("i",), ["Clearing [i=A]", "Clearing [i=B]"]),
+        (
+            "Sector <dim:i> inputs",
+            ("i", "j"),
+            [
+                "Sector A inputs [j=x]",
+                "Sector A inputs [j=y]",
+                "Sector B inputs [j=x]",
+                "Sector B inputs [j=y]",
+            ],
+        ),
+    ],
+    ids=["scalar", "marked", "unmarked", "partly_marked"],
+)
+def test_unpack_equation_name(name, dims, expected):
+    coords = {"i": ["A", "B"], "j": ["x", "y"]}
+
+    assert unpack_equation_name(name, dims, coords) == expected

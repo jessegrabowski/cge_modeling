@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import pytest
 import xarray.testing as xr_testing
@@ -5,7 +7,7 @@ import xarray.testing as xr_testing
 from pytensor.graph import rewrite_graph
 from pytensor.graph.traversal import explicit_graph_inputs
 
-from cge_modeling import CGEModel, Equation, Variable
+from cge_modeling import CGEModel, Equation, Variable, compile_model
 from cge_modeling import model as cm
 from tests.utilities.models import (
     build_model_2_in_context,
@@ -67,6 +69,29 @@ def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
             string_result[group]["variables"].dataset,
             rtol=1e-6,
         )
+
+
+def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_model(caplog):
+    with CGEModel(coords={"i": ["Agriculture", "Industry"]}) as model:
+        P = cm.Variable("P", dims="i")
+        P_bar = cm.Parameter("P_bar")
+        cm.Equation("Price of <dim:i>", P, P_bar)
+    compile_model(model, backend="pytensor", functions_to_compile=("root",))
+
+    with caplog.at_level(logging.INFO, logger="cge_modeling"):
+        model.check_for_equilibrium({"P": np.array([1.0, 3.0]), "P_bar": 1.0})
+
+    assert "Equilibrium not found" in caplog.text
+    assert "Price of Industry" in caplog.text
+    assert "Price of Agriculture" not in caplog.text
+
+
+def test_equation_repeating_an_existing_element_name_raises():
+    with pytest.raises(ValueError, match=r"repeats existing equation element names \['Price a'\]"):
+        with CGEModel(coords={"i": ["a", "b"]}):
+            P = cm.Variable("P", dims="i")
+            cm.Equation("Price <dim:i>", P, 1.0)
+            cm.Equation("Price a", P.sel(i="a"), 1.0)
 
 
 def test_equation_residual_is_lhs_minus_rhs_in_coords_dim_order():

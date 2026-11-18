@@ -46,6 +46,7 @@ from cge_modeling.base.utilities import (
     get_method_defaults,
     infer_object_shape_from_coords,
     make_flat_array_return_mask,
+    unpack_equation_name,
     unpack_equation_strings,
     variable_dict_to_flat_array,
 )
@@ -210,10 +211,7 @@ class CGEModel:
 
     @property
     def n_equations(self) -> int:
-        return len(self.unpacked_equation_names) + sum(
-            int(np.prod(equation.residual.type.shape))
-            for equation in self._xtensor_equations.values()
-        )
+        return len(self.unpacked_equation_names)
 
     def __enter__(self) -> "CGEModel":
         if self._is_string_built():
@@ -330,8 +328,16 @@ class CGEModel:
 
         residual = residual.transpose(*[dim for dim in self.coords if dim in residual.type.dims])
 
+        element_names = unpack_equation_name(name, residual.type.dims, self.coords)
+        duplicates = [element for element in element_names if element in self._unpacked_equations]
+        if duplicates:
+            raise ValueError(
+                f"Equation {name!r} repeats existing equation element names {duplicates}."
+            )
+
         equation = XTensorEquation(name=name, lhs=lhs, rhs=rhs, residual=residual)
         self._xtensor_equations[name] = equation
+        self._unpacked_equations.update(dict.fromkeys(element_names))
         return equation
 
     def _compiled_function(
