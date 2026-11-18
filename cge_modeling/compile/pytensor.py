@@ -329,7 +329,7 @@ def compile_pytensor_cge_functions(
             )
         else:
             theta_final, _n_steps, euler_output = symbolic_euler_approximation(
-                system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
+                system, variables, parameters, jacobian=jac, use_rk4=use_rk4
             )
             f_euler = pytensor.function(
                 inputs=[*variables, *parameters, *theta_final],
