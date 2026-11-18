@@ -504,6 +504,30 @@ def test_jax_mode_agrees_with_default_mode(
     solver_agreement_checks([res_default, res_jax], ["Default mode", "JAX mode"])
 
 
+@pytest.mark.parametrize(
+    "gtol, expected_success",
+    [(1e-4, False), (1e-10, True)],
+    ids=["stops_short_of_equilibrium", "reaches_equilibrium"],
+)
+def test_minimize_success_reflects_equilibrium_residuals(gtol, expected_success):
+    model = load_and_cache_model(model_id=2, backend="pytensor", functions_to_compile="minimize")
+    calibrated_data = calibrate_model_2(**model_2_data)
+    shocked_data = {**calibrated_data, "L_s": calibrated_data["L_s"] * 1.5}
+    _, theta_final = variable_dict_to_flat_array(shocked_data, model.variables, model.parameters)
+
+    result = model._solve_with_minimize(
+        calibrated_data,
+        theta_final,
+        method="trust-ncg",
+        progressbar=False,
+        verbose=False,
+        gtol=gtol,
+    )
+
+    assert bool(result.success) is expected_success
+    assert "equilibrium_tol" in result.message
+
+
 @pytest.mark.parametrize("backend", ["pytensor", "sympytensor"])
 def test_scan_euler_matches_python_loop_euler(backend):
     scan_model = load_model_1(backend=backend, functions_to_compile=("euler",), use_scan_euler=True)

@@ -740,6 +740,7 @@ class CGEModel:
         progressbar: bool = True,
         verbose: bool = True,
         fixed_values: dict[str, np.ndarray] | None = None,
+        equilibrium_tol: float = 1e-6,
         **optimizer_kwargs,
     ):
         if "minimize" not in self._compiled:
@@ -792,6 +793,19 @@ class CGEModel:
             method=method,
             **optimizer_kwargs,
         )
+
+        # The optimizer's gradient tolerance can stop on a flat objective well short of an equilibrium, or fail
+        # to make progress at one, so success is judged on the residuals themselves. The objective is half the
+        # sum of squared residuals.
+        squared_error = 2 * float(res.fun)
+        is_equilibrium = squared_error < equilibrium_tol
+        if bool(res.success) != is_equilibrium:
+            res.message = (
+                f"{res.message} Sum of squared residuals is {squared_error:.3e}, "
+                f"{'below' if is_equilibrium else 'above'} equilibrium_tol={equilibrium_tol:g}."
+            )
+        res.success = is_equilibrium
+
         return res
 
     def generate_SAM(
