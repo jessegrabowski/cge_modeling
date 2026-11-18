@@ -458,8 +458,8 @@ def test_backends_agree(
     mode: str,
     pt_backend: str,
 ):
-    if mode in ["JAX"]:
-        pytest.importorskip(mode.lower())
+    if mode == "JAX":
+        pytest.importorskip("jax")
     model_reference = load_and_cache_model(
         model_id=model_id, backend="sympytensor", functions_to_compile=functions_to_compile
     )
@@ -468,38 +468,25 @@ def test_backends_agree(
     )
 
     def solver_agreement_checks(results: list, names: list):
+        solutions = []
         for res, name in zip(results, names):
             if hasattr(res, "success"):
                 assert res.success or np.allclose(
                     res.fun, 0.0, rtol=1e-8, atol=1e-8
                 ), f"{name} solver failed to converge"
-            if hasattr(res, "x"):
-                assert not np.all(np.isnan(res.x)), f"{name} solver returned NaNs"
-                assert np.all(np.isfinite(res.x)), f"{name} solver returned Infs"
 
-                (
-                    np.testing.assert_allclose(
-                        np.around(results[0].x, 4),
-                        np.around(results[1].x, 4),
-                        atol=1e-5,
-                        rtol=1e-5,
-                    ),
-                    "Solvers disagree",
-                )
+            solution = res.x if hasattr(res, "x") else res
+            assert not np.all(np.isnan(solution)), f"{name} solver returned NaNs"
+            assert np.all(np.isfinite(solution)), f"{name} solver returned Infs"
+            solutions.append(solution)
 
-            else:
-                assert not np.all(np.isnan(res)), f"{name} solver returned NaNs"
-                assert np.all(np.isfinite(res)), f"{name} solver returned Infs"
-
-                (
-                    np.testing.assert_allclose(
-                        np.around(results[0], 4),
-                        np.around(results[1], 4),
-                        atol=1e-5,
-                        rtol=1e-5,
-                    ),
-                    "Solvers disagree",
-                )
+        np.testing.assert_allclose(
+            np.around(solutions[0], 4),
+            np.around(solutions[1], 4),
+            atol=1e-5,
+            rtol=1e-5,
+            err_msg="Solvers disagree",
+        )
 
     calibrated_data = calibrate_model(**data)
     resid_reference = model_reference.f_system(**calibrated_data)
