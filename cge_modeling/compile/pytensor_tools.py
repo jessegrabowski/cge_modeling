@@ -1,11 +1,15 @@
 import logging
 
+from collections.abc import Sequence
+
 import numpy as np
 import pytensor
 import sympy as sp
 
 from pytensor import tensor as pt
+from pytensor.compile import Function, Mode
 from pytensor.graph import node_rewriter, rewrite_graph
+from pytensor.graph.basic import Variable as GraphVariable
 from pytensor.graph.replace import graph_replace
 from pytensor.tensor.math import Prod
 from pytensor.tensor.rewriting.basic import register_stabilize
@@ -137,6 +141,60 @@ def flat_tensor_to_ragged_list(tensor, shapes):
         cursor += s
 
     return out
+
+
+def compile_with_packed_inputs(
+    inputs: Sequence[pt.TensorVariable | tuple[str, Sequence[pt.TensorVariable]]],
+    outputs: pt.TensorVariable | Sequence[pt.TensorVariable],
+    mode: str | Mode | None = None,
+    on_unused_input: str = "raise",
+) -> Function:
+    """
+    Compile a function whose grouped inputs are each packed into one flat vector.
+
+    Parameters
+    ----------
+    inputs: sequence of TensorVariable or tuple of (str, sequence of TensorVariable)
+        Inputs of the compiled function, in order. A ``(name, parts)`` pair becomes a single flat vector input called
+        ``name``, holding every element of ``parts`` raveled in C order and concatenated. A bare TensorVariable is
+        passed through as its own input.
+    outputs: TensorVariable or sequence of TensorVariable
+        Outputs of the compiled function, as graphs of the unpacked parts.
+    mode: str or Mode, optional
+        PyTensor compile mode.
+    on_unused_input: str
+        Passed to :func:`pytensor.function`. Defaults to ``"raise"``.
+
+    Returns
+    -------
+    f: Function
+        The compiled function.
+    """
+    function_inputs = []
+    replacements: dict[GraphVariable, GraphVariable] = {}
+
+    for item in inputs:
+        if isinstance(item, tuple):
+            name, parts = item
+            shapes = [part.type.shape for part in parts]
+            packed = pt.tensor(
+                name,
+                shape=(sum(int(np.prod(shape)) for shape in shapes),),
+                dtype=pytensor.scalar.upcast(*(part.type.dtype for part in parts)),
+            )
+            replacements.update(zip(parts, pt.unpack(packed, packed_shapes=shapes), strict=True))
+            function_inputs.append(packed)
+        else:
+            function_inputs.append(item)
+
+    packed_outputs = graph_replace(outputs, replacements, strict=False)
+
+    return pytensor.function(
+        inputs=function_inputs,
+        outputs=packed_outputs,
+        mode=mode,
+        on_unused_input=on_unused_input,
+    )
 
 
 def object_to_pytensor(obj: Parameter | Variable, coords: dict[str, list[str]]):
