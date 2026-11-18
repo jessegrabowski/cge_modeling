@@ -104,6 +104,8 @@ allow-direct-references = true
 [tool.pytest.ini_options]
 minversion = "6.0"
 xfail_strict = true
+# Force the non-interactive matplotlib backend so plotting tests never need a GUI toolkit.
+env = ["MPLBACKEND=Agg"]
 
 
 [[tool.mypy.overrides]]
