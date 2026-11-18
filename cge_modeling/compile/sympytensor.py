@@ -1,7 +1,7 @@
 import logging
 
 from functools import partial
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import pytensor
 import sympy as sp
@@ -62,78 +62,6 @@ def sympy_cge_primitives_to_pytensor(
     rewrite_pregrad(flat_equations)
 
     return flat_equations, variables, parameters, (cache, unpacked_cache, unpacked_to_indexed_dict)
-
-
-def make_sympytensor_jacobian(
-    cge_model: CGEModel,
-    cache,
-    unpacked_cache,
-    equations=None,
-    wrt: Literal["variables", "parameters"] = "variables",
-    sparse=False,
-) -> pt.TensorVariable:
-    if equations is None:
-        equations = cge_model.unpacked_equation_symbols
-
-    variables = cge_model.unpacked_variable_symbols
-    parameters = cge_model.unpacked_parameter_symbols
-
-    wrt_symbols = variables if wrt == "variables" else parameters
-    jac = (
-        sp.Matrix(equations).jacobian(wrt_symbols)
-        if not sparse
-        else sparse_jacobian(equations, wrt_symbols)
-    )
-
-    unpacked_jac = as_tensor(jac, cache=unpacked_cache)
-    packed_jac = unpacked_graph_to_packed_graph(unpacked_jac, cge_model, cache, unpacked_cache)
-
-    return packed_jac
-
-
-def make_sympytensor_jvp(
-    cge_model: CGEModel,
-    cache,
-    unpacked_cache,
-    grad,
-    wrt: Literal["variables", "parameters"] = "variables",
-    sparse=False,
-) -> tuple[pt.TensorVariable, list[pt.TensorVariable]]:
-    """
-    Compute the jacobian-vector product between a system of equations and a vector of variables.
-
-    Parameters
-    ----------
-    cge_model: CGEModel
-        The CGE model
-    cache: dict
-
-    unpacked_cache: dict
-
-    grad: pt.TensorVariable
-        The gradient tensor of the loss function.
-    wrt: Literal["variables", "parameters"], optional
-        Specifies whether to compute the JVP with respect to variables or parameters. Default is "variables".
-    sparse: bool, optional
-        If True, use sparse matrices for the computation. Default is False.
-
-    Returns
-    -------
-    jvp: pytensor.tensor.TensorVariable
-        The jacobian-vector product of the original loss function
-    p: list of pytensor.tensor.TensorVariable
-        The symbolic variables representing each component of ``p``, the point vector where the JVP is evaluated.
-    """
-    variables = cge_model.unpacked_variable_symbols
-    parameters = cge_model.unpacked_parameter_symbols
-
-    wrt_symbols = variables if wrt == "variables" else parameters
-    jvp, p_vars = make_sympy_hessp(grad, wrt_symbols)
-
-    unpacked_jvp = as_tensor(jvp, cache=unpacked_cache)
-    packed_jvp = unpacked_graph_to_packed_graph(unpacked_jvp, cge_model, cache, unpacked_cache)
-
-    return packed_jvp, p_vars
 
 
 def compile_sympytensor_jacobian(
