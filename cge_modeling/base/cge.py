@@ -1096,13 +1096,14 @@ class CGEModel:
                 x0_var_param, theta_simulation, n_steps=n_iter_euler
             )
             return_values["euler"] = idata_euler
+            final_step = idata_euler["variables"].sizes["step"] - 1
             for group in ("variables", "parameters"):
                 idata_euler[group] = idata_euler[group].dataset.dropna(dim="step")
             last_step = min(
                 idata_euler["variables"].coords["step"].max().item(),
                 idata_euler["parameters"].coords["step"].max().item(),
             )
-            if last_step != (n_iter_euler - 1):
+            if last_step != final_step:
                 _log.warning(
                     f"NaNs were encountered in the euler approximation. Backing up to step {last_step} "
                     f"(the last non-NaN step) for the optimizer started point."

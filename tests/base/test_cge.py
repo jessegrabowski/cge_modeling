@@ -541,6 +541,19 @@ def test_scan_euler_matches_python_loop_euler(backend):
     )
 
 
+def test_simulate_with_scan_euler_reports_no_nans(caplog):
+    mod = load_model_1(
+        backend="pytensor", functions_to_compile=("euler", "root"), use_scan_euler=True
+    )
+    initial_state = calibrate_model_1(**model_1_data)
+
+    with caplog.at_level(logging.WARNING, logger="cge_modeling"):
+        res = mod.simulate(initial_state, final_delta_pct={"L_s": 0.5}, n_iter_euler=100)
+
+    assert res["optim_res"].success
+    assert "NaNs were encountered" not in caplog.text
+
+
 def test_generate_SAM():
     mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
     param_dict = {
