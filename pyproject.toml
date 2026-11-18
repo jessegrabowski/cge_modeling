@@ -106,6 +106,21 @@ minversion = "6.0"
 xfail_strict = true
 
 
+[[tool.mypy.overrides]]
+module = [
+    "better_optimize.*",
+    "cloudpickle",
+    "joblib",
+    "latextable",
+    "pandas",
+    "scipy.*",
+    "squarify",
+    "sympy.*",
+    "sympytensor",
+    "texttable",
+]
+ignore_missing_imports = true
+
 [tool.coverage.report]
 exclude_lines = [
   "pragma: nocover",

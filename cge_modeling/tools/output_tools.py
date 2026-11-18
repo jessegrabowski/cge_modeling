@@ -410,7 +410,7 @@ def latex_print_equations(equation_info, return_latex=False):
 
 def datatree_to_value_dict(tree: xr.DataTree) -> dict[str, np.ndarray]:
     return {
-        name: data.values
+        str(name): data.values
         for group in ("variables", "parameters")
         for name, data in tree[group].data_vars.items()
     }

@@ -139,7 +139,7 @@ def flat_tensor_to_ragged_list(tensor, shapes):
     return out
 
 
-def object_to_pytensor(obj: Parameter | Variable, coords: dict[str, list[str, ...]]):
+def object_to_pytensor(obj: Parameter | Variable, coords: dict[str, list[str]]):
     """
     Convert a CGE model object to a PyTensor object.
 

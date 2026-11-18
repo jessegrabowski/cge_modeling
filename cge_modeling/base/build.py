@@ -1,7 +1,8 @@
 import importlib.util
 
+from collections.abc import Callable, Sequence
 from functools import partial
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from pytensor.compile import get_mode
 
@@ -11,14 +12,14 @@ from cge_modeling.compile.constants import CompiledFunctions
 from cge_modeling.compile.pytensor import compile_pytensor_cge_functions
 from cge_modeling.compile.sympytensor import compile_sympytensor_cge_functions
 
-COMPILE_FUNC_FACTORY = {
+COMPILE_FUNC_FACTORY: dict[str, Callable[..., tuple[Any, ...]]] = {
     "pytensor": compile_pytensor_cge_functions,
     "sympytensor": compile_sympytensor_cge_functions,
 }
 
 
 def determine_default_backend(
-    equations: list[Equation],
+    equations: Sequence[Equation],
 ) -> Literal["pytensor", "sympytensor"]:
     # Check for Sum/Prod in the equations, if found, use sympytensor
     if any("Sum(" in eq.equation or "Prod(" in eq.equation for eq in equations):
@@ -94,11 +95,11 @@ def compile_model(
 
 
 def cge_model(
-    coords: dict[str, list[str, ...]] | None = None,
-    variables: list[Variable] | dict[str, Variable] | None = None,
-    parameters: list[Parameter] | dict[str, Parameter] | None = None,
-    equations: list[Equation] | dict[str, Equation] | None = None,
-    numeraire: Variable | None = None,
+    coords: dict[str, list[str]] | None = None,
+    variables: list[Variable] | None = None,
+    parameters: list[Parameter] | None = None,
+    equations: list[Equation] | None = None,
+    numeraire: str | None = None,
     apply_sympy_simplify: bool = False,
     backend: Literal["pytensor", "sympytensor"] | None = None,
     mode: str | None = None,

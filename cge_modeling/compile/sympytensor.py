@@ -1,7 +1,7 @@
 import logging
 
 from functools import partial
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytensor
 import sympy as sp
@@ -40,7 +40,7 @@ def sympy_cge_primitives_to_pytensor(
     pt.TensorVariable, list[pt.TensorVariable], list[pt.TensorVariable], tuple[dict, dict, dict]
 ]:
     variables, parameters, cache = vars_and_params_to_pytensor(cge_model)
-    unpacked_cache = {}
+    unpacked_cache: dict[Any, Any] = {}
 
     # This will be a flat list of equations with a unique variable for each unpacked object
     # We want to rewrite this graph so that it will accept the packed array inputs (held in the cache dictionary)

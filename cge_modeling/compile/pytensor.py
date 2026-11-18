@@ -35,12 +35,10 @@ _log = logging.getLogger(__name__)
 def vars_and_params_to_pytensor(
     cge_model: CGEModel,
 ) -> tuple[list[pt.TensorVariable], list[pt.TensorVariable], dict]:
-    variables = cge_model.variables
-    parameters = cge_model.parameters
     coords = cge_model.coords
 
-    variables = [object_to_pytensor(var, coords) for var in variables]
-    parameters = [object_to_pytensor(param, coords) for param in parameters]
+    variables = [object_to_pytensor(var, coords) for var in cge_model.variables]
+    parameters = [object_to_pytensor(param, coords) for param in cge_model.parameters]
 
     cache = make_printer_cache(variables, parameters)
 

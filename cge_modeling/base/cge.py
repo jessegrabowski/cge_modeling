@@ -5,10 +5,10 @@ import os.path
 import re
 import warnings
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -18,6 +18,7 @@ import xarray as xr
 from better_optimize import minimize, root
 from better_optimize.constants import minimize_method, root_method
 from cloudpickle import cloudpickle
+from pytensor.compile.mode import Mode
 from scipy.optimize import OptimizeResult
 
 from cge_modeling.base.function_wrappers import wrap_pytensor_func_for_scipy
@@ -71,10 +72,10 @@ class CGEModel:
     def __init__(
         self,
         coords: dict[str, list[str]] | None = None,
-        variables: list[Variable] | dict[str, Variable] | None = None,
-        parameters: list[Parameter] | dict[str, Parameter] | None = None,
-        equations: list[Equation] | dict[str, Equation] | None = None,
-        numeraire: Variable | None = None,
+        variables: list[Variable] | None = None,
+        parameters: list[Parameter] | None = None,
+        equations: list[Equation] | None = None,
+        numeraire: str | None = None,
         parse_equations_to_sympy: bool = True,
     ):
         """
@@ -97,8 +98,8 @@ class CGEModel:
         equations: list of Equations
             A list of equations associated with the model. These define relationships between the variables and parameters.
 
-        numeraire: Variable, optional
-            The numéraire variable. If supplied, the numéraire will be removed from the model, and all instances of the
+        numeraire: str, optional
+            Name of the numéraire variable. If supplied, the numéraire will be removed from the model, and all instances of the
             numéraire in model equations will be set to 1.
             NOTE: It is not currently recommended to use this feature. Instead, add an equation to the model
                   fixing the numéraire variable to 1.
@@ -136,20 +137,20 @@ class CGEModel:
         """
 
         self.numeraire = None
-        self.coords: dict[str, list[str, ...]] = {} if coords is None else coords
+        self.coords: dict[str, list[str]] = {} if coords is None else coords
         self.parse_equations_to_sympy = parse_equations_to_sympy
 
-        self._sympy_cache = {}
-        self._pytensor_cache = {}
+        self._sympy_cache: dict[Any, Any] = {}
+        self._pytensor_cache: dict[Any, Any] = {}
         self._symbolic_coords = {sp.Idx(k): v for k, v in self.coords.items()}
 
-        self._variables = {}
-        self._parameters = {}
-        self._equations = {}
+        self._variables: dict[str, Variable] = {}
+        self._parameters: dict[str, Parameter] = {}
+        self._equations: dict[str, Equation] = {}
 
-        self._unpacked_variables = {}
-        self._unpacked_parameters = {}
-        self._unpacked_equations = {}
+        self._unpacked_variables: dict[str, dict[str, Any]] = {}
+        self._unpacked_parameters: dict[str, dict[str, Any]] = {}
+        self._unpacked_equations: dict[str, dict[str, Any] | None] = {}
 
         self._initialize_group(variables, "variables")
         if numeraire is not None:
@@ -178,9 +179,9 @@ class CGEModel:
 
         self.scenarios: dict[str, Result] = {}
 
-        self._compiled: list[str] = []
+        self._compiled: Sequence[str] = []
         self._compile_backend: Literal["pytensor", "sympytensor"] | None = None
-        self.mode = None
+        self.mode: Mode | str | None = None
 
         self.f_system: Callable | None = None
         self.f_resid: Callable | None = None
@@ -330,7 +331,7 @@ class CGEModel:
             )
         obj_dict.update({obj["name"]: obj})
 
-    def _unpack_objects(self, objs: list[Variable | Parameter | Equation]):
+    def _unpack_objects(self, objs: Sequence[Variable | Parameter | Equation]):
         """
         Convert a single object with dimension index to a list of objects with coordinate indices.
 
@@ -356,7 +357,7 @@ class CGEModel:
 
     def _add_objects(
         self,
-        obj_list: list[Variable | Parameter | Equation],
+        obj_list: Sequence[Variable | Parameter | Equation],
         group: ValidGroups,
         overwrite: bool = False,
     ):
@@ -367,12 +368,12 @@ class CGEModel:
         _validate_input(parameter, Parameter)
         self._add_object(parameter, "parameters", overwrite)
 
-    def add_parameters(self, parameters: list[Parameter], overwrite=False):
-        parameters = ensure_input_is_sequence(parameters)
-        [_validate_input(parameter, Parameter) for parameter in parameters]
-        self._add_objects(parameters, "parameters", overwrite)
+    def add_parameters(self, parameters: Parameter | Sequence[Parameter], overwrite=False):
+        parameter_list = ensure_input_is_sequence(parameters)
+        [_validate_input(parameter, Parameter) for parameter in parameter_list]
+        self._add_objects(parameter_list, "parameters", overwrite)
 
-    def _unpack_parameters(self, parameters: list[Parameter]):
+    def _unpack_parameters(self, parameters: Sequence[Parameter]):
         unpacked_params = self._unpack_objects(parameters)
         unpacked_names = [make_indexed_name(param) for param in unpacked_params]
         param_dicts = [{"modelobj": param} for param in unpacked_params]
@@ -382,12 +383,12 @@ class CGEModel:
         _validate_input(variable, Variable)
         self._add_object(variable, "variables", overwrite)
 
-    def add_variables(self, variables: list[Variable], overwrite=False):
-        variables = ensure_input_is_sequence(variables)
-        [_validate_input(variable, Variable) for variable in variables]
-        self._add_objects(variables, "variables", overwrite)
+    def add_variables(self, variables: Variable | Sequence[Variable], overwrite=False):
+        variable_list = ensure_input_is_sequence(variables)
+        [_validate_input(variable, Variable) for variable in variable_list]
+        self._add_objects(variable_list, "variables", overwrite)
 
-    def _unpack_variables(self, variables: list[Variable]):
+    def _unpack_variables(self, variables: Sequence[Variable]):
         unpacked_vars = self._unpack_objects(variables)
         unpacked_names = [make_indexed_name(param) for param in unpacked_vars]
         param_dicts = [{"modelobj": param} for param in unpacked_vars]
@@ -451,13 +452,13 @@ class CGEModel:
     def add_pytensor_equation(self, equation: Equation, overwrite: bool = False) -> None:
         self._add_object(equation, "equations", overwrite)
 
-    def add_equations(self, equations: list[Equation], overwrite: bool = False):
-        equations = ensure_input_is_sequence(equations)
-        [_validate_input(equation, Equation) for equation in equations]
+    def add_equations(self, equations: Equation | Sequence[Equation], overwrite: bool = False):
+        equation_list = ensure_input_is_sequence(equations)
+        [_validate_input(equation, Equation) for equation in equation_list]
         add_function = (
             self.add_sympy_equation if self.parse_equations_to_sympy else self.add_pytensor_equation
         )
-        for equation in equations:
+        for equation in equation_list:
             add_function(equation, overwrite)  # type: ignore
 
     def _unpack_equations(self, *args):
@@ -478,22 +479,20 @@ class CGEModel:
     def get_parameter(self, param_name: str):
         return self._get_object(param_name, "parameters")
 
-    def get_parameters(self, param_names: list[str] | None = None):
+    def get_parameters(self, param_names: str | list[str] | None = None):
         if param_names is None:
             param_names = self.parameter_names
-        param_names = ensure_input_is_sequence(param_names)
-        return [self.get_parameter(name) for name in param_names]
+        return [self.get_parameter(name) for name in ensure_input_is_sequence(param_names)]
 
     def get_variable(self, var_name: str):
         return self._get_object(var_name, "variables")
 
-    def get_variables(self, var_names: list[str] | None = None):
+    def get_variables(self, var_names: str | list[str] | None = None):
         if var_names is None:
             var_names = self.variable_names
-        var_names = ensure_input_is_sequence(var_names)
-        return [self.get_variable(name) for name in var_names]
+        return [self.get_variable(name) for name in ensure_input_is_sequence(var_names)]
 
-    def get(self, names: str | list[str, ...] | None = None) -> list[Variable | Parameter]:
+    def get(self, names: str | list[str] | None = None) -> list[Variable | Parameter]:
         """
         Retrieve a list of model objects (variables or parameters) from the model by name.
 
@@ -512,7 +511,7 @@ class CGEModel:
         if isinstance(names, str):
             names = [names]
 
-        out = []
+        out: list[Variable | Parameter] = []
         for name in names:
             if name in self.variable_names:
                 out.append(self._variables[name])
@@ -581,9 +580,10 @@ class CGEModel:
         if variables in ["variables", "parameters"]:
             variables = [x.name for x in getattr(self, f"get_{variables}")()]
 
-        info_dict = {"Symbol": [], "Description": []}
+        info_dict: dict[str, Any] = {"Symbol": [], "Description": []}
 
         for var_name in variables:
+            item: Variable | Parameter
             if var_name in self.parameter_names:
                 item = self._parameters[var_name]
             elif var_name in self.variable_names:
@@ -704,7 +704,7 @@ class CGEModel:
     def _solve_with_minimize(
         self,
         data: dict[str, np.ndarray],
-        theta_final: dict[str, np.ndarray],
+        theta_final: np.ndarray,
         use_jac: bool = True,
         use_hess: bool = False,
         use_hessp: bool = True,
@@ -834,7 +834,7 @@ class CGEModel:
             raise ValueError(
                 f"Unknown method {solve_method}. Must be one of {list(SOLVER_FACTORY.keys())}"
             )
-        fixed_values = [] if fixed_values is None else fixed_values
+        fixed_values = {} if fixed_values is None else fixed_values
 
         joint_dict = {**param_dict, **initial_variable_guess}
         free_variables = [var for var in self.variables if var.name not in fixed_values]

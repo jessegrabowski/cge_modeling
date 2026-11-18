@@ -27,10 +27,10 @@ def unwrap_singleton_list(x):
 
 
 def unpack_string_inputs(
-    *inputs: str | list[str, ...],
+    *inputs: str | list[str],
     dims: Sequence[str] | None = None,
-    coords: dict[str, list[str, ...]] | None = None,
-) -> list[list[str, ...]]:
+    coords: dict[str, list[str]] | None = None,
+) -> list[list[str]]:
     """
     Unpack string inputs into lists of variables using the provided dims and coords.
 
@@ -56,37 +56,34 @@ def unpack_string_inputs(
     -----
     If inputs are lists, this function will return them unchanged.
     """
-    inputs = list(map(unwrap_singleton_list, inputs))
+    unwrapped_inputs = list(map(unwrap_singleton_list, inputs))
 
-    if all([isinstance(x, list) for x in inputs]):
-        return list(map(at_least_list, inputs))
+    if all([isinstance(x, list) for x in unwrapped_inputs]):
+        return list(map(at_least_list, unwrapped_inputs))
 
     if coords is None or dims is None:
-        return list(map(at_least_list, inputs))
+        return list(map(at_least_list, unwrapped_inputs))
 
     if not all([key in coords.keys() for key in dims]):
         raise KeyError(f"Dimensions {dims} not found in coords")
 
     labels = [coords[dim] for dim in dims]
-    label_prod = product(*labels)
-    outputs: list[list[str, ...]] = [[] for _ in inputs]
+    outputs: list[list[str]] = [[] for _ in unwrapped_inputs]
 
-    for labels in label_prod:
-        label_list = [x for x in labels]
-
-        for i, input in enumerate(inputs):
-            outputs[i].append("_".join([input, *label_list]))
+    for label_combination in product(*labels):
+        for i, input in enumerate(unwrapped_inputs):
+            outputs[i].append("_".join([input, *label_combination]))
 
     return outputs
 
 
-def _add_second_alpha(alpha: str | list[str, ...], factors: str | list[str, ...]) -> list[str, ...]:
+def _add_second_alpha(alpha: str | list[str], factors: str | list[str]) -> list[str]:
     if not isinstance(factors, list) or len(factors) != 2:
         # If there are not exactly two factors, we don't need to add a second alpha. It will either be unpacked
         # later, or it will be an error.
-        return cast(list[str, ...], at_least_list(alpha))
+        return cast(list[str], at_least_list(alpha))
 
-    alpha = cast(list[str, ...], at_least_list(alpha))
+    alpha = cast(list[str], at_least_list(alpha))
 
     if len(factors) == 2 and len(alpha) == 1:
         alpha.append(f"1 - {alpha[0]}")
@@ -96,11 +93,11 @@ def _add_second_alpha(alpha: str | list[str, ...], factors: str | list[str, ...]
 
 
 def cobb_douglass(
-    factors: list[str, ...],
-    factor_prices: list[str, str],
+    factors: list[str],
+    factor_prices: list[str],
     output: str,
     output_price: str,
-    factor_shares: str,
+    factor_shares: str | list[str],
     TFP: str = "1",
     use_value_definition: bool = False,
 ) -> tuple[str, ...]:
@@ -206,12 +203,12 @@ def cobb_douglass(
 
 
 def CES(
-    factors: list[str, ...] | str,
-    factor_prices: list[str, ...] | str,
+    factors: list[str] | str,
+    factor_prices: list[str] | str,
     output: str,
     output_price: str,
     TFP: str,
-    factor_shares: str | list[str, ...],
+    factor_shares: str | list[str],
     epsilon: str,
     expand_price_dim: Literal["input", "output", "both", None] = None,
     use_value_definition=False,
@@ -335,13 +332,13 @@ def CES(
 
 
 def dixit_stiglitz(
-    factors: str | list[str, ...],
-    factor_prices: str | list[str, ...],
+    factors: str | list[str],
+    factor_prices: str | list[str],
     output: str,
     output_price: str,
     epsilon: str,
     dims: str,
-    coords: dict[str, list[str, ...]],
+    coords: dict[str, list[str]],
     backend: BACKEND_TYPE = "sympytensor",
     TFP: str | None = None,
     factor_shares: str | None = None,
@@ -477,11 +474,11 @@ def dixit_stiglitz(
 
 
 def _1d_leontief(
-    factors: str | list[str, ...],
-    factor_prices: str | list[str, ...],
+    factors: str | list[str],
+    factor_prices: str | list[str],
     output: str,
     output_price: str,
-    factor_shares: str | list[str, ...],
+    factor_shares: str | list[str],
     *args,
     **kwargs,
 ) -> tuple[str, ...]:
@@ -500,13 +497,13 @@ def _1d_leontief(
 
 
 def _2d_leontief(
-    factors: str | list[str, ...],
-    factor_prices: str | list[str, ...],
+    factors: str | list[str],
+    factor_prices: str | list[str],
     output: str,
     output_price: str,
-    factor_shares: str | list[str, ...],
-    dims: str,
-    coords: dict[str, list[str, ...]],
+    factor_shares: str | list[str],
+    dims: list[str],
+    coords: dict[str, list[str]],
     sum_dim: str | None = None,
     expand_price_dim: bool = True,
     transpose_output: bool = True,
@@ -595,13 +592,13 @@ def _2d_leontief(
 
 
 def leontief(
-    factors: str | list[str, ...],
-    factor_prices: str | list[str, ...],
+    factors: str | list[str],
+    factor_prices: str | list[str],
     output: str,
     output_price: str,
-    factor_shares: str | list[str, ...],
-    dims: str | list[str, ...],
-    coords: dict[str, list[str, ...]],
+    factor_shares: str | list[str],
+    dims: str | list[str],
+    coords: dict[str, list[str]],
     sum_dim: str | None = None,
     expand_price_dim: bool = True,
     transpose_output: bool = True,

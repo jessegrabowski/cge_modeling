@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
+from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import PercentFormatter
@@ -13,7 +14,7 @@ from cge_modeling import CGEModel
 
 def prepare_gridspec_figure(
     n_cols: int, n_plots: int
-) -> tuple[GridSpec, list[tuple[slice, slice], ...]]:
+) -> tuple[GridSpec, list[tuple[slice, slice]]]:
     """
      Prepare a figure with a grid of subplots. Centers the last row of plots if the number of plots is not square.
 
@@ -79,7 +80,7 @@ def plot_lines(
         The number of columns in the grid of plots.
     var_names: list of str, optional
         Name of the variables to plot. If None, all variables will be plotted.
-    initial_values: dict[str, np.array], optional
+    initial_values: dict[str, np.ndarray], optional
         The initial values of the variables in the model; those passed to the simulate method. If None, the initial
         values will be taken from the DataTree.
     plot_euler: bool, default True
@@ -109,13 +110,13 @@ def plot_lines(
         rename_dict = {}
 
     if legends is None or legends is False:
-        legends = dict.fromkeys(var_names, False)
+        legend_flags = dict.fromkeys(var_names, False)
     elif legends is True:
-        legends = dict.fromkeys(var_names, True)
+        legend_flags = dict.fromkeys(var_names, True)
     else:
         no_legend = set(var_names) - set(legends)
-        legends = dict.fromkeys(legends, True)
-        legends.update(dict.fromkeys(no_legend, False))
+        legend_flags = dict.fromkeys(legends, True)
+        legend_flags.update(dict.fromkeys(no_legend, False))
 
     if "euler" not in idata and plot_euler:
         raise ValueError(
@@ -142,7 +143,7 @@ def plot_lines(
             return plt.colormaps[cmap](np.linspace(0, 1, n))
     elif cmap in plt.color_sequences:
 
-        def f_cmap(*args):
+        def f_cmap(n):
             return plt.color_sequences[cmap]
     else:
         raise ValueError(f"Colormap {cmap} not found in matplotlib.")
@@ -152,19 +153,19 @@ def plot_lines(
         axis.set(title=rename_dict.get(var, var), xlabel=None)
 
         if plot_euler:
-            data = idata["euler"]["variables"][var]
+            data = idata["euler"]["variables"].dataset[var]
 
             n_lines = int(np.prod(data.values.shape[1:]))
             cycler = plt.cycler(color=f_cmap(n_lines))
             axis.set_prop_cycle(cycler)
 
             if data.ndim > 2:
-                data = data.stack(pair=data.dims[1:])
-            data.plot.line(x="step", ax=axis, add_legend=legends[var])
+                data = data.stack(pair=list(data.dims[1:]))
+            data.plot.line(x="step", ax=axis, add_legend=legend_flags[var])
 
         if plot_optimizer:
-            initial_value = idata["optimizer"]["variables"][var].isel(step=0).data.ravel()
-            final_value = idata["optimizer"]["variables"][var].isel(step=-1).data.ravel()
+            initial_value = idata["optimizer"]["variables"].dataset[var].isel(step=0).data.ravel()
+            final_value = idata["optimizer"]["variables"].dataset[var].isel(step=-1).data.ravel()
 
             t0 = np.zeros_like(initial_value)
             T = np.ones_like(final_value)
@@ -189,7 +190,8 @@ def plot_lines(
                 s=100,
             )
 
-        [spine.set_visible(False) for spine in axis.spines.values()]
+        for spine in axis.spines.values():
+            spine.set_visible(False)
         axis.grid(ls="--", lw=0.5)
 
     fig.tight_layout()
@@ -198,7 +200,7 @@ def plot_lines(
 
 def plot_areas(
     idata: dict[str, xr.DataTree],
-    initial_values: dict[str, np.array],
+    initial_values: dict[str, np.ndarray],
     mod: CGEModel,
     var_names: str | list[str],
     shock_name: str | None = None,
@@ -213,7 +215,7 @@ def plot_areas(
     ----------
     idata: dict of xr.DataTree
         The value returned by the model's simulate method, a dictionary of DataTrees with keys "euler" and "optimizer".
-    initial_values: dict[str, np.array]
+    initial_values: dict[str, np.ndarray]
         The initial values of the variables in the model; those passed to the simulate method.
     mod: CGEModel
         The model object.
@@ -439,7 +441,7 @@ def plot_bar(
             axis = _plot_one_bar(
                 data[var],
                 initial_values[var],
-                cast(plt.axis, axis),
+                cast(Axes, axis),
                 group_dict=group_dict,
                 drop_vars=drop_vars,
                 orientation=orientation,

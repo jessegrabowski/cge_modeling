@@ -1,6 +1,7 @@
 import functools as ft
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 import pytensor.compile
@@ -13,10 +14,10 @@ from cge_modeling.base.utilities import (
 
 
 def wrap_pytensor_func_for_scipy(
-    f: pytensor.compile.Function,
+    f: Callable[..., Any],
     variable_list: list[Variable],
     parameter_list: list[Parameter],
-    coords: dict[str, list[str | int, ...]],
+    coords: Mapping[str, Sequence[str | int]],
     include_p: bool = False,
 ) -> Callable:
     """
@@ -32,7 +33,7 @@ def wrap_pytensor_func_for_scipy(
         List of model variables
     parameter_list: list[Parameter]
         List of model parameters
-    coords: dict[str, list[str, ...]]
+    coords: dict[str, list[str]]
         Dictionary of coordinates mapping dimension names to lists of labels associated with that dimension.
     include_p: bool
         If true, a 3rd argument is included in the inner function (useful

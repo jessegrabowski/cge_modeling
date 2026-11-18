@@ -46,12 +46,12 @@ def _tokenize_latex_subscript(subscript):
 @dataclass(slots=True, order=True, frozen=False, repr=False)
 class ModelObject(ABC):
     name: str
-    dims: tuple[str, ...] | list[str, ...] | str | None = None
+    dims: tuple[str, ...] | list[str] | str | None = None
     dim_vals: dict[str, str] | None = None
     latex_name: str | None = None
     _full_latex_name: str | None = None
     description: str | None = None
-    base_name: str = None
+    base_name: str | None = None
     real: bool = True
     positive: bool = True
     extend_subscript: bool | int = False

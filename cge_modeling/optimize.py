@@ -1,5 +1,7 @@
 import functools as ft
 
+from collections.abc import Mapping
+
 import numpy as np
 import pytensor
 import pytensor.tensor as pt
@@ -99,7 +101,7 @@ def scan_body(*args, F, J, initial_step_size, tol, has_exog, n_endog, n_exog):
     return [*return_X, is_converged, new_step_size, new_n_steps]
 
 
-def _process_root_data(data: dict[str, np.ndarray] | None) -> list[pt.TensorLike]:
+def _process_root_data(data: Mapping[str, np.ndarray | float] | None) -> list[pt.TensorLike]:
     if data is None:
         return [pt.as_tensor_variable(np.nan, name="dummy_exog", shape=())]
     else:
@@ -161,7 +163,7 @@ def root(
 
     init_step_size = np.float64(step_size)
     converged = np.array(False)
-    n_steps = 0
+    initial_n_steps = 0
     has_exog = parameters is not None
 
     x0 = _process_root_data(initial_data)
@@ -183,7 +185,7 @@ def root(
 
     outputs, _updates = pytensor.scan(
         root_func,
-        outputs_info=[*x0, converged, init_step_size, n_steps],
+        outputs_info=[*x0, converged, init_step_size, initial_n_steps],
         non_sequences=exog,
         n_steps=max_iter,
         strict=True,
