@@ -178,3 +178,7 @@ docs/jupyter_execute/
 # pixi environments
 .pixi/
 cge_modeling/_version.py
+
+# Coverage reports
+.coverage
+coverage.xml
