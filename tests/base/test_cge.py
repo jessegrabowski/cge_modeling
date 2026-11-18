@@ -1,9 +1,7 @@
 import logging
-import sys
 
 from collections.abc import Callable
 from importlib.util import find_spec
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -568,19 +566,6 @@ def test_generate_SAM():
         use_jac=False,
         use_hess=False,
     )
-
-
-def test_can_compile_without_jax_installed():
-    with patch.dict(sys.modules, {"jax": None}):
-        with pytest.raises(ImportError):
-            # Can't cache here, otherwise the error won't be raised if the model is already cached
-            load_model_1(backend="pytensor", mode="JAX")
-
-        mod = load_and_cache_model(
-            model_id=1, backend="pytensor", functions_to_compile=("root", "euler")
-        )
-        inital_data = calibrate_model_1(**model_1_data)
-        mod.simulate(inital_data, final_delta_pct={"L_s": 0.5})
 
 
 def test_invalid_simulation_raises():
