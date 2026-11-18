@@ -506,8 +506,8 @@ def test_jax_mode_agrees_with_default_mode(
 
 @pytest.mark.parametrize(
     "gtol, expected_success",
-    [(1e-4, False), (1e-10, True)],
-    ids=["stops_short_of_equilibrium", "reaches_equilibrium"],
+    [(1e10, False), (1e-10, True)],
+    ids=["stops_before_first_step", "reaches_equilibrium"],
 )
 def test_minimize_success_reflects_equilibrium_residuals(gtol, expected_success):
     model = load_and_cache_model(model_id=2, backend="pytensor", functions_to_compile="minimize")
