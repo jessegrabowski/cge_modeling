@@ -8,6 +8,7 @@ import sympy as sp
 
 from pytensor import tensor as pt
 from pytensor.compile import Function
+from pytensor.graph.replace import graph_replace
 from sympytensor import as_tensor
 
 from cge_modeling import CGEModel
@@ -284,7 +285,7 @@ def compile_sympytensor_hessp_function(
     point_vars = [var.type(name=f"{var.name}_point") for var in variables]
     p = pt.concatenate([v.ravel() for v in point_vars], axis=0)
 
-    hessp = pytensor.graph_replace(hessp, {p_vars_pt: p}, strict=True)
+    hessp = graph_replace(hessp, {p_vars_pt: p}, strict=True)
 
     f_hessp = pytensor.function(
         inputs=[*variables, *parameters, *point_vars],
