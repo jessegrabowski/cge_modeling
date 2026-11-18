@@ -735,7 +735,8 @@ def test_calibrate_flags_inconsistent_data():
     variables, parameters, equations, coords = load_model_1_components()
     mod = CGEModel(coords=coords, variables=variables, parameters=parameters, equations=equations)
 
-    # Consumption is pinned by income in the budget constraint, so also supplying it over-determines the system.
+    # The budget constraint already pins consumption to income, so supplying C as well
+    # over-determines the system.
     result = mod.calibrate(data={**model_1_data, "w": 1.0, "C": 5.0})
 
     assert not result.success
