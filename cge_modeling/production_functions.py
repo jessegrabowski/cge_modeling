@@ -770,6 +770,26 @@ def _register_equations(
     return tuple(Equation(name, lhs, rhs, model=model) for name, lhs, rhs in specs)
 
 
+def _ces_demand_specs(
+    name: str,
+    output: XTensorVariable,
+    output_price: XTensorVariable,
+    factors: Sequence[XTensorVariable],
+    factor_prices: Sequence[XTensorVariable],
+    factor_shares: Sequence[XTensorVariable | float],
+    tfp: XTensorVariable | float,
+    epsilon: XTensorVariable | float,
+) -> list[EquationSpec]:
+    return [
+        (
+            f"{name}: demand for {factor.name}",
+            factor,
+            output / tfp * (share * output_price * tfp / price) ** epsilon,
+        )
+        for factor, price, share in zip(factors, factor_prices, factor_shares, strict=True)
+    ]
+
+
 def CobbDouglas(
     name: str,
     *,
@@ -823,3 +843,123 @@ def CobbDouglas(
         for factor, price, share in zip(factors, factor_prices, factor_shares, strict=True)
     ]
     return _register_equations(model, [(name, output, technology), *demands])
+
+
+def CES(
+    name: str,
+    *,
+    output: XTensorVariable,
+    output_price: XTensorVariable,
+    factors: Sequence[XTensorVariable],
+    factor_prices: Sequence[XTensorVariable],
+    factor_shares: Sequence[XTensorVariable | float],
+    tfp: XTensorVariable | float,
+    epsilon: XTensorVariable | float,
+    model: "CGEModel | None" = None,
+) -> tuple[XTensorEquation, ...]:
+    r"""
+    Register a CES production block on ``model``, or on the active :class:`CGEModel`.
+
+    The block is the technology and one cost-minimizing demand per factor:
+
+    .. math::
+
+        Y = A \left( \sum_i \alpha_i X_i^{\frac{\epsilon - 1}{\epsilon}} \right)^{\frac{\epsilon}{\epsilon - 1}},
+        \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
+
+    :func:`CESValue` registers the same demands with the zero-profit condition in place of the technology.
+
+    Parameters
+    ----------
+    name : str
+        Name of the production equation. Each demand equation is named ``"{name}: demand for {factor}"``.
+    output, output_price : XTensorVariable
+        The output :math:`Y` and its price :math:`P_Y`.
+    factors, factor_prices : sequence of XTensorVariable
+        The factors :math:`X_i`, which must be model objects, and their prices :math:`P_i`, in matching order.
+    factor_shares : sequence of XTensorVariable or float
+        The shares :math:`\alpha_i`, one per factor. With one share fewer than factors, the last share is one
+        minus the sum of the others.
+    tfp : XTensorVariable or float
+        Total factor productivity :math:`A`.
+    epsilon : XTensorVariable or float
+        Elasticity of substitution :math:`\epsilon`.
+    model : CGEModel, optional
+        Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
+
+    Returns
+    -------
+    equations : tuple of XTensorEquation
+        The production equation, then one demand equation per factor, in factor order.
+    """
+    model = modelcontext(model)
+    _check_factors_named(factors)
+    factor_shares = _complete_factor_shares(factors, factor_prices, factor_shares)
+
+    exponent = (epsilon - 1) / epsilon
+    weighted_sum = reduce(
+        add,
+        [share * factor**exponent for factor, share in zip(factors, factor_shares, strict=True)],
+    )
+    demands = _ces_demand_specs(
+        name=name,
+        output=output,
+        output_price=output_price,
+        factors=factors,
+        factor_prices=factor_prices,
+        factor_shares=factor_shares,
+        tfp=tfp,
+        epsilon=epsilon,
+    )
+    return _register_equations(
+        model, [(name, output, tfp * weighted_sum ** (1 / exponent)), *demands]
+    )
+
+
+def CESValue(
+    name: str,
+    *,
+    output: XTensorVariable,
+    output_price: XTensorVariable,
+    factors: Sequence[XTensorVariable],
+    factor_prices: Sequence[XTensorVariable],
+    factor_shares: Sequence[XTensorVariable | float],
+    tfp: XTensorVariable | float,
+    epsilon: XTensorVariable | float,
+    model: "CGEModel | None" = None,
+) -> tuple[XTensorEquation, ...]:
+    r"""
+    Register a CES production block in its dual form on ``model``, or on the active :class:`CGEModel`.
+
+    The block is the zero-profit condition and the CES demands of :func:`CES`:
+
+    .. math::
+
+        P_Y Y = \sum_i P_i X_i, \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
+
+    Together these hold only when :math:`P_Y` is the CES unit cost, so the zero-profit condition pins the price
+    where the technology in :func:`CES` pins the quantity. The parameters are those of :func:`CES`.
+
+    Returns
+    -------
+    equations : tuple of XTensorEquation
+        The zero-profit equation, then one demand equation per factor, in factor order.
+    """
+    model = modelcontext(model)
+    _check_factors_named(factors)
+    factor_shares = _complete_factor_shares(factors, factor_prices, factor_shares)
+
+    factor_cost = reduce(
+        add, [price * factor for factor, price in zip(factors, factor_prices, strict=True)]
+    )
+    demands = _ces_demand_specs(
+        name=name,
+        output=output,
+        output_price=output_price,
+        factors=factors,
+        factor_prices=factor_prices,
+        factor_shares=factor_shares,
+        tfp=tfp,
+        epsilon=epsilon,
+    )
+    return _register_equations(model, [(name, output_price * output, factor_cost), *demands])

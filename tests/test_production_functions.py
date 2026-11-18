@@ -8,6 +8,8 @@ from cge_modeling import CGEModel, compile_model
 from cge_modeling import model as cm
 from cge_modeling.base.utilities import variable_dict_to_flat_array
 from cge_modeling.production_functions import (
+    CES,
+    CESValue,
     CobbDouglas,
 )
 
@@ -164,6 +166,71 @@ def test_model_built_with_cobb_douglas_solves_to_the_analytic_equilibrium():
 
     assert result.success
     np.testing.assert_allclose(result.x, [Y_star, K_star, L_star, P_star], rtol=1e-8)
+
+
+def ces_block(helper=CES):
+    with CGEModel(coords={"i": ["a", "b"]}) as model:
+        Y = cm.Variable("Y", dims="i")
+        K = cm.Variable("K", dims="i")
+        L = cm.Variable("L", dims="i")
+        P = cm.Variable("P", dims="i")
+        r = cm.Parameter("r")
+        w = cm.Parameter("w")
+        alpha = cm.Parameter("alpha", dims="i")
+        A = cm.Parameter("A", dims="i")
+        epsilon = cm.Parameter("epsilon", dims="i")
+        equations = helper(
+            "Value added in <dim:i>",
+            output=Y,
+            output_price=P,
+            factors=[K, L],
+            factor_prices=[r, w],
+            factor_shares=[alpha],
+            tfp=A,
+            epsilon=epsilon,
+        )
+    objects = {"Y": Y, "K": K, "L": L, "P": P, "r": r, "w": w, "alpha": alpha, "A": A}
+    return model, equations, {**objects, "epsilon": epsilon}
+
+
+def ces_unit_cost_point():
+    alpha, A, epsilon = np.array([0.3, 0.6]), np.array([1.5, 2.0]), np.array([0.7, 1.8])
+    r, w, Y = 1.2, 0.8, np.array([3.0, 5.0])
+    shares = np.stack([alpha, 1 - alpha])
+    prices = np.array([r, w])[:, None]
+    P = (shares**epsilon * prices ** (1 - epsilon)).sum(axis=0) ** (1 / (1 - epsilon)) / A
+    K, L = Y / A * (shares * P * A / prices) ** epsilon
+    return {
+        "Y": Y,
+        "K": K,
+        "L": L,
+        "P": P,
+        "r": r,
+        "w": w,
+        "alpha": alpha,
+        "A": A,
+        "epsilon": epsilon,
+    }
+
+
+@pytest.mark.parametrize("helper", [CES, CESValue], ids=["technology", "value"])
+def test_ces_blocks_hold_when_the_output_price_is_the_unit_cost(helper):
+    model, equations, objects = ces_block(helper)
+    point = ces_unit_cost_point()
+
+    assert model.unpacked_equation_names[:2] == ["Value added in a", "Value added in b"]
+    for equation in equations:
+        np.testing.assert_allclose(
+            evaluate_residual(equation, objects, point), 0.0, atol=1e-12, err_msg=equation.name
+        )
+
+
+def test_ces_value_zero_profit_fails_off_the_unit_cost():
+    _, equations, objects = ces_block(CESValue)
+    point = ces_unit_cost_point()
+    point["P"] = point["P"] * 1.1
+
+    assert np.all(np.abs(evaluate_residual(equations[0], objects, point)) > 1e-3)
 
 
 def test_a_name_clash_leaves_the_model_unchanged():
