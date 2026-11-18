@@ -237,6 +237,7 @@ def infer_object_shape_from_coords(
     Examples
     --------
     .. code-block:: python
+
         from cge_modeling.base.primitives import Variable
         from cge_modeling.base.utilities import infer_object_shape_from_coords
 
@@ -315,6 +316,9 @@ def flat_array_to_variable_dict(
     Examples
     --------
     .. code-block:: python
+
+        import numpy as np
+
         from cge_modeling.base.primitives import Variable
         from cge_modeling.base.utilities import flat_array_to_variable_dict
 

@@ -27,7 +27,7 @@ def wrap_pytensor_func_for_scipy(
     Parameters
     ----------
     f: Callable
-        A compiled PyTensor function with an input signature f(**data), where data is a dictionary mapping variable
+        A compiled PyTensor function with an input signature ``f(**data)``, where ``data`` is a dictionary mapping variable
         and parameter names to numpy arrays containing the values of those variables and parameters.
 
     variable_list: list[Variable]

@@ -104,9 +104,8 @@ class CGEModel:
 
         numeraire: str, optional
             Name of the numéraire variable. If supplied, the numéraire will be removed from the model, and all instances of the
-            numéraire in model equations will be set to 1.
-            NOTE: It is not currently recommended to use this feature. Instead, add an equation to the model
-                  fixing the numéraire variable to 1.
+            numéraire in model equations will be set to 1. This feature is not recommended. Instead, add an equation
+            to the model fixing the numéraire variable to 1.
 
         parse_equations_to_sympy: bool, default
             If True, the equations will be parsed to sympy expressions. This is required for the model to be compiled to
@@ -961,8 +960,8 @@ class CGEModel:
             variables and parameters, and the values should be numpy arrays of the same shape as the variable or
             parameter.
 
-            .. warning:: The inital state **must** represent a model equlibrium! This will be checked automatically
-            before simulation begins, and an error will be raised if the initial state does not represent an equlibrium.
+            .. warning:: The initial state **must** represent a model equilibrium. This is checked before simulation
+               begins, and an error is raised if the initial state is not an equilibrium.
 
         final_values: dict[str, np.ndarray], optional
             A dictionary of exact final values for a subset of model parameters. The keys should be the names of the
