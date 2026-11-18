@@ -62,7 +62,7 @@ def clone_and_rename(x: pt.TensorVariable, suffix: str = "_next") -> pt.TensorVa
     return x_new
 
 
-def flatten_equations(eqs: list[pt.TensorLike]) -> pt.TensorLike:
+def flatten_equations(eqs: list[pt.TensorLike]) -> pt.TensorVariable:
     """
     Flatten a list of pytensor vectors, each representing equations in a system of equations, into a single vector.
 
