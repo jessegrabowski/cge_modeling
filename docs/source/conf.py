@@ -39,9 +39,9 @@ extensions = [
     "myst_nb",
     "sphinx_design",
     "sphinx_copybutton",
-    "sphinxcontrib.bibtex",
     "sphinx_codeautolink",
     "generate_gallery",
+    "simplebib",
     "sphinx.ext.autodoc",
     "numpydoc",
     "sphinx.ext.doctest",
@@ -146,6 +146,11 @@ numpydoc_xref_ignore = {
     "N",
 }
 
+# Bibliographic citations: add entries to docs/source/references.bib and cite from prose with
+# `{cite:t}` / `{cite:p}`. Each page renders its own numbered reference list via `{bibliography}`
+# (see sphinxext/simplebib.py).
+simplebib_bibfiles = ["references.bib"]
+
 # -- MyST config  -------------------------------------------------
 myst_enable_extensions = [
     "colon_fence",
@@ -166,11 +171,6 @@ nb_execution_mode = "off"
 nbsphinx_execute = "never"
 nbsphinx_allow_errors = True
 
-
-# -- Bibtex config  -------------------------------------------------
-bibtex_bibfiles = ["references.bib"]
-bibtex_default_style = "unsrt"
-bibtex_reference_style = "author_year"
 
 # -- ABlog config  -------------------------------------------------
 # blog_baseurl = "https://docs.pymc.io/projects/examples/en/latest/"

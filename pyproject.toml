@@ -76,7 +76,7 @@ docs = [
   "sphinx-notfound-page",
   "sphinx-sitemap",
   "sphinx-codeautolink",
-  "sphinxcontrib-bibtex",
+  "pybtex",
   "pydata-sphinx-theme",
   "watermark",
 ]
