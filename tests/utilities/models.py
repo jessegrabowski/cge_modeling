@@ -315,7 +315,7 @@ def load_model_2(**kwargs):
     )
 
 
-def build_model_2_in_context() -> tuple[CGEModel, list]:
+def build_model_2_in_context() -> CGEModel:
     sectors = ["0", "1", "2"]
 
     with CGEModel(coords={"i": sectors, "j": sectors}) as model:
@@ -348,33 +348,31 @@ def build_model_2_in_context() -> tuple[CGEModel, list]:
 
         exponent = (phi_VA - 1) / phi_VA
 
-        equations = [
-            cm.Equation("Final good production", P * Y, P_VC * VC + P_VA * VA),
-            cm.Equation("Demand for intermediate goods bundle", VC, psi_VC * Y),
-            cm.Equation("Demand for labor-capital", VA, psi_VA * Y),
-            cm.Equation(
-                "Production of intermediate goods bundle",
-                VC * P_VC,
-                (P * X).sum("i").rename(j="i"),
-            ),
-            cm.Equation("Demand for intermediate inputs", X, psi_X * VC.rename(i="j")),
-            cm.Equation(
-                "Production of labor-capital",
-                VA,
-                A * (alpha * K_d**exponent + (1 - alpha) * L_d**exponent) ** (1 / exponent),
-            ),
-            cm.Equation("Demand for capital", K_d, VA / A * (alpha * P_VA * A / r) ** phi_VA),
-            cm.Equation("Demand for labor", L_d, VA / A * ((1 - alpha) * A * P_VA / w) ** phi_VA),
-            cm.Equation("Household income", income, w * L_s + r * K_s),
-            cm.Equation("Household utility", U, (C**gamma).prod()),
-            cm.Equation("Household demand", C, gamma * income / P),
-            cm.Equation("Labor market clearing", L_s, L_d.sum() + resid),
-            cm.Equation("Capital market clearing", K_s, K_d.sum()),
-            cm.Equation("Goods market clearing", Y, C + X.sum("j")),
-            cm.Equation("Numeraire", P.sel(i="0"), P_Ag_bar),
-        ]
+        cm.Equation("Final good production", P * Y, P_VC * VC + P_VA * VA)
+        cm.Equation("Demand for intermediate goods bundle", VC, psi_VC * Y)
+        cm.Equation("Demand for labor-capital", VA, psi_VA * Y)
+        cm.Equation(
+            "Production of intermediate goods bundle",
+            VC * P_VC,
+            (P * X).sum("i").rename(j="i"),
+        )
+        cm.Equation("Demand for intermediate inputs", X, psi_X * VC.rename(i="j"))
+        cm.Equation(
+            "Production of labor-capital",
+            VA,
+            A * (alpha * K_d**exponent + (1 - alpha) * L_d**exponent) ** (1 / exponent),
+        )
+        cm.Equation("Demand for capital", K_d, VA / A * (alpha * P_VA * A / r) ** phi_VA)
+        cm.Equation("Demand for labor", L_d, VA / A * ((1 - alpha) * A * P_VA / w) ** phi_VA)
+        cm.Equation("Household income", income, w * L_s + r * K_s)
+        cm.Equation("Household utility", U, (C**gamma).prod())
+        cm.Equation("Household demand", C, gamma * income / P)
+        cm.Equation("Labor market clearing", L_s, L_d.sum() + resid)
+        cm.Equation("Capital market clearing", K_s, K_d.sum())
+        cm.Equation("Goods market clearing", Y, C + X.sum("j"))
+        cm.Equation("Numeraire", P.sel(i="0"), P_Ag_bar)
 
-    return model, equations
+    return model
 
 
 def calibrate_model_2(L_d, K_d, Y, X, P, P_VA, P_VC, r, w, phi_VA, P_Ag_bar):

@@ -12,7 +12,7 @@ from tests.utilities.models import (
 
 
 def test_context_built_model_compiles_to_the_string_model_functions():
-    context_model, _ = build_model_2_in_context()
+    context_model = build_model_2_in_context()
     compile_model(context_model, backend="pytensor", functions_to_compile=("root", "minimize"))
     string_model = load_and_cache_model(
         model_id=2, backend="pytensor", functions_to_compile=("root", "minimize")
@@ -40,7 +40,7 @@ def test_context_built_model_compiles_to_the_string_model_functions():
 
 
 def test_context_built_model_scan_euler_matches_the_string_model():
-    context_model, _ = build_model_2_in_context()
+    context_model = build_model_2_in_context()
     compile_model(
         context_model, backend="pytensor", functions_to_compile=("euler",), use_scan_euler=True
     )

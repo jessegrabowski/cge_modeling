@@ -25,7 +25,7 @@ def evaluate(xtensor, values):
 
 
 def test_model_2_in_context_matches_string_model_objects_and_size():
-    model, _ = build_model_2_in_context()
+    model = build_model_2_in_context()
     string_model = load_model_2(backend="pytensor", functions_to_compile=())
 
     assert model.variable_names == string_model.variable_names
@@ -41,10 +41,10 @@ def test_model_2_in_context_matches_string_model_objects_and_size():
 
 
 def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
-    _, equations = build_model_2_in_context()
+    model = build_model_2_in_context()
     calibrated = calibrate_model_2(**model_2_data)
 
-    for equation in equations:
+    for equation in model.equations:
         lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
         inputs = {
             tensor: np.asarray(calibrated[tensor.name], dtype=float)
@@ -55,7 +55,7 @@ def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
 
 @pytest.mark.parametrize("optimizer_mode", ["root", "minimize"])
 def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
-    context_model, _ = build_model_2_in_context()
+    context_model = build_model_2_in_context()
     string_model = load_and_cache_model(model_id=2, backend="pytensor")
     calibrated = calibrate_model_2(**model_2_data)
     scenario = {

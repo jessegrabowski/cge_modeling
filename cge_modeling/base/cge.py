@@ -460,7 +460,11 @@ class CGEModel:
         return [*self._equations, *self._xtensor_equations]
 
     @property
-    def equations(self) -> list[Equation]:
+    def equations(self) -> list[Equation] | list[XTensorEquation]:
+        """The model's equations: records from :func:`cge_modeling.model.Equation` for a model built in a ``with``
+        block, otherwise the :class:`Equation` objects it was constructed with."""
+        if self._model_objects:
+            return list(self._xtensor_equations.values())
         return list(self._equations.values())
 
     @property
@@ -613,7 +617,7 @@ class CGEModel:
 
         eq_id = equation.eq_id
         if eq_id is None:
-            eq_id = len(self.equations) + 1
+            eq_id = len(self._equations) + 1
 
         new_eq = _SympyEquation(
             name=equation.name,
@@ -640,15 +644,14 @@ class CGEModel:
             add_function(equation, overwrite)  # type: ignore
 
     def _unpack_equations(self, *args):
-        if self.equations is None:
-            raise ValueError("Cannot unpack equations before they are added to the model.")
+        string_equations = list(self._equations.values())
         if self.parse_equations_to_sympy:
-            unpacked_eqs = self._unpack_objects(self.equations)
+            unpacked_eqs = self._unpack_objects(string_equations)
             unpacked_names = [eq.name for eq in unpacked_eqs]
             param_dicts = [{"modelobj": eq} for eq in unpacked_eqs]
             self._unpacked_equations = dict(zip(unpacked_names, param_dicts))
         else:
-            unpacked_eq_names = unpack_equation_strings(self.equations, self.coords)
+            unpacked_eq_names = unpack_equation_strings(string_equations, self.coords)
             self._unpacked_equations = dict.fromkeys(unpacked_eq_names, None)
 
     def _get_object(self, obj_name: str, group: Literal["variables", "parameters"]):
