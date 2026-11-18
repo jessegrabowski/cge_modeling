@@ -146,11 +146,3 @@ def select_free_variable_entries(
         return out
 
     return inner_f
-
-
-def return_array_from_jax_wrapper(f):
-    @ft.wraps(f)
-    def f_array_return(*args, **kwargs):
-        return np.array(f(*args, **kwargs))
-
-    return f_array_return

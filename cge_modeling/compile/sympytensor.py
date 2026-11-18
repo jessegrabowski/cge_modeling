@@ -1,5 +1,6 @@
 import logging
 
+from collections.abc import Callable
 from functools import partial
 from typing import Any, cast
 
@@ -12,7 +13,6 @@ from pytensor.graph.replace import graph_replace
 from sympytensor import as_tensor
 
 from cge_modeling import CGEModel
-from cge_modeling.base.function_wrappers import return_array_from_jax_wrapper
 from cge_modeling.compile.constants import CompiledFunctions
 from cge_modeling.compile.euler import (
     pytensor_euler_function_with_python_loop,
@@ -88,12 +88,6 @@ def compile_sympytensor_jacobian(
         mode=mode,
     )
 
-    if mode == "JAX" or (
-        isinstance(mode, pytensor.compile.mode.Mode)
-        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
-    ):
-        f_jac = return_array_from_jax_wrapper(f_jac)
-
     return sp_jac, jac, f_jac
 
 
@@ -112,12 +106,6 @@ def compile_sympytensor_error_function(
     rewrite_pregrad(squared_loss)
 
     f_loss = pytensor.function(inputs=[*variables, *parameters], outputs=squared_loss, mode=mode)
-
-    if mode == "JAX" or (
-        isinstance(mode, pytensor.compile.mode.Mode)
-        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
-    ):
-        f_loss = return_array_from_jax_wrapper(f_loss)
 
     return sp_squared_loss, squared_loss, f_loss
 
@@ -145,12 +133,6 @@ def compile_sympytensor_gradient_function(
         on_unused_input="ignore",
     )
 
-    if mode == "JAX" or (
-        isinstance(mode, pytensor.compile.mode.Mode)
-        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
-    ):
-        f_grad = return_array_from_jax_wrapper(f_grad)
-
     return sp_grad, grad, f_grad
 
 
@@ -176,12 +158,6 @@ def compile_sympytensor_hess_function(
         mode=mode,
         on_unused_input="ignore",
     )
-
-    if mode == "JAX" or (
-        isinstance(mode, pytensor.compile.mode.Mode)
-        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
-    ):
-        f_hess = return_array_from_jax_wrapper(f_hess)
 
     return sp_hess, hess, f_hess
 
@@ -213,12 +189,6 @@ def compile_sympytensor_hessp_function(
         on_unused_input="ignore",
     )
 
-    if mode == "JAX" or (
-        isinstance(mode, pytensor.compile.mode.Mode)
-        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
-    ):
-        f_hessp = return_array_from_jax_wrapper(f_hessp)
-
     return sp_hessp, hessp, f_hessp
 
 
@@ -231,7 +201,7 @@ def compile_sympytensor_cge_functions(
     use_rk4: bool = False,
     *args,
     **kwargs,
-) -> tuple[Function | None, ...]:
+) -> tuple[Callable[..., Any] | None, ...]:
     system, variables, parameters, caches = sympy_cge_primitives_to_pytensor(cge_model)
     sp_equations, sp_variables, _sp_parameteres = (
         cge_model.unpacked_equation_symbols,
@@ -249,12 +219,6 @@ def compile_sympytensor_cge_functions(
         mode=mode,
         on_unused_input="raise",
     )
-
-    if mode == "JAX" or (
-        isinstance(mode, pytensor.compile.mode.Mode)
-        and isinstance(mode.linker, pytensor.compile.mode.JAXLinker)
-    ):
-        f_system = return_array_from_jax_wrapper(f_system)
 
     # Optional functions
     f_jac = None
