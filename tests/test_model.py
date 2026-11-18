@@ -1,14 +1,18 @@
+import logging
+
 import numpy as np
 import pytest
+import xarray.testing as xr_testing
 
 from pytensor.graph import rewrite_graph
 from pytensor.graph.traversal import explicit_graph_inputs
 
-from cge_modeling import CGEModel, Equation, Variable
+from cge_modeling import CGEModel, Equation, Variable, compile_model
 from cge_modeling import model as cm
 from tests.utilities.models import (
     build_model_2_in_context,
     calibrate_model_2,
+    load_and_cache_model,
     load_model_2,
     model_2_data,
 )
@@ -28,6 +32,12 @@ def test_model_2_in_context_matches_string_model_objects_and_size():
     assert model.parameter_names == string_model.parameter_names
     assert model.n_variables == model.n_equations == string_model.n_equations
     assert model.n_parameters == string_model.n_parameters
+    for context_object, string_object in zip(
+        model.variables + model.parameters, string_model.variables + string_model.parameters
+    ):
+        assert context_object._full_latex_name == string_object._full_latex_name, (
+            context_object.name
+        )
 
 
 def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
@@ -41,6 +51,53 @@ def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
             for tensor in explicit_graph_inputs([lowered])
         }
         np.testing.assert_allclose(lowered.eval(inputs), 0.0, atol=1e-8, err_msg=equation.name)
+
+
+@pytest.mark.parametrize("optimizer_mode", ["root", "minimize"])
+def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
+    context_model, _ = build_model_2_in_context()
+    string_model = load_and_cache_model(model_id=2, backend="pytensor")
+    calibrated = calibrate_model_2(**model_2_data)
+    scenario = {
+        "final_delta_pct": {"L_s": 0.5},
+        "n_iter_euler": 100,
+        "optimizer_mode": optimizer_mode,
+        "verbose": False,
+    }
+
+    context_result = context_model.simulate(calibrated, **scenario)
+    string_result = string_model.simulate(calibrated, **scenario)
+
+    assert context_model._compile_backend == "pytensor"
+    for group in ("euler", "optimizer"):
+        xr_testing.assert_allclose(
+            context_result[group]["variables"].dataset,
+            string_result[group]["variables"].dataset,
+            rtol=1e-6,
+        )
+
+
+def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_model(caplog):
+    with CGEModel(coords={"i": ["Agriculture", "Industry"]}) as model:
+        P = cm.Variable("P", dims="i")
+        P_bar = cm.Parameter("P_bar")
+        cm.Equation("Price of <dim:i>", P, P_bar)
+    compile_model(model, backend="pytensor", functions_to_compile=("root",))
+
+    with caplog.at_level(logging.INFO, logger="cge_modeling"):
+        model.check_for_equilibrium({"P": np.array([1.0, 3.0]), "P_bar": 1.0})
+
+    assert "Equilibrium not found" in caplog.text
+    assert "Price of Industry" in caplog.text
+    assert "Price of Agriculture" not in caplog.text
+
+
+def test_equation_repeating_an_existing_element_name_raises():
+    with pytest.raises(ValueError, match=r"repeats existing equation element names \['Price a'\]"):
+        with CGEModel(coords={"i": ["a", "b"]}):
+            P = cm.Variable("P", dims="i")
+            cm.Equation("Price <dim:i>", P, 1.0)
+            cm.Equation("Price a", P.sel(i="a"), 1.0)
 
 
 def test_equation_residual_is_lhs_minus_rhs_in_coords_dim_order():

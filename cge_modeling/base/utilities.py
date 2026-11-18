@@ -62,6 +62,30 @@ def unpack_equation_strings(
     return unpacked_names
 
 
+def unpack_equation_name(
+    name: str, dims: Sequence[str], coords: Mapping[str, Sequence[str | int]]
+) -> list[str]:
+    """
+    Name every element of an equation whose residual has ``dims``, in row-major order.
+
+    ``<dim:d>`` markers in ``name`` are replaced by the element's label along ``d``. Labels along dims that ``name``
+    does not mark are appended as ``[d=label, ...]``, so every element name is distinct.
+    """
+    marked_dims = [dim for dim in dims if f"<dim:{dim}>" in name]
+    unmarked_dims = [dim for dim in dims if dim not in marked_dims]
+
+    element_names = []
+    for labels in product(*(coords[dim] for dim in dims)):
+        dim_labels = dict(zip(dims, labels))
+        element_name = _pretty_print_dim_flags(name, marked_dims, dim_labels)
+        if unmarked_dims:
+            suffix = ", ".join(f"{dim}={dim_labels[dim]}" for dim in unmarked_dims)
+            element_name = f"{element_name} [{suffix}]"
+        element_names.append(element_name)
+
+    return element_names
+
+
 def _validate_input(obj: Any, cls: type[CGETypes]):
     """
     Validate that an input is an instance of a class.

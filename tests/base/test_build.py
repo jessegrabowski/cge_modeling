@@ -106,13 +106,13 @@ def test_compile_model_rejects_a_non_square_context_built_model():
         build.compile_model(model, backend="pytensor")
 
 
-def test_compile_model_rejects_a_square_context_built_model():
+def test_compile_model_rejects_the_sympytensor_backend_for_a_context_built_model():
     with CGEModel(coords={"i": ["a", "b"]}) as model:
         P = cm.Variable("P", dims="i")
         cm.Equation("prices", P, 1.0)
 
-    with pytest.raises(NotImplementedError, match="built in a `with` block is not supported yet"):
-        build.compile_model(model, backend="pytensor")
+    with pytest.raises(ValueError, match="compile with backend='pytensor', found 'sympytensor'"):
+        build.compile_model(model, backend="sympytensor")
 
 
 def test_compile_model_logs_the_model_size_once(caplog):

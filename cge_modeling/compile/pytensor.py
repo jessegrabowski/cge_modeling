@@ -2,13 +2,14 @@ import logging
 
 from collections.abc import Callable, Sequence
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 import pytensor
 
 from pytensor import tensor as pt
 from pytensor.compile import Function
 from pytensor.compile.builders import OpFromGraph
+from pytensor.graph import rewrite_graph
 from pytensor.graph.basic import explicit_graph_inputs
 
 from cge_modeling import CGEModel
@@ -69,6 +70,33 @@ def cge_primitives_to_pytensor(
     rewrite_pregrad(flat_equations)
 
     return flat_equations, variables, parameters, (cache, {})
+
+
+def xtensor_cge_primitives_to_pytensor(
+    cge_model: CGEModel,
+) -> tuple[pt.TensorVariable, list[pt.TensorVariable], list[pt.TensorVariable]]:
+    """
+    Collect the system and its inputs from a model built in a ``with`` block.
+
+    Returns
+    -------
+    system: TensorVariable
+        Every equation's residual, flattened in registration order and lowered from xtensor to tensor operations.
+    variables: list of TensorVariable
+        The tensor behind each model variable, in ``cge_model.variables`` order.
+    parameters: list of TensorVariable
+        The tensor behind each model parameter, in ``cge_model.parameters`` order.
+    """
+    variables = [cge_model[obj.name].owner.inputs[0] for obj in cge_model.variables]
+    parameters = [cge_model[obj.name].owner.inputs[0] for obj in cge_model.parameters]
+
+    residuals = [equation.residual.values for equation in cge_model._xtensor_equations.values()]
+    system = cast(
+        pt.TensorVariable, rewrite_graph(flatten_equations(residuals), include=("lower_xtensor",))
+    )
+    system.name = "equations"
+
+    return system, variables, parameters
 
 
 def make_jvp(
@@ -268,8 +296,13 @@ def compile_pytensor_cge_functions(
     *args,
     **kwargs,
 ) -> tuple[Callable[..., Any] | None, ...]:
-    system, variables, parameters, (cache, _unpacked_cache) = cge_primitives_to_pytensor(cge_model)
-    validate_pytensor_parsing_result(system, variables, parameters, cache)
+    if cge_model._model_objects:
+        system, variables, parameters = xtensor_cge_primitives_to_pytensor(cge_model)
+    else:
+        system, variables, parameters, (cache, _unpacked_cache) = cge_primitives_to_pytensor(
+            cge_model
+        )
+        validate_pytensor_parsing_result(system, variables, parameters, cache)
 
     _log.info(f"Compiling model to Pytensor using {mode} mode")
 

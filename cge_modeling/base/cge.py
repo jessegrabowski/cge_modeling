@@ -46,6 +46,7 @@ from cge_modeling.base.utilities import (
     get_method_defaults,
     infer_object_shape_from_coords,
     make_flat_array_return_mask,
+    unpack_equation_name,
     unpack_equation_strings,
     variable_dict_to_flat_array,
 )
@@ -210,10 +211,7 @@ class CGEModel:
 
     @property
     def n_equations(self) -> int:
-        return len(self.unpacked_equation_names) + sum(
-            int(np.prod(equation.residual.type.shape))
-            for equation in self._xtensor_equations.values()
-        )
+        return len(self.unpacked_equation_names)
 
     def __enter__(self) -> "CGEModel":
         if self._is_string_built():
@@ -263,17 +261,21 @@ class CGEModel:
         kind: Literal["variable", "parameter"],
         description: str | None,
         latex_name: str | None,
+        extend_subscript: bool | int,
     ) -> ModelObjectVariable:
         if name in self.variable_names + self.parameter_names:
             raise ValueError(f"The model already has a variable or parameter named {name!r}.")
         if name in self.coords:
             raise ValueError(f"Name {name!r} conflicts with an existing dimension name.")
 
-        obj: Variable | Parameter
-        if kind == "variable":
-            obj = Variable(name=name, dims=dims, description=description, latex_name=latex_name)
-        else:
-            obj = Parameter(name=name, dims=dims, description=description, latex_name=latex_name)
+        object_class = Variable if kind == "variable" else Parameter
+        obj = object_class(
+            name=name,
+            dims=dims,
+            description=description,
+            latex_name=latex_name,
+            extend_subscript=extend_subscript,
+        )
 
         normalized_dims = cast(tuple[str, ...], obj.dims)
         unknown_dims = [dim for dim in normalized_dims if dim not in self.coords]
@@ -330,8 +332,16 @@ class CGEModel:
 
         residual = residual.transpose(*[dim for dim in self.coords if dim in residual.type.dims])
 
+        element_names = unpack_equation_name(name, residual.type.dims, self.coords)
+        duplicates = [element for element in element_names if element in self._unpacked_equations]
+        if duplicates:
+            raise ValueError(
+                f"Equation {name!r} repeats existing equation element names {duplicates}."
+            )
+
         equation = XTensorEquation(name=name, lhs=lhs, rhs=rhs, residual=residual)
         self._xtensor_equations[name] = equation
+        self._unpacked_equations.update(dict.fromkeys(element_names))
         return equation
 
     def _compiled_function(
@@ -347,7 +357,10 @@ class CGEModel:
         # cge_modeling.base.build imports this module, so compile_model can only be imported here.
         from cge_modeling.base.build import compile_model
 
-        backend = "sympytensor" if self.parse_equations_to_sympy else "pytensor"
+        if self._model_objects or not self.parse_equations_to_sympy:
+            backend = "pytensor"
+        else:
+            backend = "sympytensor"
         compile_kwargs.setdefault("backend", self._compile_backend or backend)
         compile_model(self, **compile_kwargs)
 

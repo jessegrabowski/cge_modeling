@@ -60,8 +60,10 @@ def compile_model(
         raise ValueError(f"backend must be one of {list(COMPILE_FUNC_FACTORY)}, found None")
 
     model.check_initialization()
-    if model._model_objects:
-        raise NotImplementedError("Compiling models built in a `with` block is not supported yet.")
+    if model._model_objects and backend != "pytensor":
+        raise ValueError(
+            f"Models built in a `with` block compile with backend='pytensor', found {backend!r}."
+        )
     _log.info(
         f"Compiling a model with {model.n_equations} equations, {model.n_variables} variables, "
         f"{model.n_parameters} parameters"
