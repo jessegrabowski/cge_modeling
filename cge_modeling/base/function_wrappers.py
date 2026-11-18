@@ -16,7 +16,7 @@ from cge_modeling.base.utilities import (
 
 
 def wrap_pytensor_func_for_scipy(
-    f: pytensor.compile.function.types.Function,
+    f: pytensor.compile.Function,
     variable_list: list[Variable],
     parameter_list: list[Parameter],
     coords: dict[str, list[str | int, ...]],
@@ -75,7 +75,7 @@ def wrap_pytensor_func_for_scipy(
 
 
 def wrap_scipy_func_for_pytensor(
-    f: pytensor.compile.function.types.Function,
+    f: pytensor.compile.Function,
     variable_list: list[Variable],
     parameter_list: list[Parameter],
     wrapping_hessp: bool = False,
