@@ -4,13 +4,9 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
-import pytensor.compile
 
 from cge_modeling.base.primitives import Parameter, Variable
-from cge_modeling.base.utilities import (
-    flat_array_to_variable_dict,
-    variable_dict_to_flat_array,
-)
+from cge_modeling.base.utilities import flat_array_to_variable_dict
 
 
 def wrap_pytensor_func_for_scipy(
@@ -82,36 +78,6 @@ def wrap_pytensor_func_for_scipy(
             return np.asarray(f(**data, **fixed_values, **fixed_points))
 
     return inner_f
-
-
-def wrap_scipy_func_for_pytensor(
-    f: pytensor.compile.Function,
-    variable_list: list[Variable],
-    parameter_list: list[Parameter],
-    wrapping_hessp: bool = False,
-):
-    if wrapping_hessp:
-
-        @ft.wraps(f)
-        def inner(**kwargs):
-            """
-            Wraps a PyTensor function to accept a single long vector of variables and parameters, and returns the
-            result of the function.
-            """
-            points = [f"{x.name}_point" for x in variable_list]
-            p = np.concatenate([np.atleast_1d(kwargs.pop(name)).ravel() for name in points])
-
-            x, theta = variable_dict_to_flat_array(kwargs, variable_list, parameter_list)
-            return f(x, p, theta)
-
-    else:
-
-        @ft.wraps(f)
-        def inner(**kwargs):
-            x, theta = variable_dict_to_flat_array(kwargs, variable_list, parameter_list)
-            return f(x, theta)
-
-    return inner
 
 
 def select_free_variable_entries(
