@@ -13,13 +13,16 @@ from tests.utilities.models import (
     build_model_1_in_context,
     build_model_2_in_context,
     build_model_3_in_context,
+    build_model_4_in_context,
     calibrate_model_1,
     calibrate_model_2,
     calibrate_model_3,
+    calibrate_model_4,
     load_and_cache_model,
     model_1_data,
     model_2_data,
     model_3_data,
+    model_4_data,
 )
 
 ported_models = pytest.mark.parametrize(
@@ -153,6 +156,96 @@ def test_model_3_labor_supply_shock_clears_every_market():
     )
     assert float(root["w"]) < 1.0 < float(root["r"])
     xr_testing.assert_allclose(euler.drop_vars("resid"), root.drop_vars("resid"), rtol=1e-4)
+
+
+@pytest.mark.parametrize("closure", ["savings_driven", "fixed_investment"])
+def test_model_4_is_square_and_holds_at_the_calibrated_point(closure):
+    model = build_model_4_in_context(closure=closure)
+    calibrated = calibrate_model_4(**model_4_data)
+
+    assert model.n_variables == model.n_equations == 19
+    for equation in model.equations:
+        lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
+        inputs = {
+            tensor: np.asarray(calibrated[tensor.name], dtype=float)
+            for tensor in explicit_graph_inputs([lowered])
+        }
+        np.testing.assert_allclose(lowered.eval(inputs), 0.0, atol=1e-12, err_msg=equation.name)
+
+
+def test_model_4_calibration_reproduces_the_published_base_year():
+    calibrated = calibrate_model_4(**model_4_data)
+    published = {
+        "at": 2.22,
+        "bt": 0.77,
+        "aq": 1.97,
+        "bq": 0.38,
+        "E": 0.33,
+        "M": 0.50,
+        "Ds": 0.67,
+        "Qs": 1.18,
+        "Tax": 0.20,
+        "Y": 1.13,
+        "S": 0.27,
+        "Cn": 0.83,
+        "Pt": 1.08,
+        "ts": 0.08,
+        "Z": 0.25,
+        "Sg": -0.01,
+    }
+
+    for name, value in published.items():
+        np.testing.assert_allclose(calibrated[name], value, atol=0.005, err_msg=name)
+
+
+def test_model_4_doubling_the_exchange_rate_doubles_prices_and_leaves_quantities():
+    model = build_model_4_in_context(closure="savings_driven")
+    calibrated = calibrate_model_4(**model_4_data)
+
+    result = model.simulate(
+        calibrated, final_values={"Er": 2.0}, n_iter_euler=10, optimizer_mode="root", verbose=False
+    )
+    root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
+
+    assert result["optim_res"].success
+    for name in ["E", "M", "Ds", "Dd", "Qs", "Qd", "Cn", "Z"]:
+        np.testing.assert_allclose(float(root[name]), calibrated[name], rtol=1e-8, err_msg=name)
+    for name in ["Pe", "Pm", "Pd", "Pt", "Px", "Pq", "Tax", "Y", "S", "Sg"]:
+        np.testing.assert_allclose(float(root[name]), 2 * calibrated[name], rtol=1e-8, err_msg=name)
+
+
+def test_model_4_tariff_cut_reproduces_the_published_sales_tax_increase():
+    model = build_model_4_in_context(closure="fixed_investment")
+    calibrated = calibrate_model_4(**model_4_data)
+    published = {
+        "E": 0.33,
+        "M": 0.51,
+        "Ds": 0.67,
+        "Dd": 0.67,
+        "Qs": 1.18,
+        "Qd": 1.18,
+        "Tax": 0.19,
+        "Y": 1.10,  # Table 6.9 prints 0.10; its Cur/Base ratio of 0.97 on a base of 1.13 gives 1.10.
+        "S": 0.26,
+        "Cn": 0.83,
+        "Pm": 0.93,
+        "Pe": 1.00,
+        "Pt": 1.05,
+        "Pq": 0.95,
+        "Px": 0.97,
+        "Pd": 0.96,
+        "ts": 0.11,
+        "Sg": -0.01,
+    }
+
+    result = model.simulate(
+        calibrated, final_values={"tm": 0.05}, n_iter_euler=50, optimizer_mode="root", verbose=False
+    )
+    root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
+
+    assert result["optim_res"].success
+    for name, value in published.items():
+        np.testing.assert_allclose(float(root[name]), value, atol=0.005, err_msg=name)
 
 
 def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_model(caplog):

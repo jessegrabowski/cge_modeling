@@ -5,7 +5,7 @@ import numpy as np
 
 from cge_modeling import CGEModel, Equation, Parameter, Variable, cge_model
 from cge_modeling import model as cm
-from cge_modeling.production_functions import CES, CobbDouglas, Leontief
+from cge_modeling.production_functions import CES, CET, CobbDouglas, Leontief
 
 
 def load_model_1_components(**kargs):
@@ -870,6 +870,241 @@ def build_model_3_in_context() -> CGEModel:
         cm.Equation("Labor market clearing", L_s, L_d.sum() + L_d_E.sum() + resid)
         cm.Equation("Capital market clearing", K_s, K_d.sum() + K_d_E.sum())
         cm.Equation("Numeraire", P.sel(i="agriculture"), P_bar)
+
+    return model
+
+
+model_4_data = {
+    "output_value_added": 324.69,
+    "private_consumption": 291.69,
+    "public_consumption": 35.58,
+    "investment": 86.38,
+    "exports": 106.39,
+    "imports": 144.7,
+    "sales_and_excise_tax": 32.03,
+    "import_tariffs": 18.62,
+    "export_duties": 1.14,
+    "payroll_tax": 0.00,
+    "capital_income_tax": 12.84,
+    "nontax_revenue": 8.02,
+    "government_interest_payments": 22.07,
+    "transfers_and_subsidies": 26.10,
+    "net_profits_and_dividends": -0.78,
+    "external_interest_payments": -8.82,
+    "net_private_transfers": 11.60,
+    "net_official_transfers": 7.90,
+    "st": 0.6,
+    "sq": 0.6,
+}
+
+
+def calibrate_model_4(
+    output_value_added,
+    private_consumption,
+    public_consumption,
+    investment,
+    exports,
+    imports,
+    sales_and_excise_tax,
+    import_tariffs,
+    export_duties,
+    payroll_tax,
+    capital_income_tax,
+    nontax_revenue,
+    government_interest_payments,
+    transfers_and_subsidies,
+    net_profits_and_dividends,
+    external_interest_payments,
+    net_private_transfers,
+    net_official_transfers,
+    st,
+    sq,
+):
+    """
+    Calibrate model 4 to the 1991 Sri Lanka data of Devarajan, Go, Lewis, Robinson and Sinko (1997), Table 6.6.
+
+    The data are in billions of rupees and are indexed to output. The formulas follow Tables 6.7 and 6.8 of the same
+    chapter, including the direct tax rate, which counts payroll and capital income taxes but not personal income tax.
+    """
+    E = exports / output_value_added
+    M = (imports + import_tariffs) / output_value_added
+    X = 1.0
+    Ds = X - E
+    Dd = Ds
+    Qs = M + Dd
+    Qd = Qs
+    Er, Pm, Pe, Pd, Px, Pq = 1.0, 1.0, 1.0, 1.0, 1.0, 1.0
+
+    tm = import_tariffs / imports
+    te = export_duties / exports
+    ts = sales_and_excise_tax / output_value_added / Qs
+    Pt = Pq * (1 + ts)
+    wm = Pm / Er / (1 + tm)
+    we = Pe * (1 + te) / Er
+
+    tr = (
+        (government_interest_payments + transfers_and_subsidies - nontax_revenue)
+        / output_value_added
+        / Pq
+    )
+    re = (
+        (net_profits_and_dividends + external_interest_payments + net_private_transfers)
+        / output_value_added
+        / Er
+    )
+    ft = net_official_transfers / output_value_added / Er
+    Y = Px * X + tr * Pq + re * Er
+    ty = (payroll_tax + capital_income_tax) / output_value_added / Y
+
+    Cn = private_consumption / output_value_added / Pt
+    G = public_consumption / output_value_added / (1 + ts) / Pq
+    Z = investment / output_value_added / Pt
+    sy = (Y - Cn * Pt - ty * Y) / Y
+    B = wm * M - we * E - ft - re
+
+    Tax = tm * wm * Er * M + te * Pe * E + ts * Pq * Qd + ty * Y
+    Sg = Tax - G * Pt - tr * Pq + ft * Er
+    S = sy * Y + Er * B + Sg
+
+    rt = 1 / st + 1
+    bt = 1 / (1 + (Pd / Pe) * (E / Ds) ** (rt - 1))
+    at = X / (bt * E**rt + (1 - bt) * Ds**rt) ** (1 / rt)
+    rq = 1 / sq - 1
+    import_ratio = (Pm / Pd) * (M / Dd) ** (1 + rq)
+    bq = import_ratio / (1 + import_ratio)
+    aq = Qs / (bq * M ** (-rq) + (1 - bq) * Dd ** (-rq)) ** (-1 / rq)
+
+    return {
+        "E": E,
+        "M": M,
+        "Ds": Ds,
+        "Dd": Dd,
+        "Qs": Qs,
+        "Qd": Qd,
+        "Pe": Pe,
+        "Pm": Pm,
+        "Pd": Pd,
+        "Pt": Pt,
+        "Px": Px,
+        "Pq": Pq,
+        "Tax": Tax,
+        "Y": Y,
+        "S": S,
+        "Sg": Sg,
+        "Cn": Cn,
+        "Z": Z,
+        "resid": S - Pt * Z,
+        "X": X,
+        "Er": Er,
+        "wm": wm,
+        "we": we,
+        "tm": tm,
+        "te": te,
+        "ts": ts,
+        "ty": ty,
+        "sy": sy,
+        "G": G,
+        "tr": tr,
+        "ft": ft,
+        "re": re,
+        "B": B,
+        "at": at,
+        "bt": bt,
+        "st": st,
+        "aq": aq,
+        "bq": bq,
+        "sq": sq,
+    }
+
+
+def build_model_4_in_context(*, closure: Literal["savings_driven", "fixed_investment"]) -> CGEModel:
+    """
+    The 1-2-3 model with government and investment of Devarajan, Go, Lewis, Robinson and Sinko (1997), Table 6.3.
+
+    One country produces an export good and a domestic good on a CET frontier and consumes a CES composite of the
+    domestic good and an import. The exchange rate is the numeraire. In the savings-driven closure investment adjusts
+    to savings; in the fixed-investment closure investment is fixed and the sales tax rate adjusts.
+    """
+    investment_object, sales_tax_object = {
+        "savings_driven": (cm.Variable, cm.Parameter),
+        "fixed_investment": (cm.Parameter, cm.Variable),
+    }[closure]
+
+    with CGEModel() as model:
+        E = cm.Variable("E", description="Export good")
+        M = cm.Variable("M", description="Import good")
+        Ds = cm.Variable("Ds", description="Supply of domestic good")
+        Dd = cm.Variable("Dd", description="Demand for domestic good")
+        Qs = cm.Variable("Qs", description="Supply of composite good")
+        Qd = cm.Variable("Qd", description="Demand for composite good")
+        Pe = cm.Variable("Pe", description="Domestic price of export good")
+        Pm = cm.Variable("Pm", description="Domestic price of import good")
+        Pd = cm.Variable("Pd", description="Producer price of domestic good")
+        Pt = cm.Variable("Pt", description="Sales price of composite good")
+        Px = cm.Variable("Px", description="Price of aggregate output")
+        Pq = cm.Variable("Pq", description="Price of composite good")
+        Tax = cm.Variable("Tax", description="Tax revenue")
+        Y = cm.Variable("Y", description="Total income")
+        S = cm.Variable("S", description="Aggregate savings")
+        Sg = cm.Variable("Sg", description="Government savings")
+        Cn = cm.Variable("Cn", description="Aggregate consumption")
+        resid = cm.Variable("resid", latex_name="varepsilon", description="Walrasian residual")
+        Z = investment_object("Z", description="Aggregate real investment")
+        ts = sales_tax_object("ts", description="Sales, excise and value-added tax rate")
+
+        X = cm.Parameter("X", description="Aggregate output")
+        Er = cm.Parameter("Er", description="Exchange rate, the numeraire")
+        wm = cm.Parameter("wm", description="World price of import good")
+        we = cm.Parameter("we", description="World price of export good")
+        tm = cm.Parameter("tm", description="Tariff rate")
+        te = cm.Parameter("te", description="Export duty rate")
+        ty = cm.Parameter("ty", description="Direct tax rate")
+        sy = cm.Parameter("sy", description="Average savings rate")
+        G = cm.Parameter("G", description="Real government demand")
+        tr = cm.Parameter("tr", description="Government transfers")
+        ft = cm.Parameter("ft", description="Foreign transfers to government")
+        re = cm.Parameter("re", description="Foreign remittances to private sector")
+        B = cm.Parameter("B", description="Balance of trade")
+        at = cm.Parameter("at", description="CET scale")
+        bt = cm.Parameter("bt", description="CET share of the export good")
+        st = cm.Parameter("st", latex_name="Omega", description="Export transformation elasticity")
+        aq = cm.Parameter("aq", description="Armington scale")
+        bq = cm.Parameter("bq", description="Armington share of the import good")
+        sq = cm.Parameter("sq", latex_name="sigma", description="Import substitution elasticity")
+
+        CET(
+            "Export transformation",
+            output=X,
+            output_price=Px,
+            products=[E, Ds],
+            product_prices=[Pe, Pd],
+            product_shares=[bt],
+            tfp=at,
+            omega=st,
+        )
+        CES(
+            "Armington aggregation",
+            output=Qs,
+            output_price=Pq,
+            factors=[M, Dd],
+            factor_prices=[Pm, Pd],
+            factor_shares=[bq],
+            tfp=aq,
+            epsilon=sq,
+        )
+        cm.Equation("Domestic demand", Qd, Cn + Z + G)
+        cm.Equation("Tax revenue", Tax, tm * wm * Er * M + te * Pe * E + ts * Pq * Qd + ty * Y)
+        cm.Equation("Total income", Y, Px * X + tr * Pq + re * Er)
+        cm.Equation("Aggregate savings", S, sy * Y + Er * B + Sg)
+        cm.Equation("Consumption", Pt * Cn, (1 - ty - sy) * Y)
+        cm.Equation("Import price", Pm, Er * wm * (1 + tm))
+        cm.Equation("Export price", Pe, Er * we / (1 + te))
+        cm.Equation("Sales price", Pt, Pq * (1 + ts))
+        cm.Equation("Domestic good market", Dd, Ds)
+        cm.Equation("Composite good market", Qd, Qs)
+        cm.Equation("Current account balance", wm * M - we * E - ft - re, B)
+        cm.Equation("Government budget", Sg, Tax - G * Pt - tr * Pq + ft * Er)
+        cm.Equation("Savings-investment balance", S, Pt * Z + resid)
 
     return model
 
