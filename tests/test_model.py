@@ -9,6 +9,7 @@ from pytensor.graph.traversal import explicit_graph_inputs
 
 from cge_modeling import CGEModel, Equation, Variable, compile_model
 from cge_modeling import model as cm
+from cge_modeling.base.utilities import variable_dict_to_flat_array
 from tests.utilities.models import (
     build_model_1_in_context,
     build_model_2_in_context,
@@ -315,6 +316,79 @@ def test_model_5_abolishing_the_manufactures_tax_clears_every_market():
         float(P.sel(i="primaries")), float(P.sel(i="services"))
     )
     assert float(root["T"]) < calibrated["T"]
+
+
+@pytest.mark.parametrize(
+    "build, calibrate, data, unknown",
+    [
+        (
+            build_model_1_in_context,
+            calibrate_model_1,
+            model_1_data,
+            ["Y", "L_d", "K_d", "C", "income", "resid", "alpha", "A"],
+        ),
+        (
+            build_model_2_in_context,
+            calibrate_model_2,
+            model_2_data,
+            ["U", "psi_VA", "psi_VC", "psi_X", "alpha", "A", "gamma"],
+        ),
+        (
+            build_model_3_in_context,
+            calibrate_model_3,
+            model_3_data,
+            [
+                "psi_VA",
+                "psi_VC",
+                "psi_X",
+                "psi_X_EN",
+                "alpha",
+                "A",
+                "psi_VA_E",
+                "psi_VC_E",
+                "psi_X_E",
+                "alpha_E",
+                "A_E",
+                "gamma",
+                "gamma_E",
+            ],
+        ),
+        (
+            lambda: build_model_4_in_context(closure="savings_driven"),
+            calibrate_model_4,
+            model_4_data,
+            ["wm", "we", "sy", "B", "at", "bt", "aq", "bq"],
+        ),
+    ],
+    ids=["model_1", "model_2", "model_3", "model_4"],
+)
+def test_calibrate_recovers_the_hand_written_calibration(build, calibrate, data, unknown):
+    model = build()
+    expected = calibrate(**data)
+    given = {
+        name: expected[name]
+        for name in [*model.variable_names, *model.parameter_names]
+        if name not in unknown
+    }
+
+    result = model.calibrate(data=given)
+
+    assert result.success
+    np.testing.assert_allclose(
+        result.fitted_values,
+        np.concatenate(variable_dict_to_flat_array(expected, model.variables, model.parameters)),
+        rtol=1e-10,
+        atol=1e-12,
+    )
+
+
+def test_calibrate_flags_data_that_disagree_with_the_model():
+    model = build_model_1_in_context()
+    expected = calibrate_model_1(**model_1_data)
+
+    result = model.calibrate(data={**model_1_data, "w": 1.0, "C": 1.1 * expected["C"]})
+
+    assert not result.success
 
 
 def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_model(caplog):

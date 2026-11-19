@@ -796,7 +796,12 @@ class CGEModel:
 
         display_latex_table(info_dict)
 
-    def calibrate(self, data=None, max_iter=100, name="initial_calibration"):
+    def calibrate(self, data=None, max_iter=100, name="initial_calibration", initial_values=None):
+        if self._model_objects:
+            return self._calibrate_context_built(
+                data=data, initial_values=initial_values or {}, max_iter=max_iter, name=name
+            )
+
         if not self._compiled:
             self._compile()
 
@@ -831,6 +836,31 @@ class CGEModel:
         )
 
         return result
+
+    def _calibrate_context_built(self, data, initial_values, max_iter, name):
+        # cge_modeling.tools.calibration imports the compile modules, which import this module.
+        from cge_modeling.tools.calibration import (
+            RESIDUAL_TOLERANCE,
+            calibrate_entries,
+            compile_calibration_system,
+            flatten_entries,
+        )
+
+        system = compile_calibration_system(self)
+        fitted_values, residual = calibrate_entries(system, data, initial_values, max_iter)
+        initial_values_flat, _ = flatten_entries(system, data, fill=np.nan)
+        success = bool(
+            np.isfinite(residual).all() and 0.5 * np.sum(residual**2) < RESIDUAL_TOLERANCE
+        )
+
+        return Result(
+            name=name,
+            success=success,
+            variables=self.unpacked_variable_names,
+            parameters=self.unpacked_parameter_names,
+            initial_values=initial_values_flat,
+            fitted_values=fitted_values,
+        )
 
     def _solve_with_euler_approximation(self, data, theta_final, n_steps):
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
