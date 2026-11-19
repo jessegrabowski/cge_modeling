@@ -5,6 +5,7 @@ import numpy as np
 
 from cge_modeling import CGEModel, Equation, Parameter, Variable, cge_model
 from cge_modeling import model as cm
+from cge_modeling.production_functions import CES, CobbDouglas, Leontief
 
 
 def load_model_1_components(**kargs):
@@ -315,7 +316,7 @@ def load_model_2(**kwargs):
     )
 
 
-def build_model_2_in_context() -> tuple[CGEModel, list]:
+def build_model_2_in_context() -> CGEModel:
     sectors = ["0", "1", "2"]
 
     with CGEModel(coords={"i": sectors, "j": sectors}) as model:
@@ -346,35 +347,42 @@ def build_model_2_in_context() -> tuple[CGEModel, list]:
         K_s = cm.Parameter("K_s")
         P_Ag_bar = cm.Parameter("P_Ag_bar", latex_name=r"\bar{P}_{Ag}")
 
-        exponent = (phi_VA - 1) / phi_VA
+        Leontief(
+            "Final good production",
+            output=Y,
+            output_price=P,
+            factors=[VC, VA],
+            factor_prices=[P_VC, P_VA],
+            factor_shares=[psi_VC, psi_VA],
+        )
+        Leontief(
+            "Production of intermediate goods bundle",
+            output=VC.rename(i="j"),
+            output_price=P_VC.rename(i="j"),
+            factors=[X],
+            factor_prices=[P],
+            factor_shares=[psi_X],
+            factor_dim="i",
+        )
+        CES(
+            "Production of labor-capital",
+            output=VA,
+            output_price=P_VA,
+            factors=[K_d, L_d],
+            factor_prices=[r, w],
+            factor_shares=[alpha],
+            tfp=A,
+            epsilon=phi_VA,
+        )
+        cm.Equation("Household income", income, w * L_s + r * K_s)
+        cm.Equation("Household utility", U, (C**gamma).prod())
+        cm.Equation("Household demand", C, gamma * income / P)
+        cm.Equation("Labor market clearing", L_s, L_d.sum() + resid)
+        cm.Equation("Capital market clearing", K_s, K_d.sum())
+        cm.Equation("Goods market clearing", Y, C + X.sum("j"))
+        cm.Equation("Numeraire", P.sel(i="0"), P_Ag_bar)
 
-        equations = [
-            cm.Equation("Final good production", P * Y, P_VC * VC + P_VA * VA),
-            cm.Equation("Demand for intermediate goods bundle", VC, psi_VC * Y),
-            cm.Equation("Demand for labor-capital", VA, psi_VA * Y),
-            cm.Equation(
-                "Production of intermediate goods bundle",
-                VC * P_VC,
-                (P * X).sum("i").rename(j="i"),
-            ),
-            cm.Equation("Demand for intermediate inputs", X, psi_X * VC.rename(i="j")),
-            cm.Equation(
-                "Production of labor-capital",
-                VA,
-                A * (alpha * K_d**exponent + (1 - alpha) * L_d**exponent) ** (1 / exponent),
-            ),
-            cm.Equation("Demand for capital", K_d, VA / A * (alpha * P_VA * A / r) ** phi_VA),
-            cm.Equation("Demand for labor", L_d, VA / A * ((1 - alpha) * A * P_VA / w) ** phi_VA),
-            cm.Equation("Household income", income, w * L_s + r * K_s),
-            cm.Equation("Household utility", U, (C**gamma).prod()),
-            cm.Equation("Household demand", C, gamma * income / P),
-            cm.Equation("Labor market clearing", L_s, L_d.sum() + resid),
-            cm.Equation("Capital market clearing", K_s, K_d.sum()),
-            cm.Equation("Goods market clearing", Y, C + X.sum("j")),
-            cm.Equation("Numeraire", P.sel(i="0"), P_Ag_bar),
-        ]
-
-    return model, equations
+    return model
 
 
 def calibrate_model_2(L_d, K_d, Y, X, P, P_VA, P_VC, r, w, phi_VA, P_Ag_bar):
@@ -622,6 +630,213 @@ def expected_model_2_jacobian(
     J[row_idx, P_columns[0]] = 1
 
     return J
+
+
+model_3_data = {
+    "K_d": np.array([30.0, 60.0]),
+    "L_d": np.array([50.0, 40.0]),
+    "X": np.array([[10.0, 20.0], [15.0, 30.0]]),
+    "X_EN": np.array([[5.0, 15.0]]),
+    "K_d_E": np.array([20.0]),
+    "L_d_E": np.array([10.0]),
+    "X_E": np.array([[3.0], [7.0]]),
+    "P": np.array([1.0, 1.0]),
+    "P_E": np.array([1.0]),
+    "r": 1.0,
+    "w": 1.0,
+}
+
+
+def calibrate_model_3(K_d, L_d, X, X_EN, K_d_E, L_d_E, X_E, P, P_E, r, w):
+    """
+    Calibrate model 3 to a benchmark with value-added and intermediate-bundle prices of one.
+
+    ``X[i, j]`` is goods sector ``i``'s sales to goods sector ``j``, ``X_EN[k, j]`` energy sector ``k``'s sales to
+    goods sector ``j``, and ``X_E[i, k]`` goods sector ``i``'s sales to energy sector ``k``.
+    """
+    P_VA, P_VC = np.ones_like(P), np.ones_like(P)
+    P_VA_E, P_VC_E = np.ones_like(P_E), np.ones_like(P_E)
+
+    VA = (r * K_d + w * L_d) / P_VA
+    alpha = r * K_d / (P_VA * VA)
+    A = VA / (K_d**alpha * L_d ** (1 - alpha))
+    VC = ((P[:, None] * X).sum(axis=0) + (P_E[:, None] * X_EN).sum(axis=0)) / P_VC
+    Y = (P_VC * VC + P_VA * VA) / P
+
+    VA_E = (r * K_d_E + w * L_d_E) / P_VA_E
+    alpha_E = r * K_d_E / (P_VA_E * VA_E)
+    A_E = VA_E / (K_d_E**alpha_E * L_d_E ** (1 - alpha_E))
+    VC_E = (P[:, None] * X_E).sum(axis=0) / P_VC_E
+    Y_E = (P_VC_E * VC_E + P_VA_E * VA_E) / P_E
+
+    L_s = L_d.sum() + L_d_E.sum()
+    K_s = K_d.sum() + K_d_E.sum()
+    income = w * L_s + r * K_s
+    C = Y - X.sum(axis=1) - X_E.sum(axis=1)
+    C_E = Y_E - X_EN.sum(axis=1)
+
+    return {
+        "Y": Y,
+        "VA": VA,
+        "VC": VC,
+        "X": X,
+        "X_EN": X_EN,
+        "K_d": K_d,
+        "L_d": L_d,
+        "P": P,
+        "P_VA": P_VA,
+        "P_VC": P_VC,
+        "Y_E": Y_E,
+        "VA_E": VA_E,
+        "VC_E": VC_E,
+        "X_E": X_E,
+        "K_d_E": K_d_E,
+        "L_d_E": L_d_E,
+        "P_E": P_E,
+        "P_VA_E": P_VA_E,
+        "P_VC_E": P_VC_E,
+        "C": C,
+        "C_E": C_E,
+        "income": income,
+        "r": r,
+        "w": w,
+        "resid": 0.0,
+        "psi_VA": VA / Y,
+        "psi_VC": VC / Y,
+        "psi_X": X / VC,
+        "psi_X_EN": X_EN / VC,
+        "alpha": alpha,
+        "A": A,
+        "psi_VA_E": VA_E / Y_E,
+        "psi_VC_E": VC_E / Y_E,
+        "psi_X_E": X_E / VC_E,
+        "alpha_E": alpha_E,
+        "A_E": A_E,
+        "gamma": P * C / income,
+        "gamma_E": P_E * C_E / income,
+        "L_s": L_s,
+        "K_s": K_s,
+        "P_bar": P[0],
+    }
+
+
+def build_model_3_in_context() -> CGEModel:
+    """
+    Two goods sectors and one energy sector, each a Leontief combination of a Cobb-Douglas value-added bundle and
+    a Leontief intermediate bundle. Goods producers buy goods and energy; the energy producer buys goods.
+    """
+    with CGEModel(
+        coords={
+            "i": ["agriculture", "manufacturing"],
+            "j": ["agriculture", "manufacturing"],
+            "k": ["energy"],
+        }
+    ) as model:
+        Y = cm.Variable("Y", dims="i")
+        VA = cm.Variable("VA", dims="i")
+        VC = cm.Variable("VC", dims="i")
+        X = cm.Variable("X", dims=("i", "j"))
+        X_EN = cm.Variable("X_EN", dims=("k", "j"))
+        K_d = cm.Variable("K_d", dims="i")
+        L_d = cm.Variable("L_d", dims="i")
+        P = cm.Variable("P", dims="i")
+        P_VA = cm.Variable("P_VA", dims="i")
+        P_VC = cm.Variable("P_VC", dims="i")
+        Y_E = cm.Variable("Y_E", dims="k")
+        VA_E = cm.Variable("VA_E", dims="k")
+        VC_E = cm.Variable("VC_E", dims="k")
+        X_E = cm.Variable("X_E", dims=("i", "k"))
+        K_d_E = cm.Variable("K_d_E", dims="k")
+        L_d_E = cm.Variable("L_d_E", dims="k")
+        P_E = cm.Variable("P_E", dims="k")
+        P_VA_E = cm.Variable("P_VA_E", dims="k")
+        P_VC_E = cm.Variable("P_VC_E", dims="k")
+        C = cm.Variable("C", dims="i")
+        C_E = cm.Variable("C_E", dims="k")
+        income = cm.Variable("income")
+        r = cm.Variable("r")
+        w = cm.Variable("w")
+        resid = cm.Variable("resid")
+
+        psi_VA = cm.Parameter("psi_VA", dims="i")
+        psi_VC = cm.Parameter("psi_VC", dims="i")
+        psi_X = cm.Parameter("psi_X", dims=("i", "j"))
+        psi_X_EN = cm.Parameter("psi_X_EN", dims=("k", "j"))
+        alpha = cm.Parameter("alpha", dims="i")
+        A = cm.Parameter("A", dims="i")
+        psi_VA_E = cm.Parameter("psi_VA_E", dims="k")
+        psi_VC_E = cm.Parameter("psi_VC_E", dims="k")
+        psi_X_E = cm.Parameter("psi_X_E", dims=("i", "k"))
+        alpha_E = cm.Parameter("alpha_E", dims="k")
+        A_E = cm.Parameter("A_E", dims="k")
+        gamma = cm.Parameter("gamma", dims="i")
+        gamma_E = cm.Parameter("gamma_E", dims="k")
+        L_s = cm.Parameter("L_s")
+        K_s = cm.Parameter("K_s")
+        P_bar = cm.Parameter("P_bar")
+
+        Leontief(
+            "Output of <dim:i>",
+            output=Y,
+            output_price=P,
+            factors=[VC, VA],
+            factor_prices=[P_VC, P_VA],
+            factor_shares=[psi_VC, psi_VA],
+        )
+        Leontief(
+            "Intermediate bundle of <dim:j>",
+            output=VC.rename(i="j"),
+            output_price=P_VC.rename(i="j"),
+            factors=[X, X_EN],
+            factor_prices=[P, P_E],
+            factor_shares=[psi_X, psi_X_EN],
+            factor_dim=["i", "k"],
+        )
+        CobbDouglas(
+            "Value added of <dim:i>",
+            output=VA,
+            output_price=P_VA,
+            factors=[K_d, L_d],
+            factor_prices=[r, w],
+            factor_shares=[alpha],
+            tfp=A,
+        )
+        Leontief(
+            "Output of <dim:k>",
+            output=Y_E,
+            output_price=P_E,
+            factors=[VC_E, VA_E],
+            factor_prices=[P_VC_E, P_VA_E],
+            factor_shares=[psi_VC_E, psi_VA_E],
+        )
+        Leontief(
+            "Intermediate bundle of <dim:k>",
+            output=VC_E,
+            output_price=P_VC_E,
+            factors=[X_E],
+            factor_prices=[P],
+            factor_shares=[psi_X_E],
+            factor_dim="i",
+        )
+        CobbDouglas(
+            "Value added of <dim:k>",
+            output=VA_E,
+            output_price=P_VA_E,
+            factors=[K_d_E, L_d_E],
+            factor_prices=[r, w],
+            factor_shares=[alpha_E],
+            tfp=A_E,
+        )
+        cm.Equation("Household income", income, w * L_s + r * K_s)
+        cm.Equation("Household demand for <dim:i>", C, gamma * income / P)
+        cm.Equation("Household demand for <dim:k>", C_E, gamma_E * income / P_E)
+        cm.Equation("Goods market clearing for <dim:i>", Y, C + X.sum("j") + X_E.sum("k"))
+        cm.Equation("Energy market clearing for <dim:k>", Y_E, C_E + X_EN.sum("j"))
+        cm.Equation("Labor market clearing", L_s, L_d.sum() + L_d_E.sum() + resid)
+        cm.Equation("Capital market clearing", K_s, K_d.sum() + K_d_E.sum())
+        cm.Equation("Numeraire", P.sel(i="agriculture"), P_bar)
+
+    return model
 
 
 @cache

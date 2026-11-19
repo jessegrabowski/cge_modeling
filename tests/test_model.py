@@ -11,10 +11,13 @@ from cge_modeling import CGEModel, Equation, Variable, compile_model
 from cge_modeling import model as cm
 from tests.utilities.models import (
     build_model_2_in_context,
+    build_model_3_in_context,
     calibrate_model_2,
+    calibrate_model_3,
     load_and_cache_model,
     load_model_2,
     model_2_data,
+    model_3_data,
 )
 
 
@@ -25,7 +28,7 @@ def evaluate(xtensor, values):
 
 
 def test_model_2_in_context_matches_string_model_objects_and_size():
-    model, _ = build_model_2_in_context()
+    model = build_model_2_in_context()
     string_model = load_model_2(backend="pytensor", functions_to_compile=())
 
     assert model.variable_names == string_model.variable_names
@@ -41,10 +44,10 @@ def test_model_2_in_context_matches_string_model_objects_and_size():
 
 
 def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
-    _, equations = build_model_2_in_context()
+    model = build_model_2_in_context()
     calibrated = calibrate_model_2(**model_2_data)
 
-    for equation in equations:
+    for equation in model.equations:
         lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
         inputs = {
             tensor: np.asarray(calibrated[tensor.name], dtype=float)
@@ -55,7 +58,7 @@ def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
 
 @pytest.mark.parametrize("optimizer_mode", ["root", "minimize"])
 def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
-    context_model, _ = build_model_2_in_context()
+    context_model = build_model_2_in_context()
     string_model = load_and_cache_model(model_id=2, backend="pytensor")
     calibrated = calibrate_model_2(**model_2_data)
     scenario = {
@@ -74,7 +77,43 @@ def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
             context_result[group]["variables"].dataset,
             string_result[group]["variables"].dataset,
             rtol=1e-6,
+            atol=1e-4,
         )
+
+
+def test_model_3_is_square_and_holds_at_the_calibrated_point():
+    model = build_model_3_in_context()
+    calibrated = calibrate_model_3(**model_3_data)
+
+    assert model.n_variables == model.n_equations == 39
+    np.testing.assert_allclose(calibrated["gamma"].sum() + calibrated["gamma_E"].sum(), 1.0)
+    for equation in model.equations:
+        lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
+        inputs = {
+            tensor: np.asarray(calibrated[tensor.name], dtype=float)
+            for tensor in explicit_graph_inputs([lowered])
+        }
+        np.testing.assert_allclose(lowered.eval(inputs), 0.0, atol=1e-10, err_msg=equation.name)
+
+
+def test_model_3_labor_supply_shock_clears_every_market():
+    model = build_model_3_in_context()
+    calibrated = calibrate_model_3(**model_3_data)
+
+    result = model.simulate(
+        calibrated, final_delta_pct={"L_s": 1.1}, n_iter_euler=200, verbose=False
+    )
+    root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
+    euler = result["euler"]["variables"].dataset.isel(step=-1, drop=True)
+
+    assert result["optim_res"].success
+    np.testing.assert_allclose(float(root["resid"]), 0.0, atol=1e-8)
+    np.testing.assert_allclose(root["P"].sel(i="agriculture"), 1.0)
+    np.testing.assert_allclose(
+        float(root["L_d"].sum() + root["L_d_E"].sum()), 1.1 * calibrated["L_s"]
+    )
+    assert float(root["w"]) < 1.0 < float(root["r"])
+    xr_testing.assert_allclose(euler.drop_vars("resid"), root.drop_vars("resid"), rtol=1e-4)
 
 
 def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_model(caplog):

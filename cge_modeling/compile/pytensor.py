@@ -61,7 +61,9 @@ def cge_primitives_to_pytensor(
 
     # Copy the cache to call with eval, otherwise python will add a bunch of global environment variables to it
     eval_cache = cache.copy()
-    pytensor_equations = [eval(normalize_eq(eq.equation), eval_cache) for eq in cge_model.equations]
+    pytensor_equations = [
+        eval(normalize_eq(eq.equation), eval_cache) for eq in cge_model._equations.values()
+    ]
 
     flat_equations = flatten_equations(pytensor_equations)
     flat_equations = pt.specify_shape(flat_equations, (n_eq,))
