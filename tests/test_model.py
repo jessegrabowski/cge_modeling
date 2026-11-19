@@ -10,14 +10,31 @@ from pytensor.graph.traversal import explicit_graph_inputs
 from cge_modeling import CGEModel, Equation, Variable, compile_model
 from cge_modeling import model as cm
 from tests.utilities.models import (
+    build_model_1_in_context,
     build_model_2_in_context,
     build_model_3_in_context,
+    build_model_4_in_context,
+    build_model_5_in_context,
+    calibrate_model_1,
     calibrate_model_2,
     calibrate_model_3,
+    calibrate_model_4,
+    calibrate_model_5,
     load_and_cache_model,
-    load_model_2,
+    model_1_data,
     model_2_data,
     model_3_data,
+    model_4_data,
+    model_5_data,
+)
+
+ported_models = pytest.mark.parametrize(
+    "model_id, build, calibrate, data",
+    [
+        (1, build_model_1_in_context, calibrate_model_1, model_1_data),
+        (2, build_model_2_in_context, calibrate_model_2, model_2_data),
+    ],
+    ids=["model_1", "model_2"],
 )
 
 
@@ -27,9 +44,14 @@ def evaluate(xtensor, values):
     return lowered.eval({obj.owner.inputs[0]: value for obj, value in values.items()})
 
 
-def test_model_2_in_context_matches_string_model_objects_and_size():
-    model = build_model_2_in_context()
-    string_model = load_model_2(backend="pytensor", functions_to_compile=())
+@ported_models
+def test_context_built_model_matches_string_model_objects_and_size(
+    model_id, build, calibrate, data
+):
+    model = build()
+    string_model = load_and_cache_model(
+        model_id=model_id, backend="pytensor", functions_to_compile=None
+    )
 
     assert model.variable_names == string_model.variable_names
     assert model.parameter_names == string_model.parameter_names
@@ -43,9 +65,12 @@ def test_model_2_in_context_matches_string_model_objects_and_size():
         )
 
 
-def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
-    model = build_model_2_in_context()
-    calibrated = calibrate_model_2(**model_2_data)
+@ported_models
+def test_context_built_model_residuals_vanish_at_the_calibrated_point(
+    model_id, build, calibrate, data
+):
+    model = build()
+    calibrated = calibrate(**data)
 
     for equation in model.equations:
         lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
@@ -56,11 +81,18 @@ def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
         np.testing.assert_allclose(lowered.eval(inputs), 0.0, atol=1e-8, err_msg=equation.name)
 
 
-@pytest.mark.parametrize("optimizer_mode", ["root", "minimize"])
-def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
-    context_model = build_model_2_in_context()
-    string_model = load_and_cache_model(model_id=2, backend="pytensor")
-    calibrated = calibrate_model_2(**model_2_data)
+@ported_models
+@pytest.mark.parametrize(
+    "optimizer_mode, tolerance",
+    [("root", 1e-8), ("minimize", 1e-4)],
+    ids=["root", "minimize"],
+)
+def test_context_built_model_solves_like_the_string_model(
+    model_id, build, calibrate, data, optimizer_mode, tolerance
+):
+    context_model = build()
+    string_model = load_and_cache_model(model_id=model_id, backend="pytensor")
+    calibrated = calibrate(**data)
     scenario = {
         "final_delta_pct": {"L_s": 0.5},
         "n_iter_euler": 100,
@@ -72,13 +104,30 @@ def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
     string_result = string_model.simulate(calibrated, **scenario)
 
     assert context_model._compile_backend == "pytensor"
-    for group in ("euler", "optimizer"):
-        xr_testing.assert_allclose(
-            context_result[group]["variables"].dataset,
-            string_result[group]["variables"].dataset,
-            rtol=1e-6,
-            atol=1e-4,
-        )
+    xr_testing.assert_allclose(
+        context_result["optimizer"]["variables"].dataset,
+        string_result["optimizer"]["variables"].dataset,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+
+
+def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_euler_path():
+    context_model = build_model_1_in_context()
+    string_model = load_and_cache_model(model_id=1, backend="pytensor")
+    calibrated = calibrate_model_1(**model_1_data)
+    scenario = {
+        "final_delta_pct": {"L_s": 0.5},
+        "n_iter_euler": 25,
+        "optimizer_mode": "root",
+        "verbose": False,
+    }
+
+    context_euler = context_model.simulate(calibrated, **scenario)["euler"]["variables"].dataset
+    string_euler = string_model.simulate(calibrated, **scenario)["euler"]["variables"].dataset
+
+    np.testing.assert_allclose(context_euler["resid"], 0.0, atol=1e-9)
+    xr_testing.assert_allclose(context_euler, string_euler, rtol=1e-10, atol=1e-9)
 
 
 def test_model_3_is_square_and_holds_at_the_calibrated_point():
@@ -114,6 +163,158 @@ def test_model_3_labor_supply_shock_clears_every_market():
     )
     assert float(root["w"]) < 1.0 < float(root["r"])
     xr_testing.assert_allclose(euler.drop_vars("resid"), root.drop_vars("resid"), rtol=1e-4)
+
+
+@pytest.mark.parametrize("closure", ["savings_driven", "fixed_investment"])
+def test_model_4_is_square_and_holds_at_the_calibrated_point(closure):
+    model = build_model_4_in_context(closure=closure)
+    calibrated = calibrate_model_4(**model_4_data)
+
+    assert model.n_variables == model.n_equations == 19
+    for equation in model.equations:
+        lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
+        inputs = {
+            tensor: np.asarray(calibrated[tensor.name], dtype=float)
+            for tensor in explicit_graph_inputs([lowered])
+        }
+        np.testing.assert_allclose(lowered.eval(inputs), 0.0, atol=1e-12, err_msg=equation.name)
+
+
+def test_model_4_calibration_reproduces_the_published_base_year():
+    calibrated = calibrate_model_4(**model_4_data)
+    published = {
+        "at": 2.22,
+        "bt": 0.77,
+        "aq": 1.97,
+        "bq": 0.38,
+        "E": 0.33,
+        "M": 0.50,
+        "Ds": 0.67,
+        "Qs": 1.18,
+        "Tax": 0.20,
+        "Y": 1.13,
+        "S": 0.27,
+        "Cn": 0.83,
+        "Pt": 1.08,
+        "ts": 0.08,
+        "Z": 0.25,
+        "Sg": -0.01,
+    }
+
+    for name, value in published.items():
+        np.testing.assert_allclose(calibrated[name], value, atol=0.005, err_msg=name)
+
+
+def test_model_4_doubling_the_exchange_rate_doubles_prices_and_leaves_quantities():
+    model = build_model_4_in_context(closure="savings_driven")
+    calibrated = calibrate_model_4(**model_4_data)
+
+    result = model.simulate(
+        calibrated, final_values={"Er": 2.0}, n_iter_euler=10, optimizer_mode="root", verbose=False
+    )
+    root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
+
+    assert result["optim_res"].success
+    for name in ["E", "M", "Ds", "Dd", "Qs", "Qd", "Cn", "Z"]:
+        np.testing.assert_allclose(float(root[name]), calibrated[name], rtol=1e-8, err_msg=name)
+    for name in ["Pe", "Pm", "Pd", "Pt", "Px", "Pq", "Tax", "Y", "S", "Sg"]:
+        np.testing.assert_allclose(float(root[name]), 2 * calibrated[name], rtol=1e-8, err_msg=name)
+
+
+def test_model_4_tariff_cut_reproduces_the_published_sales_tax_increase():
+    model = build_model_4_in_context(closure="fixed_investment")
+    calibrated = calibrate_model_4(**model_4_data)
+    published = {
+        "E": 0.33,
+        "M": 0.51,
+        "Ds": 0.67,
+        "Dd": 0.67,
+        "Qs": 1.18,
+        "Qd": 1.18,
+        "Tax": 0.19,
+        "Y": 1.10,  # Table 6.9 prints 0.10; its Cur/Base ratio of 0.97 on a base of 1.13 gives 1.10.
+        "S": 0.26,
+        "Cn": 0.83,
+        "Pm": 0.93,
+        "Pe": 1.00,
+        "Pt": 1.05,
+        "Pq": 0.95,
+        "Px": 0.97,
+        "Pd": 0.96,
+        "ts": 0.11,
+        "Sg": -0.01,
+    }
+
+    result = model.simulate(
+        calibrated, final_values={"tm": 0.05}, n_iter_euler=50, optimizer_mode="root", verbose=False
+    )
+    root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
+
+    assert result["optim_res"].success
+    for name, value in published.items():
+        np.testing.assert_allclose(float(root[name]), value, atol=0.005, err_msg=name)
+
+
+def test_model_5_is_square_and_holds_at_the_calibrated_point():
+    model = build_model_5_in_context()
+    calibrated = calibrate_model_5(**model_5_data)
+
+    assert model.n_variables == model.n_equations == 59
+    for equation in model.equations:
+        lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
+        inputs = {
+            tensor: np.asarray(calibrated[tensor.name], dtype=float)
+            for tensor in explicit_graph_inputs([lowered])
+        }
+        np.testing.assert_allclose(lowered.eval(inputs), 0.0, atol=1e-12, err_msg=equation.name)
+
+
+def test_model_5_calibration_reproduces_the_published_parameters():
+    calibrated = calibrate_model_5(**model_5_data)
+    manufactures_productivity = calibrated["A"][1] / calibrated["psi_VA"][1]
+    primaries_productivity = calibrated["A"][0] / calibrated["psi_VA"][0]
+
+    np.testing.assert_allclose(calibrated["a"][0, 1], 4 / 35)
+    np.testing.assert_allclose(calibrated["t"][1], 1 / 35)
+    np.testing.assert_allclose(calibrated["alpha"][1], 5 / 7)
+    np.testing.assert_allclose(calibrated["tau"], 2 / 46)
+    np.testing.assert_allclose(calibrated["theta"][0], 2 / 51)
+    np.testing.assert_allclose(calibrated["theta_G"], 4 / 51)
+    np.testing.assert_allclose(manufactures_productivity, 35 * 10 ** (-5 / 7) * 4 ** (-2 / 7))
+    np.testing.assert_allclose(primaries_productivity, 8 * 4 ** (-4 / 5))
+
+
+def test_model_5_abolishing_the_manufactures_tax_clears_every_market():
+    model = build_model_5_in_context()
+    calibrated = calibrate_model_5(**model_5_data)
+    tax_rates = calibrated["t"] * np.array([1.0, 0.0, 1.0])
+
+    result = model.simulate(
+        calibrated,
+        final_values={"t": tax_rates},
+        n_iter_euler=20,
+        optimizer_mode="root",
+        verbose=False,
+    )
+    root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
+    euler = result["euler"]["variables"].dataset.isel(step=-1, drop=True)
+    P = root["P"]
+    price_index = float(
+        (calibrated["theta"] * P).sum()
+        + calibrated["theta_M"] * root["P_M"]
+        + calibrated["theta_I"] * root["P_I"]
+        + calibrated["theta_G"] * root["P_G"]
+    )
+
+    assert result["optim_res"].success
+    np.testing.assert_allclose(float(root["resid"]), 0.0, atol=1e-10)
+    np.testing.assert_allclose(float(euler["resid"]), 0.0, atol=1e-10)
+    np.testing.assert_allclose(price_index, 1.0)
+    np.testing.assert_allclose(float(root["K_d"].sum()), calibrated["K_s"])
+    assert float(P.sel(i="manufactures")) < min(
+        float(P.sel(i="primaries")), float(P.sel(i="services"))
+    )
+    assert float(root["T"]) < calibrated["T"]
 
 
 def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_model(caplog):

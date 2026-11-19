@@ -3,22 +3,22 @@ import numpy as np
 from cge_modeling import compile_model
 from cge_modeling.base.utilities import variable_dict_to_flat_array
 from tests.utilities.models import (
-    build_model_2_in_context,
-    calibrate_model_2,
+    build_model_1_in_context,
+    calibrate_model_1,
     load_and_cache_model,
-    load_model_2,
-    model_2_data,
+    load_model_1,
+    model_1_data,
 )
 
 
 def test_context_built_model_compiles_to_the_string_model_functions():
-    context_model = build_model_2_in_context()
+    context_model = build_model_1_in_context()
     compile_model(context_model, backend="pytensor", functions_to_compile=("root", "minimize"))
     string_model = load_and_cache_model(
-        model_id=2, backend="pytensor", functions_to_compile=("root", "minimize")
+        model_id=1, backend="pytensor", functions_to_compile=("root", "minimize")
     )
 
-    calibrated = calibrate_model_2(**model_2_data)
+    calibrated = calibrate_model_1(**model_1_data)
     x, theta = variable_dict_to_flat_array(
         calibrated, string_model.variables, string_model.parameters
     )
@@ -40,14 +40,14 @@ def test_context_built_model_compiles_to_the_string_model_functions():
 
 
 def test_context_built_model_scan_euler_matches_the_string_model():
-    context_model = build_model_2_in_context()
+    context_model = build_model_1_in_context()
     compile_model(
         context_model, backend="pytensor", functions_to_compile=("euler",), use_scan_euler=True
     )
-    string_model = load_model_2(
+    string_model = load_model_1(
         backend="pytensor", functions_to_compile=("euler",), use_scan_euler=True
     )
-    calibrated = calibrate_model_2(**model_2_data)
+    calibrated = calibrate_model_1(**model_1_data)
     _, theta_final = variable_dict_to_flat_array(
         {**calibrated, "L_s": calibrated["L_s"] * 1.5},
         string_model.variables,

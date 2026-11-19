@@ -5,7 +5,7 @@ import numpy as np
 
 from cge_modeling import CGEModel, Equation, Parameter, Variable, cge_model
 from cge_modeling import model as cm
-from cge_modeling.production_functions import CES, CobbDouglas, Leontief
+from cge_modeling.production_functions import CES, CET, CobbDouglas, Leontief
 
 
 def load_model_1_components(**kargs):
@@ -92,6 +92,41 @@ def calibrate_model_1(L_s, K_s, P, r):
     calib_dict["resid"] = resid
 
     return calib_dict
+
+
+def build_model_1_in_context() -> CGEModel:
+    with CGEModel() as model:
+        Y = cm.Variable("Y", description="Total output of goods")
+        L_d = cm.Variable("L_d", description="Labor demanded by firms")
+        K_d = cm.Variable("K_d", description="Capital demanded by firms")
+        C = cm.Variable("C", description="Household consumption")
+        income = cm.Variable("income", latex_name="Omega", description="Total household income")
+        r = cm.Variable("r", description="Rental rate of capital")
+        P = cm.Variable("P", description="Price level of the good")
+        resid = cm.Variable("resid", latex_name="varepsilon", description="Walrasian residual")
+
+        alpha = cm.Parameter("alpha", description="Share of capital in the production process")
+        A = cm.Parameter("A", description="Total factor productivity")
+        L_s = cm.Parameter("L_s", description="Exogenous household labor supply")
+        K_s = cm.Parameter("K_s", description="Exogenous household capital stock")
+        w = cm.Parameter("w", description="Numeraire wage level")
+
+        CobbDouglas(
+            "Final good production",
+            output=Y,
+            output_price=P,
+            factors=[K_d, L_d],
+            factor_prices=[r, w],
+            factor_shares=[alpha],
+            tfp=A,
+        )
+        cm.Equation("Household income", income, w * L_s + r * K_s)
+        cm.Equation("Household budget constraint", C * P, income)
+        cm.Equation("Labor market clearing", L_s, L_d + resid)
+        cm.Equation("Capital market clearing", K_s, K_d)
+        cm.Equation("Goods market clearing", Y, C)
+
+    return model
 
 
 model_1_data = {"L_s": 7000.0, "K_s": 4000.0, "P": 1.0, "r": 1.0}
@@ -835,6 +870,506 @@ def build_model_3_in_context() -> CGEModel:
         cm.Equation("Labor market clearing", L_s, L_d.sum() + L_d_E.sum() + resid)
         cm.Equation("Capital market clearing", K_s, K_d.sum() + K_d_E.sum())
         cm.Equation("Numeraire", P.sel(i="agriculture"), P_bar)
+
+    return model
+
+
+model_4_data = {
+    "output_value_added": 324.69,
+    "private_consumption": 291.69,
+    "public_consumption": 35.58,
+    "investment": 86.38,
+    "exports": 106.39,
+    "imports": 144.7,
+    "sales_and_excise_tax": 32.03,
+    "import_tariffs": 18.62,
+    "export_duties": 1.14,
+    "payroll_tax": 0.00,
+    "capital_income_tax": 12.84,
+    "nontax_revenue": 8.02,
+    "government_interest_payments": 22.07,
+    "transfers_and_subsidies": 26.10,
+    "net_profits_and_dividends": -0.78,
+    "external_interest_payments": -8.82,
+    "net_private_transfers": 11.60,
+    "net_official_transfers": 7.90,
+    "st": 0.6,
+    "sq": 0.6,
+}
+
+
+def calibrate_model_4(
+    output_value_added,
+    private_consumption,
+    public_consumption,
+    investment,
+    exports,
+    imports,
+    sales_and_excise_tax,
+    import_tariffs,
+    export_duties,
+    payroll_tax,
+    capital_income_tax,
+    nontax_revenue,
+    government_interest_payments,
+    transfers_and_subsidies,
+    net_profits_and_dividends,
+    external_interest_payments,
+    net_private_transfers,
+    net_official_transfers,
+    st,
+    sq,
+):
+    """
+    Calibrate model 4 to the 1991 Sri Lanka data of Devarajan, Go, Lewis, Robinson and Sinko (1997), Table 6.6.
+
+    The data are in billions of rupees and are indexed to output. The formulas follow Tables 6.7 and 6.8 of the same
+    chapter, including the direct tax rate, which counts payroll and capital income taxes but not personal income tax.
+    """
+    E = exports / output_value_added
+    M = (imports + import_tariffs) / output_value_added
+    X = 1.0
+    Ds = X - E
+    Dd = Ds
+    Qs = M + Dd
+    Qd = Qs
+    Er, Pm, Pe, Pd, Px, Pq = 1.0, 1.0, 1.0, 1.0, 1.0, 1.0
+
+    tm = import_tariffs / imports
+    te = export_duties / exports
+    ts = sales_and_excise_tax / output_value_added / Qs
+    Pt = Pq * (1 + ts)
+    wm = Pm / Er / (1 + tm)
+    we = Pe * (1 + te) / Er
+
+    tr = (
+        (government_interest_payments + transfers_and_subsidies - nontax_revenue)
+        / output_value_added
+        / Pq
+    )
+    re = (
+        (net_profits_and_dividends + external_interest_payments + net_private_transfers)
+        / output_value_added
+        / Er
+    )
+    ft = net_official_transfers / output_value_added / Er
+    Y = Px * X + tr * Pq + re * Er
+    ty = (payroll_tax + capital_income_tax) / output_value_added / Y
+
+    Cn = private_consumption / output_value_added / Pt
+    G = public_consumption / output_value_added / (1 + ts) / Pq
+    Z = investment / output_value_added / Pt
+    sy = (Y - Cn * Pt - ty * Y) / Y
+    B = wm * M - we * E - ft - re
+
+    Tax = tm * wm * Er * M + te * Pe * E + ts * Pq * Qd + ty * Y
+    Sg = Tax - G * Pt - tr * Pq + ft * Er
+    S = sy * Y + Er * B + Sg
+
+    rt = 1 / st + 1
+    bt = 1 / (1 + (Pd / Pe) * (E / Ds) ** (rt - 1))
+    at = X / (bt * E**rt + (1 - bt) * Ds**rt) ** (1 / rt)
+    rq = 1 / sq - 1
+    import_ratio = (Pm / Pd) * (M / Dd) ** (1 + rq)
+    bq = import_ratio / (1 + import_ratio)
+    aq = Qs / (bq * M ** (-rq) + (1 - bq) * Dd ** (-rq)) ** (-1 / rq)
+
+    return {
+        "E": E,
+        "M": M,
+        "Ds": Ds,
+        "Dd": Dd,
+        "Qs": Qs,
+        "Qd": Qd,
+        "Pe": Pe,
+        "Pm": Pm,
+        "Pd": Pd,
+        "Pt": Pt,
+        "Px": Px,
+        "Pq": Pq,
+        "Tax": Tax,
+        "Y": Y,
+        "S": S,
+        "Sg": Sg,
+        "Cn": Cn,
+        "Z": Z,
+        "resid": S - Pt * Z,
+        "X": X,
+        "Er": Er,
+        "wm": wm,
+        "we": we,
+        "tm": tm,
+        "te": te,
+        "ts": ts,
+        "ty": ty,
+        "sy": sy,
+        "G": G,
+        "tr": tr,
+        "ft": ft,
+        "re": re,
+        "B": B,
+        "at": at,
+        "bt": bt,
+        "st": st,
+        "aq": aq,
+        "bq": bq,
+        "sq": sq,
+    }
+
+
+def build_model_4_in_context(*, closure: Literal["savings_driven", "fixed_investment"]) -> CGEModel:
+    """
+    The 1-2-3 model with government and investment of Devarajan, Go, Lewis, Robinson and Sinko (1997), Table 6.3.
+
+    One country produces an export good and a domestic good on a CET frontier and consumes a CES composite of the
+    domestic good and an import. The exchange rate is the numeraire. In the savings-driven closure investment adjusts
+    to savings. In the fixed-investment closure investment is fixed and the sales tax rate adjusts.
+    """
+    investment_object, sales_tax_object = {
+        "savings_driven": (cm.Variable, cm.Parameter),
+        "fixed_investment": (cm.Parameter, cm.Variable),
+    }[closure]
+
+    with CGEModel() as model:
+        E = cm.Variable("E", description="Export good")
+        M = cm.Variable("M", description="Import good")
+        Ds = cm.Variable("Ds", description="Supply of domestic good")
+        Dd = cm.Variable("Dd", description="Demand for domestic good")
+        Qs = cm.Variable("Qs", description="Supply of composite good")
+        Qd = cm.Variable("Qd", description="Demand for composite good")
+        Pe = cm.Variable("Pe", description="Domestic price of export good")
+        Pm = cm.Variable("Pm", description="Domestic price of import good")
+        Pd = cm.Variable("Pd", description="Producer price of domestic good")
+        Pt = cm.Variable("Pt", description="Sales price of composite good")
+        Px = cm.Variable("Px", description="Price of aggregate output")
+        Pq = cm.Variable("Pq", description="Price of composite good")
+        Tax = cm.Variable("Tax", description="Tax revenue")
+        Y = cm.Variable("Y", description="Total income")
+        S = cm.Variable("S", description="Aggregate savings")
+        Sg = cm.Variable("Sg", description="Government savings")
+        Cn = cm.Variable("Cn", description="Aggregate consumption")
+        resid = cm.Variable("resid", latex_name="varepsilon", description="Walrasian residual")
+        Z = investment_object("Z", description="Aggregate real investment")
+        ts = sales_tax_object("ts", description="Sales, excise and value-added tax rate")
+
+        X = cm.Parameter("X", description="Aggregate output")
+        Er = cm.Parameter("Er", description="Exchange rate, the numeraire")
+        wm = cm.Parameter("wm", description="World price of import good")
+        we = cm.Parameter("we", description="World price of export good")
+        tm = cm.Parameter("tm", description="Tariff rate")
+        te = cm.Parameter("te", description="Export duty rate")
+        ty = cm.Parameter("ty", description="Direct tax rate")
+        sy = cm.Parameter("sy", description="Average savings rate")
+        G = cm.Parameter("G", description="Real government demand")
+        tr = cm.Parameter("tr", description="Government transfers")
+        ft = cm.Parameter("ft", description="Foreign transfers to government")
+        re = cm.Parameter("re", description="Foreign remittances to private sector")
+        B = cm.Parameter("B", description="Balance of trade")
+        at = cm.Parameter("at", description="CET scale")
+        bt = cm.Parameter("bt", description="CET share of the export good")
+        st = cm.Parameter("st", latex_name="Omega", description="Export transformation elasticity")
+        aq = cm.Parameter("aq", description="Armington scale")
+        bq = cm.Parameter("bq", description="Armington share of the import good")
+        sq = cm.Parameter("sq", latex_name="sigma", description="Import substitution elasticity")
+
+        CET(
+            "Export transformation",
+            output=X,
+            output_price=Px,
+            products=[E, Ds],
+            product_prices=[Pe, Pd],
+            product_shares=[bt],
+            tfp=at,
+            omega=st,
+        )
+        CES(
+            "Armington aggregation",
+            output=Qs,
+            output_price=Pq,
+            factors=[M, Dd],
+            factor_prices=[Pm, Pd],
+            factor_shares=[bq],
+            tfp=aq,
+            epsilon=sq,
+        )
+        cm.Equation("Domestic demand", Qd, Cn + Z + G)
+        cm.Equation("Tax revenue", Tax, tm * wm * Er * M + te * Pe * E + ts * Pq * Qd + ty * Y)
+        cm.Equation("Total income", Y, Px * X + tr * Pq + re * Er)
+        cm.Equation("Aggregate savings", S, sy * Y + Er * B + Sg)
+        cm.Equation("Consumption", Pt * Cn, (1 - ty - sy) * Y)
+        cm.Equation("Import price", Pm, Er * wm * (1 + tm))
+        cm.Equation("Export price", Pe, Er * we / (1 + te))
+        cm.Equation("Sales price", Pt, Pq * (1 + ts))
+        cm.Equation("Domestic good market", Dd, Ds)
+        cm.Equation("Composite good market", Qd, Qs)
+        cm.Equation("Current account balance", wm * M - we * E - ft - re, B)
+        cm.Equation("Government budget", Sg, Tax - G * Pt - tr * Pq + ft * Er)
+        cm.Equation("Savings-investment balance", S, Pt * Z + resid)
+
+    return model
+
+
+model_5_data = {
+    "intermediate_inputs": np.array([[1.0, 4.0, 0.0], [1.0, 8.0, 2.0], [1.0, 5.0, 5.0]]),
+    "intermediate_imports": np.array([0.0, 3.0, 1.0]),
+    "wages_and_salaries": np.array([1.0, 4.0, 7.0]),
+    "other_factor_payments": np.array([4.0, 10.0, 19.0]),
+    "indirect_taxes_and_tariffs": np.array([0.0, 1.0, 4.0]),
+    "private_consumption": np.array([2.0, 11.0, 21.0]),
+    "private_consumption_of_imports": 1.0,
+    "investment": np.array([0.0, 8.0, 2.0]),
+    "investment_imports": 2.0,
+    "government_consumption": np.array([0.0, 1.0, 2.0]),
+    "government_wages_and_salaries": 1.0,
+    "exports": np.array([1.0, 4.0, 2.0]),
+    "exports_of_imports": 1.0,
+    "direct_taxes": 2.0,
+}
+
+
+def calibrate_model_5(
+    intermediate_inputs,
+    intermediate_imports,
+    wages_and_salaries,
+    other_factor_payments,
+    indirect_taxes_and_tariffs,
+    private_consumption,
+    private_consumption_of_imports,
+    investment,
+    investment_imports,
+    government_consumption,
+    government_wages_and_salaries,
+    exports,
+    exports_of_imports,
+    direct_taxes,
+):
+    """
+    Calibrate model 5 to the 1989 Mexican input-output matrix of Kehoe and Kehoe (1994), Tables 1 and 2.
+
+    Values are in tens of trillions of 1989 pesos, and every price is one in the base year. ``intermediate_inputs``
+    is indexed (good, sector) over primaries, manufactures and services, and the government's other factor
+    payments and indirect taxes, both zero in the data, are left out.
+    """
+    P, P_VA = np.ones(3), np.ones(3)
+    P_M, P_I, P_G, w, r = 1.0, 1.0, 1.0, 1.0, 1.0
+
+    X, X_M, L_d, K_d = (
+        intermediate_inputs,
+        intermediate_imports,
+        wages_and_salaries,
+        other_factor_payments,
+    )
+    VA = (w * L_d + r * K_d) / P_VA
+    Y = ((P[:, None] * X).sum(axis=0) + P_M * X_M + P_VA * VA + indirect_taxes_and_tariffs) / P
+    t = indirect_taxes_and_tariffs / (P * Y)
+    alpha = r * K_d / (P_VA * VA)
+    A = VA / (K_d**alpha * L_d ** (1 - alpha))
+
+    X_E, X_MM = exports, exports_of_imports
+    Y_M = ((P * X_E).sum() + P_M * X_MM) / P_M
+    X_I, X_MI = investment, investment_imports
+    Y_I = ((P * X_I).sum() + P_M * X_MI) / P_I
+    X_G, L_G = government_consumption, government_wages_and_salaries
+    Y_G = ((P * X_G).sum() + w * L_G) / P_G
+
+    L_s = L_d.sum() + L_G
+    K_s = K_d.sum()
+    tau = direct_taxes / (w * L_s + r * K_s)
+    T = tau * (w * L_s + r * K_s) + (t * P * Y).sum()
+    income = (1 - tau) * (w * L_s + r * K_s) + T
+    C, C_M, C_I, C_G = private_consumption, private_consumption_of_imports, Y_I, Y_G
+
+    return {
+        "Y": Y,
+        "VA": VA,
+        "X": X,
+        "X_M": X_M,
+        "K_d": K_d,
+        "L_d": L_d,
+        "P": P,
+        "P_VA": P_VA,
+        "Y_M": Y_M,
+        "X_E": X_E,
+        "X_MM": X_MM,
+        "P_M": P_M,
+        "Y_I": Y_I,
+        "X_I": X_I,
+        "X_MI": X_MI,
+        "P_I": P_I,
+        "Y_G": Y_G,
+        "X_G": X_G,
+        "L_G": L_G,
+        "P_G": P_G,
+        "C": C,
+        "C_M": C_M,
+        "C_I": C_I,
+        "C_G": C_G,
+        "income": income,
+        "T": T,
+        "w": w,
+        "r": r,
+        "resid": 0.0,
+        "a": X / Y,
+        "a_M": X_M / Y,
+        "psi_VA": VA / Y,
+        "t": t,
+        "alpha": alpha,
+        "A": A,
+        "a_E": X_E / Y_M,
+        "a_MM": X_MM / Y_M,
+        "a_I": X_I / Y_I,
+        "a_MI": X_MI / Y_I,
+        "a_G": X_G / Y_G,
+        "a_LG": L_G / Y_G,
+        "theta": P * C / income,
+        "theta_M": P_M * C_M / income,
+        "theta_I": P_I * C_I / income,
+        "theta_G": P_G * C_G / income,
+        "tau": tau,
+        "L_s": L_s,
+        "K_s": K_s,
+    }
+
+
+def build_model_5_in_context() -> CGEModel:
+    """
+    The simple static model of Mexico of Kehoe and Kehoe (1994), equations (1) to (14) and (20).
+
+    Primaries, manufactures and services combine intermediate goods, imports and a Cobb-Douglas value-added
+    bundle in fixed proportions and pay an indirect tax on sales. Investment, government consumption and the import
+    good are fixed-proportions activities. The import good is produced from exports, which keeps trade balanced.
+    One consumer with Cobb-Douglas utility over all six goods pays a direct tax and receives all tax revenue. A
+    consumption-weighted price index is the numeraire.
+    """
+    sectors = ["primaries", "manufactures", "services"]
+    with CGEModel(coords={"i": sectors, "j": sectors}) as model:
+        Y = cm.Variable("Y", dims="i", description="Output of good <dim:i>")
+        VA = cm.Variable("VA", dims="j", description="Value added in sector <dim:j>")
+        X = cm.Variable("X", dims=("i", "j"), description="Use of good <dim:i> by sector <dim:j>")
+        X_M = cm.Variable("X_M", dims="j", description="Use of the import good by sector <dim:j>")
+        K_d = cm.Variable("K_d", dims="j", description="Capital demanded by sector <dim:j>")
+        L_d = cm.Variable("L_d", dims="j", description="Labor demanded by sector <dim:j>")
+        P = cm.Variable("P", dims="i", description="Price of good <dim:i>")
+        P_VA = cm.Variable("P_VA", dims="j", description="Price of value added in sector <dim:j>")
+        Y_M = cm.Variable("Y_M", description="Output of the import good")
+        X_E = cm.Variable("X_E", dims="i", description="Exports of good <dim:i>")
+        X_MM = cm.Variable("X_MM", description="Re-exports of the import good")
+        P_M = cm.Variable("P_M", description="Price of the import good")
+        Y_I = cm.Variable("Y_I", description="Output of the investment good")
+        X_I = cm.Variable("X_I", dims="i", description="Use of good <dim:i> in investment")
+        X_MI = cm.Variable("X_MI", description="Use of the import good in investment")
+        P_I = cm.Variable("P_I", description="Price of the investment good")
+        Y_G = cm.Variable("Y_G", description="Output of the government consumption good")
+        X_G = cm.Variable("X_G", dims="i", description="Use of good <dim:i> by government")
+        L_G = cm.Variable("L_G", description="Labor demanded by government")
+        P_G = cm.Variable("P_G", description="Price of the government consumption good")
+        C = cm.Variable("C", dims="i", description="Consumption of good <dim:i>")
+        C_M = cm.Variable("C_M", description="Consumption of the import good")
+        C_I = cm.Variable("C_I", description="Purchases of the investment good")
+        C_G = cm.Variable("C_G", description="Purchases of the government consumption good")
+        income = cm.Variable("income", description="Disposable income including the transfer")
+        T = cm.Variable("T", description="Tax receipts, transferred to the consumer")
+        w = cm.Variable("w", description="Wage rate")
+        r = cm.Variable("r", description="Capital rental rate")
+        resid = cm.Variable("resid", latex_name="varepsilon", description="Walrasian residual")
+
+        a = cm.Parameter(
+            "a", dims=("i", "j"), description="Input of good <dim:i> per unit of <dim:j>"
+        )
+        a_M = cm.Parameter("a_M", dims="j", description="Import input per unit of <dim:j>")
+        psi_VA = cm.Parameter("psi_VA", dims="j", description="Value added per unit of <dim:j>")
+        t = cm.Parameter("t", dims="j", description="Indirect tax rate on sales of <dim:j>")
+        alpha = cm.Parameter(
+            "alpha", dims="j", description="Capital share of value added in <dim:j>"
+        )
+        A = cm.Parameter("A", dims="j", description="Value-added productivity in <dim:j>")
+        a_E = cm.Parameter("a_E", dims="i", description="Exports of <dim:i> per unit of imports")
+        a_MM = cm.Parameter("a_MM", description="Re-exports per unit of imports")
+        a_I = cm.Parameter("a_I", dims="i", description="Input of <dim:i> per unit of investment")
+        a_MI = cm.Parameter("a_MI", description="Import input per unit of investment")
+        a_G = cm.Parameter(
+            "a_G", dims="i", description="Input of <dim:i> per unit of government consumption"
+        )
+        a_LG = cm.Parameter("a_LG", description="Labor per unit of government consumption")
+        theta = cm.Parameter("theta", dims="i", description="Budget share of good <dim:i>")
+        theta_M = cm.Parameter("theta_M", description="Budget share of the import good")
+        theta_I = cm.Parameter("theta_I", description="Budget share of the investment good")
+        theta_G = cm.Parameter(
+            "theta_G", description="Budget share of the government consumption good"
+        )
+        tau = cm.Parameter("tau", description="Direct tax rate")
+        L_s = cm.Parameter("L_s", description="Labor endowment")
+        K_s = cm.Parameter("K_s", description="Capital endowment")
+
+        Leontief(
+            "Output of <dim:j>",
+            output=Y.rename(i="j"),
+            output_price=(1 - t) * P.rename(i="j"),
+            factors=[X, X_M, VA],
+            factor_prices=[P, P_M, P_VA],
+            factor_shares=[a, a_M, psi_VA],
+            factor_dim=["i", None, None],
+        )
+        CobbDouglas(
+            "Value added in <dim:j>",
+            output=VA,
+            output_price=P_VA,
+            factors=[K_d, L_d],
+            factor_prices=[r, w],
+            factor_shares=[alpha],
+            tfp=A,
+        )
+        Leontief(
+            "Import activity",
+            output=Y_M,
+            output_price=P_M,
+            factors=[X_E, X_MM],
+            factor_prices=[P, P_M],
+            factor_shares=[a_E, a_MM],
+            factor_dim=["i", None],
+        )
+        Leontief(
+            "Investment good",
+            output=Y_I,
+            output_price=P_I,
+            factors=[X_I, X_MI],
+            factor_prices=[P, P_M],
+            factor_shares=[a_I, a_MI],
+            factor_dim=["i", None],
+        )
+        Leontief(
+            "Government consumption good",
+            output=Y_G,
+            output_price=P_G,
+            factors=[X_G, L_G],
+            factor_prices=[P, w],
+            factor_shares=[a_G, a_LG],
+            factor_dim=["i", None],
+        )
+
+        factor_income = w * L_s + r * K_s
+        cm.Equation(
+            "Tax receipts",
+            T,
+            tau * factor_income + (t * P.rename(i="j") * Y.rename(i="j")).sum("j"),
+        )
+        cm.Equation("Disposable income", income, (1 - tau) * factor_income + T)
+        cm.Equation("Consumer demand for <dim:i>", P * C, theta * income)
+        cm.Equation("Consumer demand for the import good", P_M * C_M, theta_M * income)
+        cm.Equation("Consumer demand for the investment good", P_I * C_I, theta_I * income)
+        cm.Equation("Consumer demand for the government good", P_G * C_G, theta_G * income)
+
+        cm.Equation("Market for <dim:i>", Y, C + X.sum("j") + X_E + X_I + X_G)
+        cm.Equation("Market for the import good", Y_M, C_M + X_M.sum("j") + X_MM + X_MI)
+        cm.Equation("Market for the investment good", Y_I, C_I)
+        cm.Equation("Market for the government good", Y_G, C_G)
+        cm.Equation("Labor market", L_s, L_d.sum("j") + L_G + resid)
+        cm.Equation("Capital market", K_s, K_d.sum("j"))
+        cm.Equation(
+            "Consumption price index",
+            (theta * P).sum("i") + theta_M * P_M + theta_I * P_I + theta_G * P_G,
+            1.0,
+        )
 
     return model
 

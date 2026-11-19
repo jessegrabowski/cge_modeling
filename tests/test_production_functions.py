@@ -9,10 +9,9 @@ from cge_modeling import model as cm
 from cge_modeling.base.utilities import variable_dict_to_flat_array
 from cge_modeling.production_functions import (
     CES,
-    CESValue,
+    CET,
     CobbDouglas,
     DixitStiglitz,
-    DixitStiglitzValue,
     Leontief,
 )
 
@@ -171,7 +170,7 @@ def test_model_built_with_cobb_douglas_solves_to_the_analytic_equilibrium():
     np.testing.assert_allclose(result.x, [Y_star, K_star, L_star, P_star], rtol=1e-8)
 
 
-def ces_block(helper=CES):
+def ces_block():
     with CGEModel(coords={"i": ["a", "b"]}) as model:
         Y = cm.Variable("Y", dims="i")
         K = cm.Variable("K", dims="i")
@@ -182,7 +181,7 @@ def ces_block(helper=CES):
         alpha = cm.Parameter("alpha", dims="i")
         A = cm.Parameter("A", dims="i")
         epsilon = cm.Parameter("epsilon", dims="i")
-        equations = helper(
+        equations = CES(
             "Value added in <dim:i>",
             output=Y,
             output_price=P,
@@ -216,9 +215,8 @@ def ces_unit_cost_point():
     }
 
 
-@pytest.mark.parametrize("helper", [CES, CESValue], ids=["technology", "value"])
-def test_ces_blocks_hold_when_the_output_price_is_the_unit_cost(helper):
-    model, equations, objects = ces_block(helper)
+def test_ces_block_holds_when_the_output_price_is_the_unit_cost():
+    model, equations, objects = ces_block()
     point = ces_unit_cost_point()
 
     assert model.unpacked_equation_names[:2] == ["Value added in a", "Value added in b"]
@@ -228,15 +226,74 @@ def test_ces_blocks_hold_when_the_output_price_is_the_unit_cost(helper):
         )
 
 
-def test_ces_value_zero_profit_fails_off_the_unit_cost():
-    _, equations, objects = ces_block(CESValue)
+def test_ces_zero_profit_fails_off_the_unit_cost():
+    _, equations, objects = ces_block()
     point = ces_unit_cost_point()
     point["P"] = point["P"] * 1.1
 
     assert np.all(np.abs(evaluate_residual(equations[0], objects, point)) > 1e-3)
 
 
-def dixit_stiglitz_block(helper):
+def test_cet_block_holds_at_the_unit_revenue_and_on_the_frontier():
+    with CGEModel() as model:
+        X, E, D, P_X = (cm.Variable(name) for name in ("X", "E", "D", "P_X"))
+        P_E, P_D, beta, A, omega = (
+            cm.Parameter(name) for name in ("P_E", "P_D", "beta", "A", "omega")
+        )
+        equations = CET(
+            "Transformation",
+            output=X,
+            output_price=P_X,
+            products=[E, D],
+            product_prices=[P_E, P_D],
+            product_shares=[beta],
+            tfp=A,
+            omega=omega,
+        )
+    objects = {
+        "X": X,
+        "E": E,
+        "D": D,
+        "P_X": P_X,
+        "P_E": P_E,
+        "P_D": P_D,
+        "beta": beta,
+        "A": A,
+        "omega": omega,
+    }
+    beta_value, A_value, omega_value, X_value = 0.7, 2.2, 0.6, 1.0
+    shares, prices = np.array([beta_value, 1 - beta_value]), np.array([1.3, 0.9])
+    P_X_value = (shares**-omega_value * prices ** (1 + omega_value)).sum() ** (
+        1 / (1 + omega_value)
+    ) / A_value
+    E_value, D_value = X_value / A_value * (prices / (shares * P_X_value * A_value)) ** omega_value
+    point = {
+        "X": X_value,
+        "E": E_value,
+        "D": D_value,
+        "P_X": P_X_value,
+        "P_E": prices[0],
+        "P_D": prices[1],
+        "beta": beta_value,
+        "A": A_value,
+        "omega": omega_value,
+    }
+    exponent = (omega_value + 1) / omega_value
+    frontier = A_value * (shares @ np.array([E_value, D_value]) ** exponent) ** (1 / exponent)
+
+    assert model.equation_names == [
+        "Transformation",
+        "Transformation: supply of E",
+        "Transformation: supply of D",
+    ]
+    for equation in equations:
+        np.testing.assert_allclose(
+            evaluate_residual(equation, objects, point), 0.0, atol=1e-12, err_msg=equation.name
+        )
+    np.testing.assert_allclose(frontier, X_value)
+
+
+def dixit_stiglitz_block():
     with CGEModel(coords={"v": ["a", "b", "c"]}) as model:
         Y = cm.Variable("Y")
         X = cm.Variable("X", dims="v")
@@ -245,7 +302,7 @@ def dixit_stiglitz_block(helper):
         alpha = cm.Parameter("alpha", dims="v")
         A = cm.Parameter("A")
         epsilon = cm.Parameter("epsilon")
-        equations = helper(
+        equations = DixitStiglitz(
             "Composite good",
             output=Y,
             output_price=P_Y,
@@ -270,9 +327,8 @@ def dixit_stiglitz_unit_cost_point():
     return {"Y": Y, "X": X, "P_Y": P_Y, "P_X": P_X, "alpha": alpha, "A": A, "epsilon": epsilon}
 
 
-@pytest.mark.parametrize("helper", [DixitStiglitz, DixitStiglitzValue], ids=["technology", "value"])
-def test_dixit_stiglitz_blocks_hold_when_the_output_price_is_the_unit_cost(helper):
-    model, equations, objects = dixit_stiglitz_block(helper)
+def test_dixit_stiglitz_block_holds_when_the_output_price_is_the_unit_cost():
+    model, equations, objects = dixit_stiglitz_block()
     point = dixit_stiglitz_unit_cost_point()
 
     assert model.unpacked_equation_names == [
@@ -287,15 +343,14 @@ def test_dixit_stiglitz_blocks_hold_when_the_output_price_is_the_unit_cost(helpe
         )
 
 
-@pytest.mark.parametrize("helper", [DixitStiglitz, DixitStiglitzValue], ids=["technology", "value"])
-def test_dixit_stiglitz_defaults_to_the_elasticity_only_form(helper):
+def test_dixit_stiglitz_defaults_to_the_elasticity_only_form():
     with CGEModel(coords={"v": ["a", "b", "c"]}):
         Y = cm.Variable("Y")
         X = cm.Variable("X", dims="v")
         P_Y = cm.Variable("P_Y")
         P_X = cm.Parameter("P_X", dims="v")
         epsilon = cm.Parameter("epsilon")
-        equations = helper(
+        equations = DixitStiglitz(
             "Composite good",
             output=Y,
             output_price=P_Y,
@@ -403,7 +458,7 @@ def test_leontief_over_an_input_output_matrix_reproduces_the_model_2_bundle():
         "psi_X": rng.uniform(0.1, 0.5, (3, 3)),
     }
     inline_zero_profit = VC * P_VC - (P * X).sum("i").rename(j="i")
-    inline_demand = X - psi_X * VC.rename(i="j")
+    inline_demand = P * X - P * psi_X * VC.rename(i="j")
 
     for equation, inline in [(zero_profit, inline_zero_profit), (demand, inline_demand)]:
         np.testing.assert_allclose(

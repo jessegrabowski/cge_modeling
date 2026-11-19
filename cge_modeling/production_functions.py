@@ -770,23 +770,43 @@ def _register_equations(
     return tuple(Equation(name, lhs, rhs, model=model) for name, lhs, rhs in specs)
 
 
-def _ces_demand_specs(
+def _quantity_spec(
     name: str,
+    relation: str,
+    quantity: XTensorVariable,
+    price: XTensorVariable,
+    value: XTensorVariable,
+) -> EquationSpec:
+    """
+    Write the equation for ``quantity`` in value form, ``price * quantity = value``, named
+    ``"{name}: {relation} {quantity}"``.
+
+    In value form each demand or supply enters Walras' law with a constant weight, so an Euler step, which holds
+    every linearized residual at zero, also holds the Walrasian residual at zero when prices are variables.
+    """
+    return (f"{name}: {relation} {quantity.name}", price * quantity, value)
+
+
+def _ces_quantity_specs(
+    name: str,
+    relation: str,
     output: XTensorVariable,
     output_price: XTensorVariable,
-    factors: Sequence[XTensorVariable],
-    factor_prices: Sequence[XTensorVariable],
-    factor_shares: Sequence[XTensorVariable | float],
+    quantities: Sequence[XTensorVariable],
+    prices: Sequence[XTensorVariable],
+    shares: Sequence[XTensorVariable | float],
     tfp: XTensorVariable | float,
     epsilon: XTensorVariable | float,
 ) -> list[EquationSpec]:
     return [
-        (
-            f"{name}: demand for {factor.name}",
-            factor,
-            output / tfp * (share * output_price * tfp / price) ** epsilon,
+        _quantity_spec(
+            name=name,
+            relation=relation,
+            quantity=quantity,
+            price=price,
+            value=price * output / tfp * (share * output_price * tfp / price) ** epsilon,
         )
-        for factor, price, share in zip(factors, factor_prices, factor_shares, strict=True)
+        for quantity, price, share in zip(quantities, prices, shares, strict=True)
     ]
 
 
@@ -816,7 +836,7 @@ def CobbDouglas(
 
     .. math::
 
-        Y = A \prod_i X_i^{\alpha_i}, \qquad X_i = \alpha_i \frac{Y P_Y}{P_i}
+        Y = A \prod_i X_i^{\alpha_i}, \qquad P_i X_i = \alpha_i P_Y Y
 
     Parameters
     ----------
@@ -847,7 +867,13 @@ def CobbDouglas(
         mul, [factor**share for factor, share in zip(factors, factor_shares, strict=True)]
     )
     demands = [
-        (f"{name}: demand for {factor.name}", factor, share * output * output_price / price)
+        _quantity_spec(
+            name=name,
+            relation="demand for",
+            quantity=factor,
+            price=price,
+            value=share * output * output_price,
+        )
         for factor, price, share in zip(factors, factor_prices, factor_shares, strict=True)
     ]
     return _register_equations(model, [(name, output, technology), *demands])
@@ -868,19 +894,20 @@ def CES(
     r"""
     Register a CES production block on ``model``, or on the active :class:`CGEModel`.
 
-    The block is the technology and one cost-minimizing demand per factor:
+    The block is the zero-profit condition and one cost-minimizing demand per factor:
 
     .. math::
 
-        Y = A \left( \sum_i \alpha_i X_i^{\frac{\epsilon - 1}{\epsilon}} \right)^{\frac{\epsilon}{\epsilon - 1}},
-        \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
+        P_Y Y = \sum_i P_i X_i, \qquad P_i X_i = P_i \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
 
-    :func:`CESValue` registers the same demands with the zero-profit condition in place of the technology.
+    Together these hold only when :math:`P_Y` is the CES unit cost, so the zero-profit condition pins the output
+    price, and the demands imply the technology
+    :math:`Y = A \left( \sum_i \alpha_i X_i^{(\epsilon - 1) / \epsilon} \right)^{\epsilon / (\epsilon - 1)}`.
 
     Parameters
     ----------
     name : str
-        Name of the production equation. Each demand equation is named ``"{name}: demand for {factor}"``.
+        Name of the zero-profit equation. Each demand equation is named ``"{name}: demand for {factor}"``.
     output, output_price : XTensorVariable
         The output :math:`Y` and its price :math:`P_Y`.
     factors, factor_prices : sequence of XTensorVariable
@@ -898,59 +925,6 @@ def CES(
     Returns
     -------
     equations : tuple of XTensorEquation
-        The production equation, then one demand equation per factor, in factor order.
-    """
-    model = modelcontext(model)
-    _check_factors_named(factors)
-    factor_shares = _complete_factor_shares(factors, factor_prices, factor_shares)
-
-    exponent = (epsilon - 1) / epsilon
-    weighted_sum = reduce(
-        add,
-        [share * factor**exponent for factor, share in zip(factors, factor_shares, strict=True)],
-    )
-    demands = _ces_demand_specs(
-        name=name,
-        output=output,
-        output_price=output_price,
-        factors=factors,
-        factor_prices=factor_prices,
-        factor_shares=factor_shares,
-        tfp=tfp,
-        epsilon=epsilon,
-    )
-    return _register_equations(
-        model, [(name, output, tfp * weighted_sum ** (1 / exponent)), *demands]
-    )
-
-
-def CESValue(
-    name: str,
-    *,
-    output: XTensorVariable,
-    output_price: XTensorVariable,
-    factors: Sequence[XTensorVariable],
-    factor_prices: Sequence[XTensorVariable],
-    factor_shares: Sequence[XTensorVariable | float],
-    tfp: XTensorVariable | float,
-    epsilon: XTensorVariable | float,
-    model: "CGEModel | None" = None,
-) -> tuple[XTensorEquation, ...]:
-    r"""
-    Register a CES production block in its dual form on ``model``, or on the active :class:`CGEModel`.
-
-    The block is the zero-profit condition and the CES demands of :func:`CES`:
-
-    .. math::
-
-        P_Y Y = \sum_i P_i X_i, \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
-
-    Together these hold only when :math:`P_Y` is the CES unit cost, so the zero-profit condition pins the price
-    where the technology in :func:`CES` pins the quantity. The parameters are those of :func:`CES`.
-
-    Returns
-    -------
-    equations : tuple of XTensorEquation
         The zero-profit equation, then one demand equation per factor, in factor order.
     """
     model = modelcontext(model)
@@ -960,17 +934,89 @@ def CESValue(
     factor_cost = reduce(
         add, [price * factor for factor, price in zip(factors, factor_prices, strict=True)]
     )
-    demands = _ces_demand_specs(
+    demands = _ces_quantity_specs(
         name=name,
+        relation="demand for",
         output=output,
         output_price=output_price,
-        factors=factors,
-        factor_prices=factor_prices,
-        factor_shares=factor_shares,
+        quantities=factors,
+        prices=factor_prices,
+        shares=factor_shares,
         tfp=tfp,
         epsilon=epsilon,
     )
     return _register_equations(model, [(name, output_price * output, factor_cost), *demands])
+
+
+def CET(
+    name: str,
+    *,
+    output: XTensorVariable,
+    output_price: XTensorVariable,
+    products: Sequence[XTensorVariable],
+    product_prices: Sequence[XTensorVariable],
+    product_shares: Sequence[XTensorVariable | float],
+    tfp: XTensorVariable | float,
+    omega: XTensorVariable | float,
+    model: "CGEModel | None" = None,
+) -> tuple[XTensorEquation, ...]:
+    r"""
+    Register a CET transformation block on ``model``, or on the active :class:`CGEModel`.
+
+    The aggregate output :math:`X` is transformed into products :math:`X_i`, such as exports and domestic sales. The
+    block is the zero-profit condition and one revenue-maximizing supply per product:
+
+    .. math::
+
+        P_X X = \sum_i P_i X_i, \qquad
+        P_i X_i = P_i \frac{X}{A} \left( \frac{P_i}{\alpha_i P_X A} \right)^{\Omega}
+
+    Together these hold only when :math:`P_X` is the CET unit revenue, so the zero-profit condition pins the
+    aggregate price, and the supplies imply the frontier
+    :math:`X = A \left( \sum_i \alpha_i X_i^{(\Omega + 1) / \Omega} \right)^{\Omega / (\Omega + 1)}`.
+
+    Parameters
+    ----------
+    name : str
+        Name of the zero-profit equation. Each supply equation is named ``"{name}: supply of {product}"``.
+    output, output_price : XTensorVariable
+        The aggregate output :math:`X` and its price :math:`P_X`.
+    products, product_prices : sequence of XTensorVariable
+        The products :math:`X_i`, which must be model objects, and their prices :math:`P_i`, in matching order.
+    product_shares : sequence of XTensorVariable or float
+        The shares :math:`\alpha_i`, one per product. With one share fewer than products, the last share is one
+        minus the sum of the others.
+    tfp : XTensorVariable or float
+        Scale of the frontier :math:`A`.
+    omega : XTensorVariable or float
+        Elasticity of transformation :math:`\Omega`, which is positive.
+    model : CGEModel, optional
+        Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
+
+    Returns
+    -------
+    equations : tuple of XTensorEquation
+        The zero-profit equation, then one supply equation per product, in product order.
+    """
+    model = modelcontext(model)
+    _check_factors_named(products)
+    product_shares = _complete_factor_shares(products, product_prices, product_shares)
+
+    revenue = reduce(
+        add, [price * product for product, price in zip(products, product_prices, strict=True)]
+    )
+    supplies = _ces_quantity_specs(
+        name=name,
+        relation="supply of",
+        output=output,
+        output_price=output_price,
+        quantities=products,
+        prices=product_prices,
+        shares=product_shares,
+        tfp=tfp,
+        epsilon=-omega,
+    )
+    return _register_equations(model, [(name, output_price * output, revenue), *supplies])
 
 
 def DixitStiglitz(
@@ -989,20 +1035,21 @@ def DixitStiglitz(
     r"""
     Register a Dixit-Stiglitz aggregate on ``model``, or on the active :class:`CGEModel`.
 
-    The varieties are the entries of ``factor`` along ``factor_dim``. The block is the aggregate and the demand for
-    each variety:
+    The varieties are the entries of ``factor`` along ``factor_dim``. The block is the zero-profit condition and the
+    demand for each variety:
 
     .. math::
 
-        Y = A \left( \sum_i \alpha_i X_i^{\frac{\epsilon - 1}{\epsilon}} \right)^{\frac{\epsilon}{\epsilon - 1}},
-        \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
+        P_Y Y = \sum_i P_i X_i, \qquad P_i X_i = P_i \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
 
-    :func:`DixitStiglitzValue` registers the same demand with the zero-profit condition in place of the aggregate.
+    Together these hold only when :math:`P_Y` is the CES price index, so the zero-profit condition pins the
+    aggregate price, and the demands imply the aggregate
+    :math:`Y = A \left( \sum_i \alpha_i X_i^{(\epsilon - 1) / \epsilon} \right)^{\epsilon / (\epsilon - 1)}`.
 
     Parameters
     ----------
     name : str
-        Name of the aggregate equation. The demand equation is named ``"{name}: demand for {factor}"``.
+        Name of the zero-profit equation. The demand equation is named ``"{name}: demand for {factor}"``.
     output, output_price : XTensorVariable
         The aggregate :math:`Y` and its price :math:`P_Y`. Neither may have ``factor_dim``.
     factor, factor_price : XTensorVariable
@@ -1021,67 +1068,20 @@ def DixitStiglitz(
     Returns
     -------
     equations : tuple of XTensorEquation
-        The aggregate equation, then the demand equation.
-    """
-    model = modelcontext(model)
-    _check_factors_named([factor])
-    _check_without_factor_dim(factor_dim, output=output, output_price=output_price)
-
-    exponent = (epsilon - 1) / epsilon
-    aggregate = tfp * (factor_share * factor**exponent).sum(factor_dim) ** (1 / exponent)
-    demands = _ces_demand_specs(
-        name=name,
-        output=output,
-        output_price=output_price,
-        factors=[factor],
-        factor_prices=[factor_price],
-        factor_shares=[factor_share],
-        tfp=tfp,
-        epsilon=epsilon,
-    )
-    return _register_equations(model, [(name, output, aggregate), *demands])
-
-
-def DixitStiglitzValue(
-    name: str,
-    *,
-    output: XTensorVariable,
-    output_price: XTensorVariable,
-    factor: XTensorVariable,
-    factor_price: XTensorVariable,
-    factor_dim: str,
-    epsilon: XTensorVariable | float,
-    factor_share: XTensorVariable | float = 1.0,
-    tfp: XTensorVariable | float = 1.0,
-    model: "CGEModel | None" = None,
-) -> tuple[XTensorEquation, ...]:
-    r"""
-    Register a Dixit-Stiglitz aggregate in its dual form on ``model``, or on the active :class:`CGEModel`.
-
-    The block is the zero-profit condition and the demand of :func:`DixitStiglitz`:
-
-    .. math::
-
-        P_Y Y = \sum_i P_i X_i, \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
-
-    The parameters are those of :func:`DixitStiglitz`.
-
-    Returns
-    -------
-    equations : tuple of XTensorEquation
         The zero-profit equation, then the demand equation.
     """
     model = modelcontext(model)
     _check_factors_named([factor])
     _check_without_factor_dim(factor_dim, output=output, output_price=output_price)
 
-    demands = _ces_demand_specs(
+    demands = _ces_quantity_specs(
         name=name,
+        relation="demand for",
         output=output,
         output_price=output_price,
-        factors=[factor],
-        factor_prices=[factor_price],
-        factor_shares=[factor_share],
+        quantities=[factor],
+        prices=[factor_price],
+        shares=[factor_share],
         tfp=tfp,
         epsilon=epsilon,
     )
@@ -1107,7 +1107,7 @@ def Leontief(
 
     .. math::
 
-        P_Y Y = \sum_i P_i X_i, \qquad X_i = \alpha_i Y
+        P_Y Y = \sum_i P_i X_i, \qquad P_i X_i = P_i \alpha_i Y
 
     The technology :math:`Y = \min_i X_i / \alpha_i` is not registered, because it holds whenever the demands do.
 
@@ -1162,7 +1162,13 @@ def Leontief(
         factor_costs.append(cost)
 
     demands = [
-        (f"{name}: demand for {factor.name}", factor, share * output)
-        for factor, share in zip(factors, factor_shares, strict=True)
+        _quantity_spec(
+            name=name,
+            relation="demand for",
+            quantity=factor,
+            price=price,
+            value=price * share * output,
+        )
+        for factor, price, share in zip(factors, factor_prices, factor_shares, strict=True)
     ]
     return _register_equations(model, [(name, output_value, reduce(add, factor_costs)), *demands])
