@@ -94,6 +94,41 @@ def calibrate_model_1(L_s, K_s, P, r):
     return calib_dict
 
 
+def build_model_1_in_context() -> CGEModel:
+    with CGEModel() as model:
+        Y = cm.Variable("Y", description="Total output of goods")
+        L_d = cm.Variable("L_d", description="Labor demanded by firms")
+        K_d = cm.Variable("K_d", description="Capital demanded by firms")
+        C = cm.Variable("C", description="Household consumption")
+        income = cm.Variable("income", latex_name="Omega", description="Total household income")
+        r = cm.Variable("r", description="Rental rate of capital")
+        P = cm.Variable("P", description="Price level of the good")
+        resid = cm.Variable("resid", latex_name="varepsilon", description="Walrasian residual")
+
+        alpha = cm.Parameter("alpha", description="Share of capital in the production process")
+        A = cm.Parameter("A", description="Total factor productivity")
+        L_s = cm.Parameter("L_s", description="Exogenous household labor supply")
+        K_s = cm.Parameter("K_s", description="Exogenous household capital stock")
+        w = cm.Parameter("w", description="Numeraire wage level")
+
+        CobbDouglas(
+            "Final good production",
+            output=Y,
+            output_price=P,
+            factors=[K_d, L_d],
+            factor_prices=[r, w],
+            factor_shares=[alpha],
+            tfp=A,
+        )
+        cm.Equation("Household income", income, w * L_s + r * K_s)
+        cm.Equation("Household budget constraint", C * P, income)
+        cm.Equation("Labor market clearing", L_s, L_d + resid)
+        cm.Equation("Capital market clearing", K_s, K_d)
+        cm.Equation("Goods market clearing", Y, C)
+
+    return model
+
+
 model_1_data = {"L_s": 7000.0, "K_s": 4000.0, "P": 1.0, "r": 1.0}
 
 

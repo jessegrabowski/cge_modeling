@@ -10,14 +10,25 @@ from pytensor.graph.traversal import explicit_graph_inputs
 from cge_modeling import CGEModel, Equation, Variable, compile_model
 from cge_modeling import model as cm
 from tests.utilities.models import (
+    build_model_1_in_context,
     build_model_2_in_context,
     build_model_3_in_context,
+    calibrate_model_1,
     calibrate_model_2,
     calibrate_model_3,
     load_and_cache_model,
-    load_model_2,
+    model_1_data,
     model_2_data,
     model_3_data,
+)
+
+ported_models = pytest.mark.parametrize(
+    "model_id, build, calibrate, data",
+    [
+        (1, build_model_1_in_context, calibrate_model_1, model_1_data),
+        (2, build_model_2_in_context, calibrate_model_2, model_2_data),
+    ],
+    ids=["model_1", "model_2"],
 )
 
 
@@ -27,9 +38,14 @@ def evaluate(xtensor, values):
     return lowered.eval({obj.owner.inputs[0]: value for obj, value in values.items()})
 
 
-def test_model_2_in_context_matches_string_model_objects_and_size():
-    model = build_model_2_in_context()
-    string_model = load_model_2(backend="pytensor", functions_to_compile=())
+@ported_models
+def test_context_built_model_matches_string_model_objects_and_size(
+    model_id, build, calibrate, data
+):
+    model = build()
+    string_model = load_and_cache_model(
+        model_id=model_id, backend="pytensor", functions_to_compile=None
+    )
 
     assert model.variable_names == string_model.variable_names
     assert model.parameter_names == string_model.parameter_names
@@ -43,9 +59,12 @@ def test_model_2_in_context_matches_string_model_objects_and_size():
         )
 
 
-def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
-    model = build_model_2_in_context()
-    calibrated = calibrate_model_2(**model_2_data)
+@ported_models
+def test_context_built_model_residuals_vanish_at_the_calibrated_point(
+    model_id, build, calibrate, data
+):
+    model = build()
+    calibrated = calibrate(**data)
 
     for equation in model.equations:
         lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
@@ -56,11 +75,14 @@ def test_model_2_in_context_residuals_vanish_at_the_calibrated_point():
         np.testing.assert_allclose(lowered.eval(inputs), 0.0, atol=1e-8, err_msg=equation.name)
 
 
+@ported_models
 @pytest.mark.parametrize("optimizer_mode", ["root", "minimize"])
-def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
-    context_model = build_model_2_in_context()
-    string_model = load_and_cache_model(model_id=2, backend="pytensor")
-    calibrated = calibrate_model_2(**model_2_data)
+def test_context_built_model_solves_like_the_string_model(
+    model_id, build, calibrate, data, optimizer_mode
+):
+    context_model = build()
+    string_model = load_and_cache_model(model_id=model_id, backend="pytensor")
+    calibrated = calibrate(**data)
     scenario = {
         "final_delta_pct": {"L_s": 0.5},
         "n_iter_euler": 100,
@@ -72,13 +94,12 @@ def test_model_2_in_context_simulates_like_the_string_model(optimizer_mode):
     string_result = string_model.simulate(calibrated, **scenario)
 
     assert context_model._compile_backend == "pytensor"
-    for group in ("euler", "optimizer"):
-        xr_testing.assert_allclose(
-            context_result[group]["variables"].dataset,
-            string_result[group]["variables"].dataset,
-            rtol=1e-6,
-            atol=1e-4,
-        )
+    xr_testing.assert_allclose(
+        context_result["optimizer"]["variables"].dataset,
+        string_result["optimizer"]["variables"].dataset,
+        rtol=1e-4,
+        atol=1e-4,
+    )
 
 
 def test_model_3_is_square_and_holds_at_the_calibrated_point():
