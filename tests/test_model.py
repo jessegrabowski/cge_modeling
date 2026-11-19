@@ -14,15 +14,18 @@ from tests.utilities.models import (
     build_model_2_in_context,
     build_model_3_in_context,
     build_model_4_in_context,
+    build_model_5_in_context,
     calibrate_model_1,
     calibrate_model_2,
     calibrate_model_3,
     calibrate_model_4,
+    calibrate_model_5,
     load_and_cache_model,
     model_1_data,
     model_2_data,
     model_3_data,
     model_4_data,
+    model_5_data,
 )
 
 ported_models = pytest.mark.parametrize(
@@ -246,6 +249,68 @@ def test_model_4_tariff_cut_reproduces_the_published_sales_tax_increase():
     assert result["optim_res"].success
     for name, value in published.items():
         np.testing.assert_allclose(float(root[name]), value, atol=0.005, err_msg=name)
+
+
+def test_model_5_is_square_and_holds_at_the_calibrated_point():
+    model = build_model_5_in_context()
+    calibrated = calibrate_model_5(**model_5_data)
+
+    assert model.n_variables == model.n_equations == 59
+    for equation in model.equations:
+        lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
+        inputs = {
+            tensor: np.asarray(calibrated[tensor.name], dtype=float)
+            for tensor in explicit_graph_inputs([lowered])
+        }
+        np.testing.assert_allclose(lowered.eval(inputs), 0.0, atol=1e-12, err_msg=equation.name)
+
+
+def test_model_5_calibration_reproduces_the_published_parameters():
+    calibrated = calibrate_model_5(**model_5_data)
+    manufactures_productivity = calibrated["A"][1] / calibrated["psi_VA"][1]
+    primaries_productivity = calibrated["A"][0] / calibrated["psi_VA"][0]
+
+    np.testing.assert_allclose(calibrated["a"][0, 1], 4 / 35)
+    np.testing.assert_allclose(calibrated["t"][1], 1 / 35)
+    np.testing.assert_allclose(calibrated["alpha"][1], 5 / 7)
+    np.testing.assert_allclose(calibrated["tau"], 2 / 46)
+    np.testing.assert_allclose(calibrated["theta"][0], 2 / 51)
+    np.testing.assert_allclose(calibrated["theta_G"], 4 / 51)
+    np.testing.assert_allclose(manufactures_productivity, 35 * 10 ** (-5 / 7) * 4 ** (-2 / 7))
+    np.testing.assert_allclose(primaries_productivity, 8 * 4 ** (-4 / 5))
+
+
+def test_model_5_abolishing_the_manufactures_tax_clears_every_market():
+    model = build_model_5_in_context()
+    calibrated = calibrate_model_5(**model_5_data)
+    tax_rates = calibrated["t"] * np.array([1.0, 0.0, 1.0])
+
+    result = model.simulate(
+        calibrated,
+        final_values={"t": tax_rates},
+        n_iter_euler=20,
+        optimizer_mode="root",
+        verbose=False,
+    )
+    root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
+    euler = result["euler"]["variables"].dataset.isel(step=-1, drop=True)
+    P = root["P"]
+    price_index = float(
+        (calibrated["theta"] * P).sum()
+        + calibrated["theta_M"] * root["P_M"]
+        + calibrated["theta_I"] * root["P_I"]
+        + calibrated["theta_G"] * root["P_G"]
+    )
+
+    assert result["optim_res"].success
+    np.testing.assert_allclose(float(root["resid"]), 0.0, atol=1e-10)
+    np.testing.assert_allclose(float(euler["resid"]), 0.0, atol=1e-10)
+    np.testing.assert_allclose(price_index, 1.0)
+    np.testing.assert_allclose(float(root["K_d"].sum()), calibrated["K_s"])
+    assert float(P.sel(i="manufactures")) < min(
+        float(P.sel(i="primaries")), float(P.sel(i="services"))
+    )
+    assert float(root["T"]) < calibrated["T"]
 
 
 def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_model(caplog):
