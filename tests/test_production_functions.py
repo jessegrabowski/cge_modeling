@@ -9,10 +9,8 @@ from cge_modeling import model as cm
 from cge_modeling.base.utilities import variable_dict_to_flat_array
 from cge_modeling.production_functions import (
     CES,
-    CESValue,
     CobbDouglas,
     DixitStiglitz,
-    DixitStiglitzValue,
     Leontief,
 )
 
@@ -171,7 +169,7 @@ def test_model_built_with_cobb_douglas_solves_to_the_analytic_equilibrium():
     np.testing.assert_allclose(result.x, [Y_star, K_star, L_star, P_star], rtol=1e-8)
 
 
-def ces_block(helper=CES):
+def ces_block():
     with CGEModel(coords={"i": ["a", "b"]}) as model:
         Y = cm.Variable("Y", dims="i")
         K = cm.Variable("K", dims="i")
@@ -182,7 +180,7 @@ def ces_block(helper=CES):
         alpha = cm.Parameter("alpha", dims="i")
         A = cm.Parameter("A", dims="i")
         epsilon = cm.Parameter("epsilon", dims="i")
-        equations = helper(
+        equations = CES(
             "Value added in <dim:i>",
             output=Y,
             output_price=P,
@@ -216,9 +214,8 @@ def ces_unit_cost_point():
     }
 
 
-@pytest.mark.parametrize("helper", [CES, CESValue], ids=["technology", "value"])
-def test_ces_blocks_hold_when_the_output_price_is_the_unit_cost(helper):
-    model, equations, objects = ces_block(helper)
+def test_ces_block_holds_when_the_output_price_is_the_unit_cost():
+    model, equations, objects = ces_block()
     point = ces_unit_cost_point()
 
     assert model.unpacked_equation_names[:2] == ["Value added in a", "Value added in b"]
@@ -228,15 +225,15 @@ def test_ces_blocks_hold_when_the_output_price_is_the_unit_cost(helper):
         )
 
 
-def test_ces_value_zero_profit_fails_off_the_unit_cost():
-    _, equations, objects = ces_block(CESValue)
+def test_ces_zero_profit_fails_off_the_unit_cost():
+    _, equations, objects = ces_block()
     point = ces_unit_cost_point()
     point["P"] = point["P"] * 1.1
 
     assert np.all(np.abs(evaluate_residual(equations[0], objects, point)) > 1e-3)
 
 
-def dixit_stiglitz_block(helper):
+def dixit_stiglitz_block():
     with CGEModel(coords={"v": ["a", "b", "c"]}) as model:
         Y = cm.Variable("Y")
         X = cm.Variable("X", dims="v")
@@ -245,7 +242,7 @@ def dixit_stiglitz_block(helper):
         alpha = cm.Parameter("alpha", dims="v")
         A = cm.Parameter("A")
         epsilon = cm.Parameter("epsilon")
-        equations = helper(
+        equations = DixitStiglitz(
             "Composite good",
             output=Y,
             output_price=P_Y,
@@ -270,9 +267,8 @@ def dixit_stiglitz_unit_cost_point():
     return {"Y": Y, "X": X, "P_Y": P_Y, "P_X": P_X, "alpha": alpha, "A": A, "epsilon": epsilon}
 
 
-@pytest.mark.parametrize("helper", [DixitStiglitz, DixitStiglitzValue], ids=["technology", "value"])
-def test_dixit_stiglitz_blocks_hold_when_the_output_price_is_the_unit_cost(helper):
-    model, equations, objects = dixit_stiglitz_block(helper)
+def test_dixit_stiglitz_block_holds_when_the_output_price_is_the_unit_cost():
+    model, equations, objects = dixit_stiglitz_block()
     point = dixit_stiglitz_unit_cost_point()
 
     assert model.unpacked_equation_names == [
@@ -287,15 +283,14 @@ def test_dixit_stiglitz_blocks_hold_when_the_output_price_is_the_unit_cost(helpe
         )
 
 
-@pytest.mark.parametrize("helper", [DixitStiglitz, DixitStiglitzValue], ids=["technology", "value"])
-def test_dixit_stiglitz_defaults_to_the_elasticity_only_form(helper):
+def test_dixit_stiglitz_defaults_to_the_elasticity_only_form():
     with CGEModel(coords={"v": ["a", "b", "c"]}):
         Y = cm.Variable("Y")
         X = cm.Variable("X", dims="v")
         P_Y = cm.Variable("P_Y")
         P_X = cm.Parameter("P_X", dims="v")
         epsilon = cm.Parameter("epsilon")
-        equations = helper(
+        equations = DixitStiglitz(
             "Composite good",
             output=Y,
             output_price=P_Y,
