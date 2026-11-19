@@ -403,7 +403,7 @@ def test_leontief_over_an_input_output_matrix_reproduces_the_model_2_bundle():
         "psi_X": rng.uniform(0.1, 0.5, (3, 3)),
     }
     inline_zero_profit = VC * P_VC - (P * X).sum("i").rename(j="i")
-    inline_demand = X - psi_X * VC.rename(i="j")
+    inline_demand = P * X - P * psi_X * VC.rename(i="j")
 
     for equation, inline in [(zero_profit, inline_zero_profit), (demand, inline_demand)]:
         np.testing.assert_allclose(

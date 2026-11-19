@@ -102,6 +102,24 @@ def test_context_built_model_solves_like_the_string_model(
     )
 
 
+def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_euler_path():
+    context_model = build_model_1_in_context()
+    string_model = load_and_cache_model(model_id=1, backend="pytensor")
+    calibrated = calibrate_model_1(**model_1_data)
+    scenario = {
+        "final_delta_pct": {"L_s": 0.5},
+        "n_iter_euler": 25,
+        "optimizer_mode": "root",
+        "verbose": False,
+    }
+
+    context_euler = context_model.simulate(calibrated, **scenario)["euler"]["variables"].dataset
+    string_euler = string_model.simulate(calibrated, **scenario)["euler"]["variables"].dataset
+
+    np.testing.assert_allclose(context_euler["resid"], 0.0, atol=1e-9)
+    xr_testing.assert_allclose(context_euler, string_euler, rtol=1e-10, atol=1e-9)
+
+
 def test_model_3_is_square_and_holds_at_the_calibrated_point():
     model = build_model_3_in_context()
     calibrated = calibrate_model_3(**model_3_data)

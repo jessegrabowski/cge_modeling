@@ -770,6 +770,18 @@ def _register_equations(
     return tuple(Equation(name, lhs, rhs, model=model) for name, lhs, rhs in specs)
 
 
+def _demand_spec(
+    name: str, factor: XTensorVariable, price: XTensorVariable, value: XTensorVariable
+) -> EquationSpec:
+    """
+    Write the demand for ``factor`` in value form, ``price * factor = value``.
+
+    In value form each demand enters Walras' law with a constant weight, so an Euler step, which holds every
+    linearized residual at zero, also holds the Walrasian residual at zero when factor prices are variables.
+    """
+    return (f"{name}: demand for {factor.name}", price * factor, value)
+
+
 def _ces_demand_specs(
     name: str,
     output: XTensorVariable,
@@ -781,10 +793,11 @@ def _ces_demand_specs(
     epsilon: XTensorVariable | float,
 ) -> list[EquationSpec]:
     return [
-        (
-            f"{name}: demand for {factor.name}",
-            factor,
-            output / tfp * (share * output_price * tfp / price) ** epsilon,
+        _demand_spec(
+            name=name,
+            factor=factor,
+            price=price,
+            value=price * output / tfp * (share * output_price * tfp / price) ** epsilon,
         )
         for factor, price, share in zip(factors, factor_prices, factor_shares, strict=True)
     ]
@@ -816,7 +829,7 @@ def CobbDouglas(
 
     .. math::
 
-        Y = A \prod_i X_i^{\alpha_i}, \qquad X_i = \alpha_i \frac{Y P_Y}{P_i}
+        Y = A \prod_i X_i^{\alpha_i}, \qquad P_i X_i = \alpha_i P_Y Y
 
     Parameters
     ----------
@@ -847,7 +860,7 @@ def CobbDouglas(
         mul, [factor**share for factor, share in zip(factors, factor_shares, strict=True)]
     )
     demands = [
-        (f"{name}: demand for {factor.name}", factor, share * output * output_price / price)
+        _demand_spec(name=name, factor=factor, price=price, value=share * output * output_price)
         for factor, price, share in zip(factors, factor_prices, factor_shares, strict=True)
     ]
     return _register_equations(model, [(name, output, technology), *demands])
@@ -873,7 +886,7 @@ def CES(
     .. math::
 
         Y = A \left( \sum_i \alpha_i X_i^{\frac{\epsilon - 1}{\epsilon}} \right)^{\frac{\epsilon}{\epsilon - 1}},
-        \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
+        \qquad P_i X_i = P_i \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
 
     :func:`CESValue` registers the same demands with the zero-profit condition in place of the technology.
 
@@ -943,7 +956,7 @@ def CESValue(
 
     .. math::
 
-        P_Y Y = \sum_i P_i X_i, \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
+        P_Y Y = \sum_i P_i X_i, \qquad P_i X_i = P_i \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
 
     Together these hold only when :math:`P_Y` is the CES unit cost, so the zero-profit condition pins the price
     where the technology in :func:`CES` pins the quantity. The parameters are those of :func:`CES`.
@@ -995,7 +1008,7 @@ def DixitStiglitz(
     .. math::
 
         Y = A \left( \sum_i \alpha_i X_i^{\frac{\epsilon - 1}{\epsilon}} \right)^{\frac{\epsilon}{\epsilon - 1}},
-        \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
+        \qquad P_i X_i = P_i \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
 
     :func:`DixitStiglitzValue` registers the same demand with the zero-profit condition in place of the aggregate.
 
@@ -1062,7 +1075,7 @@ def DixitStiglitzValue(
 
     .. math::
 
-        P_Y Y = \sum_i P_i X_i, \qquad X_i = \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
+        P_Y Y = \sum_i P_i X_i, \qquad P_i X_i = P_i \frac{Y}{A} \left( \frac{\alpha_i P_Y A}{P_i} \right)^{\epsilon}
 
     The parameters are those of :func:`DixitStiglitz`.
 
@@ -1107,7 +1120,7 @@ def Leontief(
 
     .. math::
 
-        P_Y Y = \sum_i P_i X_i, \qquad X_i = \alpha_i Y
+        P_Y Y = \sum_i P_i X_i, \qquad P_i X_i = P_i \alpha_i Y
 
     The technology :math:`Y = \min_i X_i / \alpha_i` is not registered, because it holds whenever the demands do.
 
@@ -1162,7 +1175,7 @@ def Leontief(
         factor_costs.append(cost)
 
     demands = [
-        (f"{name}: demand for {factor.name}", factor, share * output)
-        for factor, share in zip(factors, factor_shares, strict=True)
+        _demand_spec(name=name, factor=factor, price=price, value=price * share * output)
+        for factor, price, share in zip(factors, factor_prices, factor_shares, strict=True)
     ]
     return _register_equations(model, [(name, output_value, reduce(add, factor_costs)), *demands])
