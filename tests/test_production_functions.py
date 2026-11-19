@@ -9,6 +9,7 @@ from cge_modeling import model as cm
 from cge_modeling.base.utilities import variable_dict_to_flat_array
 from cge_modeling.production_functions import (
     CES,
+    CET,
     CobbDouglas,
     DixitStiglitz,
     Leontief,
@@ -231,6 +232,65 @@ def test_ces_zero_profit_fails_off_the_unit_cost():
     point["P"] = point["P"] * 1.1
 
     assert np.all(np.abs(evaluate_residual(equations[0], objects, point)) > 1e-3)
+
+
+def test_cet_block_holds_at_the_unit_revenue_and_on_the_frontier():
+    with CGEModel() as model:
+        X, E, D, P_X = (cm.Variable(name) for name in ("X", "E", "D", "P_X"))
+        P_E, P_D, beta, A, omega = (
+            cm.Parameter(name) for name in ("P_E", "P_D", "beta", "A", "omega")
+        )
+        equations = CET(
+            "Transformation",
+            output=X,
+            output_price=P_X,
+            products=[E, D],
+            product_prices=[P_E, P_D],
+            product_shares=[beta],
+            tfp=A,
+            omega=omega,
+        )
+    objects = {
+        "X": X,
+        "E": E,
+        "D": D,
+        "P_X": P_X,
+        "P_E": P_E,
+        "P_D": P_D,
+        "beta": beta,
+        "A": A,
+        "omega": omega,
+    }
+    beta_value, A_value, omega_value, X_value = 0.7, 2.2, 0.6, 1.0
+    shares, prices = np.array([beta_value, 1 - beta_value]), np.array([1.3, 0.9])
+    P_X_value = (shares**-omega_value * prices ** (1 + omega_value)).sum() ** (
+        1 / (1 + omega_value)
+    ) / A_value
+    E_value, D_value = X_value / A_value * (prices / (shares * P_X_value * A_value)) ** omega_value
+    point = {
+        "X": X_value,
+        "E": E_value,
+        "D": D_value,
+        "P_X": P_X_value,
+        "P_E": prices[0],
+        "P_D": prices[1],
+        "beta": beta_value,
+        "A": A_value,
+        "omega": omega_value,
+    }
+    exponent = (omega_value + 1) / omega_value
+    frontier = A_value * (shares @ np.array([E_value, D_value]) ** exponent) ** (1 / exponent)
+
+    assert model.equation_names == [
+        "Transformation",
+        "Transformation: supply of E",
+        "Transformation: supply of D",
+    ]
+    for equation in equations:
+        np.testing.assert_allclose(
+            evaluate_residual(equation, objects, point), 0.0, atol=1e-12, err_msg=equation.name
+        )
+    np.testing.assert_allclose(frontier, X_value)
 
 
 def dixit_stiglitz_block():
