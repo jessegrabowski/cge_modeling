@@ -1023,7 +1023,7 @@ def build_model_4_in_context(*, closure: Literal["savings_driven", "fixed_invest
 
     One country produces an export good and a domestic good on a CET frontier and consumes a CES composite of the
     domestic good and an import. The exchange rate is the numeraire. In the savings-driven closure investment adjusts
-    to savings; in the fixed-investment closure investment is fixed and the sales tax rate adjusts.
+    to savings. In the fixed-investment closure investment is fixed and the sales tax rate adjusts.
     """
     investment_object, sales_tax_object = {
         "savings_driven": (cm.Variable, cm.Parameter),
@@ -1237,7 +1237,7 @@ def build_model_5_in_context() -> CGEModel:
 
     Primaries, manufactures and services combine intermediate goods, imports and a Cobb-Douglas value-added
     bundle in fixed proportions and pay an indirect tax on sales. Investment, government consumption and the import
-    good are fixed-proportions activities; the import good is produced from exports, which keeps trade balanced.
+    good are fixed-proportions activities. The import good is produced from exports, which keeps trade balanced.
     One consumer with Cobb-Douglas utility over all six goods pays a direct tax and receives all tax revenue. A
     consumption-weighted price index is the numeraire.
     """
