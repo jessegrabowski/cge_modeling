@@ -82,9 +82,13 @@ def test_context_built_model_residuals_vanish_at_the_calibrated_point(
 
 
 @ported_models
-@pytest.mark.parametrize("optimizer_mode", ["root", "minimize"])
+@pytest.mark.parametrize(
+    "optimizer_mode, tolerance",
+    [("root", 1e-8), ("minimize", 1e-4)],
+    ids=["root", "minimize"],
+)
 def test_context_built_model_solves_like_the_string_model(
-    model_id, build, calibrate, data, optimizer_mode
+    model_id, build, calibrate, data, optimizer_mode, tolerance
 ):
     context_model = build()
     string_model = load_and_cache_model(model_id=model_id, backend="pytensor")
@@ -103,8 +107,8 @@ def test_context_built_model_solves_like_the_string_model(
     xr_testing.assert_allclose(
         context_result["optimizer"]["variables"].dataset,
         string_result["optimizer"]["variables"].dataset,
-        rtol=1e-4,
-        atol=1e-4,
+        rtol=tolerance,
+        atol=tolerance,
     )
 
 
