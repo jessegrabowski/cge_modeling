@@ -6,7 +6,6 @@ from typing import Literal
 from pytensor.compile import get_mode
 
 from cge_modeling.base.cge import CGEModel
-from cge_modeling.base.primitives import Equation, Parameter, Variable
 from cge_modeling.compile.constants import CompiledFunctions
 from cge_modeling.compile.pytensor import compile_pytensor_cge_functions
 
@@ -63,33 +62,3 @@ def compile_model(
     model.mode = mode
 
     return model
-
-
-def cge_model(
-    coords: dict[str, list[str]] | None = None,
-    variables: list[Variable] | None = None,
-    parameters: list[Parameter] | None = None,
-    equations: list[Equation] | None = None,
-    numeraire: str | None = None,
-    apply_sympy_simplify: bool = False,
-    mode: str | None = None,
-    functions_to_compile: CompiledFunctions | Sequence[CompiledFunctions] | None = "all",
-    use_scan_euler: bool = False,
-    use_rk4_euler: bool = False,
-) -> CGEModel:
-    model = CGEModel(
-        coords=coords,
-        variables=variables,
-        parameters=parameters,
-        equations=equations,
-        numeraire=numeraire,
-        parse_equations_to_sympy=False,
-    )
-
-    return compile_model(
-        model,
-        mode=mode,
-        functions_to_compile=functions_to_compile,
-        use_scan_euler=use_scan_euler,
-        use_rk4=use_rk4_euler,
-    )

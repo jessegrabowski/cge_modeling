@@ -2,64 +2,7 @@ import numpy as np
 import pytensor.tensor as pt
 import pytest
 
-from cge_modeling import CGEModel
-from cge_modeling.base.primitives import Parameter, Variable
-from cge_modeling.compile.pytensor import cge_primitives_to_pytensor
-from cge_modeling.compile.pytensor_tools import (
-    compile_with_packed_inputs,
-    make_jacobian,
-    object_to_pytensor,
-)
-from tests.utilities.models import load_model_1_components, load_modeL_2_components
-
-test_cases = [
-    (Parameter, "K_d", {}),
-    (Variable, "Y", {"t": [0, 1, 2]}),
-    (Variable, "Y", {"t": [0, 1, 2], "s": [0, 1, 2]}),
-]
-
-
-@pytest.mark.parametrize(
-    "cls, name, coords", test_cases, ids=["Parameter", "Variable", "Variable2d"]
-)
-def test_object_to_pytensor(cls, name, coords):
-    # noinspection PyArgumentList
-    obj = cls(
-        name=name,
-        dims=list(coords.keys()),
-        description="A lovely item from group <dim:i>",
-    )
-
-    pt_obj = object_to_pytensor(obj, coords)
-    assert pt_obj.name == name
-    assert pt_obj.ndim == len(coords)
-    assert pt_obj.type.shape == tuple(len(coords[dim]) for dim in coords.keys())
-
-
-@pytest.mark.parametrize(
-    "load_components",
-    [load_model_1_components, load_modeL_2_components],
-    ids=["1_Sector", "3_Sector"],
-)
-def test_compile_to_pytensor(load_components):
-    variables, parameters, equations, coords = load_components()
-    cge_model = CGEModel(
-        coords=coords,
-        variables=variables,
-        parameters=parameters,
-        equations=equations,
-        parse_equations_to_sympy=False,
-    )
-    n_variables = n_eq = len(cge_model.unpacked_variable_names)
-    n_params = len(cge_model.unpacked_parameter_names)
-
-    system, variables, parameters, _ = cge_primitives_to_pytensor(cge_model)
-    jac = make_jacobian(system, variables)
-    B = make_jacobian(system, parameters)
-
-    assert system.type.shape == (n_eq,)
-    assert jac.type.shape == (n_eq, n_variables)
-    assert B.type.shape == (n_eq, n_params)
+from cge_modeling.compile.pytensor_tools import compile_with_packed_inputs
 
 
 def test_prod_to_no_zero_prod_rewrite():

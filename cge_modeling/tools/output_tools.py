@@ -5,17 +5,14 @@ from collections import defaultdict
 from copy import deepcopy
 
 import numpy as np
-import sympy as sp
 import xarray as xr
 
 from IPython.display import Latex, display
 from latextable import draw_latex
-from sympy.printing.latex import LatexPrinter
 from texttable import Texttable
 
 from cge_modeling.base.primitives import ModelObject
 from cge_modeling.base.utilities import flat_array_to_variable_dict
-from cge_modeling.tools.sympy_tools import symbol
 
 
 def get_node_level(node, level=0):
@@ -241,8 +238,6 @@ def parse_data(x):
             return x
         else:
             return r"\text{" + x + "}"
-    elif isinstance(x, sp.Eq | sp.Symbol | sp.Add | sp.Mul | sp.Expr):
-        return LatexPrinter().doprint(x)
     elif isinstance(x, Latex):
         return x.data
     else:
@@ -300,25 +295,6 @@ def make_summary_table(variables, values=None):
     return latex_table
 
 
-def make_equation_table(equation_dict):
-    headings = [r"", r"\text{Equation}", r"\text{Equation}"]
-    heading_row = [headings]
-
-    equation_table = Texttable()
-    equation_table.set_cols_align(["c"] * 3)
-    equation_table.set_cols_valign(["m"] * 3)
-
-    data_rows = [
-        [d["eq_id"], "\\text{" + d["name"] + "}", LatexPrinter().doprint(d["fancy_eq"])]
-        for d in equation_dict
-    ]
-
-    equation_table.add_rows(heading_row + data_rows)
-    latex_table = draw_latex(equation_table)
-
-    return latex_table
-
-
 def convert_table_to_array(latex_table):
     # Remove the \begin{table} and \end{table} commands
     latex_table = re.sub(r"\\begin{table}", "", latex_table)
@@ -345,69 +321,6 @@ def display_latex_table(info_dict):
 def display_info_as_table(variable_info):
     variable_table = make_summary_table(variable_info)
     display(Latex(convert_table_to_array(variable_table)))
-
-
-def display_eqs_as_table(equation_dicts):
-    equation_table = make_equation_table(equation_dicts)
-    display(Latex(convert_table_to_array(equation_table)))
-
-
-def sub_info_dicts(info, sub_dict):
-    out = []
-    for d in info:
-        name = d["name"]
-        index = d.get("index", ())
-        latex_name = d["latex_name"]
-        description = d["description"]
-
-        indices_subbed = tuple(x.subs(sub_dict) for x in index)
-        latex_name_subbed = latex_name
-        description_subbed = description
-
-        for idx, value in sub_dict.items():
-            latex_name_subbed = re.sub(
-                r"([\^_,{])" + str(idx), r"\g<1>" + str(value), latex_name_subbed
-            )
-            latex_name_subbed = re.sub(str(idx) + r"}", str(value) + "}", latex_name_subbed)
-
-            description_subbed = re.sub(f" {idx!s}$", f" {value!s}", description_subbed)
-            description_subbed = re.sub(f" {idx!s} ", f" {value!s} ", description_subbed)
-
-        out.append(
-            {
-                "name": name,
-                "index": indices_subbed,
-                "latex_name": latex_name_subbed,
-                "description": description_subbed,
-            }
-        )
-    return out
-
-
-def get_info(name, value_dict, sectors):
-    sectors = [str(x) for x in sectors]
-    x = value_dict.get(symbol(name, *sectors))
-    if x is None:
-        x = value_dict.get(symbol(name))
-    return x
-
-
-def latex_print_equations(equation_info, return_latex=False):
-    names, equations, equation_ids = (
-        [d.get(attr) for d in equation_info] for attr in ["name", "fancy_eq", "eq_id"]
-    )
-
-    tex_output = r"\begin{align}"
-    for name, eq, eq_id in zip(names, equations, equation_ids):
-        tex_output += r"\text{" + name + r"} &\\"
-        tex_output += sp.latex(eq) + r"&\tag{" + str(eq_id) + "}" + r"\\"
-    tex_output += r"\end{align}"
-
-    if return_latex:
-        return tex_output
-
-    else:
-        display(Latex(tex_output))
 
 
 def datatree_to_value_dict(tree: xr.DataTree) -> dict[str, np.ndarray]:

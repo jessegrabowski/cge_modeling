@@ -16,17 +16,6 @@ def union_many(x, *args):
     return x
 
 
-def brackets_to_snake_case(name):
-    """
-    Rename a variable x[i, j] to x_i_j
-    """
-    name = name.replace("]", "")
-    name = name.replace("[", "_")
-    name = name.replace(",", "_")
-    name = name.replace(" ", "")
-    return name
-
-
 def at_least_list(x: Any) -> list[Any]:
     """
     Wrap non-list objects in a list

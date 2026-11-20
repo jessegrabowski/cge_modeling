@@ -12,7 +12,6 @@ import numpy as np
 from better_optimize.constants import MINIMIZE_MODE_KWARGS
 
 from cge_modeling.base.primitives import (
-    Equation,
     ModelObject,
     Parameter,
     Variable,
@@ -20,47 +19,6 @@ from cge_modeling.base.primitives import (
 )
 
 _log = logging.getLogger(__name__)
-CGETypes = Variable | Parameter | Equation
-
-
-def unpack_equation_strings(
-    equations: list[Equation], coords: Mapping[str, Sequence[str | int]]
-) -> list[str]:
-    """
-    Helper function to unpack equations names with <dim:i> tags to a long list of equations.
-
-    Parameters
-    ----------
-    equations: Equation
-        List of equation objects from a CGE model
-    coords: dict
-        Dictionary mapping dimension names to  lists of labels
-
-    Returns
-    -------
-    unpacked_names: list[str]
-        List of unpacked equation names
-    """
-
-    unpacked_names = []
-    dims = list(coords.keys())
-    dims_pattern = "|".join([re.escape(x) for x in dims])
-    pattern = f"<dim:({dims_pattern})>"
-
-    for eq in equations:
-        name = eq.name
-        named_dims = re.findall(pattern, name)
-
-        if len(named_dims) == 0:
-            unpacked_names.append(name)
-            continue
-        labels = [coords[dim] for dim in named_dims]
-        for label_combination in product(*labels):
-            sub_dict = dict(zip(named_dims, label_combination))
-            new_name = _pretty_print_dim_flags(name, named_dims, sub_dict)
-            unpacked_names.append(new_name)
-
-    return unpacked_names
 
 
 def unpack_equation_name(
@@ -87,22 +45,6 @@ def unpack_equation_name(
     return element_names
 
 
-def _validate_input(obj: Any, cls: type[CGETypes]):
-    """
-    Validate that an input is an instance of a class.
-
-    Parameters
-    ----------
-    obj: Any
-        An object to validate
-    cls: Union[Variable, Parameter]
-        The class to validate against
-    """
-
-    if not isinstance(obj, cls):
-        raise ValueError(f"Expected instance of type {cls.__name__}, found {type(obj).__name__}")
-
-
 def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
     """
     Convert non-sequence inputs into a singleton list.
@@ -120,81 +62,6 @@ def ensure_input_is_sequence(x: Any) -> Sequence[Any]:
     if not isinstance(x, list | tuple):
         x = [x]
     return x
-
-
-def _expand_var_by_index(
-    obj: Variable | Parameter, coords: Mapping[str, Sequence[str | int]]
-) -> list[Variable | Parameter]:
-    """
-    Create a set of CGE Model objects from a single object using the cartesian product of the object's dimensions
-
-    Parameters
-    ----------
-    obj: Union[Variable, Parameter]
-        A CGE Model object to be expanded
-    coords: dict[str, list[str]]
-        A dictionary of coordinates known by the model. Used to determine the number and labels of the new objects.
-
-    Returns
-    -------
-    output_set: list[Union[Variable, Parameter]]
-        A list of new CGE Model objects, one for each combination of dimensions in the input object.
-
-    Notes
-    -----
-    The new objects will have the same name, description, and type as the input object, but the abstract dimension names
-    will be replaced with actual labels from the coordinates dictionary.
-
-    Examples
-    --------
-    .. code-block:: python
-
-        from cge_modeling.base.primitives import Variable
-        from cge_modeling.base.utilities import _expand_var_by_index
-
-        x = Variable(name='x', dims='i', description='Quantity associated with sector <dim:i> ')
-        coords = {'i': ['Agriculture', 'Industrial', 'Service']}
-        expanded_x = _expand_var_by_index(x, coords)
-        for var in expanded_x:
-            print(var._full_latex_name)
-        # Out: x_{i=\text{Agriculture}}
-        #      x_{i=\text{Industrial}}
-        #      x_{i=\text{Service}}
-    """
-    if not isinstance(obj, Variable | Parameter):
-        raise ValueError(f"Expected a model object for argument obj, got {type(obj)}")
-
-    dims = list(coords.keys())
-    missing_dims = set(dims) - set(obj.dims)
-    if len(missing_dims) > 0:
-        raise ValueError(
-            f"Found indices {', '.join(missing_dims)} on the coords that are not among the variable "
-            f"indices: {', '.join(obj.dims)}"
-        )
-
-    cls = Variable if isinstance(obj, Variable) else Parameter
-    output_set = [obj]
-
-    for dim in dims:
-        new_out = []
-        for obj in output_set:
-            labels = coords.get(dim, []) if dim in obj.dims else []
-            for label in labels:
-                new_dim_vals = obj.dim_vals.copy()
-                new_dim_vals.update({dim: label})
-
-                # noinspection PyArgumentList
-                new_out.append(
-                    cls(
-                        name=obj.name,
-                        dims=obj.dims,
-                        dim_vals=new_dim_vals,
-                        description=obj.description,
-                    )
-                )
-        output_set = new_out.copy()
-
-    return output_set
 
 
 def _replace_dim_marker_with_dim_name(s: str) -> str:
@@ -417,29 +284,6 @@ def variable_dict_to_flat_array(
     return variables, parameters
 
 
-def flat_mask_from_param_names(param_dict, names):
-    keys = list(param_dict.keys())
-    count_dict = {k: np.prod(np.atleast_1d(v).shape) for k, v in param_dict.items()}
-    counts = np.concatenate([np.atleast_1d(count_dict[var]).ravel() for var in keys])
-    cumcounts = counts.cumsum()
-
-    slice_dict = count_dict.copy()
-
-    for i, k in enumerate(keys):
-        slice_dict[k] = slice(cumcounts[i] - counts[i], cumcounts[i])
-
-    flat_data = np.concatenate([np.atleast_1d(param_dict[var]).ravel() for var in keys])
-    mask = np.full(flat_data.shape, False, dtype="bool")
-
-    if isinstance(names, str):
-        names = [names]
-
-    for name in names:
-        mask[slice_dict[name]] = True
-
-    return mask
-
-
 def get_method_defaults(use_grad, use_hess, use_hessp, method):
     use_grad, use_hess, use_hessp = (
         MINIMIZE_MODE_KWARGS[method][f"uses_{name}"] if arg is None else arg
@@ -492,24 +336,8 @@ def create_final_param_dict(
     return scenario_params
 
 
-def make_indexed_name(obj: ModelObject, delimiter="_") -> str:
-    """
-    Construct an object name with indexing information from a ModelObject.
-
-    Parameters
-    ----------
-    obj: ModelObject
-        One of Variable, Parameter, or Equation.
-
-    delimiter: str, optional
-        The delimiter to use between the object name and the index values. Default is '_'.
-
-    Returns
-    -------
-    name: str
-        The name of the object with the index values appended, separated by the delimiter.
-    """
-
+def make_indexed_name(obj: ModelObject) -> str:
+    """Return the name of ``obj`` with its dim labels appended, joined by underscores."""
     return "_".join([obj.name, *list(map(str, obj.dim_vals.values()))])
 
 
@@ -521,7 +349,7 @@ def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim="raise") -> 
     Parameters
     ----------
     obj: ModelObject
-        A model object with a dims attribute, one of Variable, Parameter, or Equation
+        A Variable or Parameter
     dims: list of str
         A list of dimension names to be validated
     on_unused_dim: str, optional
@@ -540,7 +368,7 @@ def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim="raise") -> 
         if on_unused_dim == "raise":
             raise ValueError(
                 f"Dimension expansion was requested for {obj.name} on the following dims "
-                f"which are not associted with {obj.name}: {unk_str}"
+                f"which are not associated with {obj.name}: {unk_str}"
             )
         elif on_unused_dim == "ignore":
             return list(set(dims) - unknown_dims)
@@ -560,7 +388,7 @@ def expand_obj_by_indices(
     Parameters
     ----------
     obj: ModelObject
-        A model object with a dims attribute, one of Variable, Parameter, or Equation
+        A Variable or Parameter
     coords: dict of str-list pairs
         A dictionary mapping dimension names to lists of labels
     dims: list of str, optional
@@ -572,14 +400,12 @@ def expand_obj_by_indices(
     Returns
     -------
     expanded_objs: list of ModelObject
-        A list of model objects with the same name, description, and assumptions as the original object, but with the
-        dimension values updated to match the labels in coords.
+        A list of model objects with the same name and description as the original object, but with the dimension
+        values updated to match the labels in coords.
     """
     out = []
 
     if dims is None:
-        if not hasattr(obj, "dims"):
-            return [obj]
         dims = obj.dims
     dims = _validate_dims(obj, dims, on_unused_dim)
 

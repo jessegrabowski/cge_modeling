@@ -7,7 +7,7 @@ import xarray.testing as xr_testing
 from pytensor.graph import rewrite_graph
 from pytensor.graph.traversal import explicit_graph_inputs
 
-from cge_modeling import CGEModel, Equation, Variable, compile_model
+from cge_modeling import CGEModel, compile_model
 from cge_modeling import model as cm
 from cge_modeling.base.utilities import variable_dict_to_flat_array
 from tests.utilities.models import (
@@ -485,23 +485,6 @@ def test_equation_using_another_models_object_raises():
             with CGEModel():
                 inner_variable = cm.Variable("inner_variable")
                 cm.Equation("inner", inner_variable, outer_variable)
-
-
-def test_string_built_model_cannot_be_entered():
-    model = CGEModel(variables=[Variable("x")], equations=[Equation("x equation", "x = 1")])
-
-    with pytest.raises(ValueError, match="cannot be added to it in a `with` block"):
-        with model:
-            pass
-
-
-def test_context_built_model_rejects_string_objects():
-    with CGEModel() as model:
-        x = cm.Variable("x")
-        cm.Equation("x equation", x, 1.0)
-
-    with pytest.raises(ValueError, match="this model is built in a `with` block"):
-        model.add_variable(Variable("y"))
 
 
 def test_model_can_be_built_across_several_blocks():
