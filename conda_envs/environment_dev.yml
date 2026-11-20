@@ -35,6 +35,7 @@ dependencies:
   - better-optimize>=0.5.1, <1
   - latextable<2
   - matplotlib<4
+  - networkx<4
   - pandas<4
   - rich<16
   - scipy<2

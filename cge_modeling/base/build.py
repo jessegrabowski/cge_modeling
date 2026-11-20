@@ -30,6 +30,7 @@ def compile_model(
     functions_to_compile: CompiledFunctions | Sequence[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
     use_rk4: bool = False,
+    use_sparse_matrices: bool = False,
 ) -> CGEModel:
     model.check_initialization()
     _log.info(
@@ -43,12 +44,22 @@ def compile_model(
     #  a bug in PyTensor. Remove this once the bug is fixed.
     mode = get_mode(mode).excluding("inplace_elemwise_optimizer")
 
-    f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler = compile_pytensor_cge_functions(
+    (
+        f_system,
+        f_jac,
+        f_resid,
+        f_grad,
+        f_hess,
+        f_hessp,
+        f_euler,
+        f_sparse_system_and_jac,
+    ) = compile_pytensor_cge_functions(
         cge_model=model,
         functions_to_compile=compile_list,
         mode=mode,
         use_scan_euler=use_scan_euler,
         use_rk4=use_rk4,
+        use_sparse_matrices=use_sparse_matrices,
     )
     model.f_system = f_system
     model.f_jac = f_jac
@@ -57,6 +68,7 @@ def compile_model(
     model.f_hess = f_hess
     model.f_hessp = f_hessp
     model.f_euler = f_euler
+    model.f_sparse_system_and_jac = f_sparse_system_and_jac
 
     model._compiled = compile_list
     model.mode = mode

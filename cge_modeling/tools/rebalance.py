@@ -13,7 +13,7 @@ import pytensor.tensor as pt
 from better_optimize import minimize
 from scipy.sparse import csr_array
 
-from cge_modeling.compile.pytensor_tools import rewrite_pregrad
+from cge_modeling.compile.pytensor_tools import pushforward, rewrite_pregrad
 
 _log = logging.getLogger(__name__)
 
@@ -151,10 +151,7 @@ def _crossentropy_method_setup(
             raise ValueError("Must use gradient to compute Hessian")
         rewrite_pregrad(grad_ce)
         p = pt.dvector("p")
-        jvp_ce = cast(
-            pt.TensorVariable,
-            pytensor.gradient.pushforward(cast(pt.TensorVariable, grad_ce), x, p),
-        )
+        [jvp_ce] = pushforward([cast(pt.TensorVariable, grad_ce)], [x], [p])
         f_jvp_ce = compile_fn([x, p], jvp_ce)
 
     return f_X, f_ce, f_1, f_2, f_grad, f_1_grad, f_2_grad, f_hess, f_jvp_ce
