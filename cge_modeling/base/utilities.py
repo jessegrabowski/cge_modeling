@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from better_optimize.constants import MINIMIZE_MODE_KWARGS
+from better_optimize.configuration import MINIMIZE_CONFIGS
 
 from cge_modeling.base.primitives import (
     ModelObject,
@@ -286,7 +286,7 @@ def variable_dict_to_flat_array(
 
 def get_method_defaults(use_grad, use_hess, use_hessp, method):
     use_grad, use_hess, use_hessp = (
-        MINIMIZE_MODE_KWARGS[method][f"uses_{name}"] if arg is None else arg
+        getattr(MINIMIZE_CONFIGS[method], f"uses_{name}") if arg is None else arg
         for name, arg in zip(["grad", "hess", "hessp"], [use_grad, use_hess, use_hessp])
     )
     if use_hess and use_hessp:
