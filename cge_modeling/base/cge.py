@@ -19,6 +19,7 @@ import xarray as xr
 from better_optimize import minimize, root
 from better_optimize.constants import minimize_method, root_method
 from cloudpickle import cloudpickle
+from IPython.display import Latex
 from pytensor.compile.mode import Mode
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.xtensor import as_xtensor
@@ -50,6 +51,7 @@ from cge_modeling.base.utilities import (
     unpack_equation_strings,
     variable_dict_to_flat_array,
 )
+from cge_modeling.tools.latex import equation_to_latex
 from cge_modeling.tools.output_tools import (
     datatree_to_value_dict,
     display_latex_table,
@@ -787,12 +789,22 @@ class CGEModel:
         # display_latex_table(info_dict)
 
     def equation_table(self, display=True):
-        eq_dict = [eq.to_dict() for eq in self.equations]
+        if self._model_objects:
+            names_and_equations = [
+                (equation.name, Latex(equation_to_latex(equation, model=self)))
+                for equation in self._xtensor_equations.values()
+            ]
+        else:
+            names_and_equations = [
+                (record["name"], record["fancy_eq"])
+                for record in (equation.to_dict() for equation in self._equations.values())
+            ]
+
         info_dict = {"": [], "Name": [], "Equation": []}
-        for i, d in enumerate(eq_dict):
-            info_dict[""].append(i + 1)
-            info_dict["Name"].append(_replace_dim_marker_with_dim_name(d["name"]))
-            info_dict["Equation"].append(d["fancy_eq"])
+        for number, (name, equation) in enumerate(names_and_equations, start=1):
+            info_dict[""].append(number)
+            info_dict["Name"].append(_replace_dim_marker_with_dim_name(name))
+            info_dict["Equation"].append(equation)
 
         display_latex_table(info_dict)
 

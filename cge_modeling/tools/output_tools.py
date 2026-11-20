@@ -243,6 +243,8 @@ def parse_data(x):
             return r"\text{" + x + "}"
     elif isinstance(x, sp.Eq | sp.Symbol | sp.Add | sp.Mul | sp.Expr):
         return LatexPrinter().doprint(x)
+    elif isinstance(x, Latex):
+        return x.data
     else:
         raise ValueError(f"Unexpected type {type(x)} in table data")
 
