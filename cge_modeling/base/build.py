@@ -60,7 +60,7 @@ def compile_model(
     model.f_euler = f_euler
 
     model._compiled = compile_list
-    model.mode = mode.upper() if isinstance(mode, str) else mode
+    model.mode = mode
 
     return model
 

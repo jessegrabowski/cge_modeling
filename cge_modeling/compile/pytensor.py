@@ -304,8 +304,6 @@ def compile_pytensor_cge_functions(
         )
         validate_pytensor_parsing_result(system, variables, parameters, cache)
 
-    _log.info(f"Compiling model to Pytensor using {mode} mode")
-
     # Always compile the system -- used to check residuals
     f_system = compile_with_packed_inputs(
         [("x", variables), ("theta", parameters)], system, mode=mode
