@@ -5,7 +5,7 @@ import os.path
 import re
 import warnings
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -705,7 +705,7 @@ class CGEModel:
 
         return out
 
-    def get_symbol(self, names: list[str] | None = None):
+    def get_symbol(self, names: str | list[str] | None = None):
         if names is None:
             names = self.unpacked_parameter_names + self.unpacked_parameter_symbols
         if isinstance(names, str):
@@ -796,7 +796,40 @@ class CGEModel:
 
         display_latex_table(info_dict)
 
-    def calibrate(self, data=None, max_iter=100, name="initial_calibration"):
+    def calibrate(
+        self,
+        data: Mapping[str, float | np.ndarray] | None = None,
+        max_iter: int = 100,
+        name: str = "initial_calibration",
+        initial_values: Mapping[str, float | np.ndarray] | None = None,
+    ) -> Result:
+        """
+        Solve for every variable and parameter value that ``data`` does not give.
+
+        Parameters
+        ----------
+        data : dict of str to float or ndarray, optional
+            Known values, keyed by variable or parameter name.
+        max_iter : int, optional
+            Iteration limit of the solver. Default is 100.
+        name : str, optional
+            Name of the returned result. Default is ``"initial_calibration"``.
+        initial_values : dict of str to float or ndarray, optional
+            Starting values for unknowns, keyed by name. Used only by models built in a ``with`` block.
+
+        Returns
+        -------
+        result : Result
+            The given and solved values, with ``success`` set when every equation holds.
+        """
+        data = {} if data is None else data
+        initial_values = {} if initial_values is None else initial_values
+
+        if self._model_objects:
+            return self._calibrate_context_built(
+                data=data, initial_values=initial_values, max_iter=max_iter, name=name
+            )
+
         if not self._compiled:
             self._compile()
 
@@ -806,7 +839,7 @@ class CGEModel:
         all_model_objects = self.unpacked_variable_symbols + self.unpacked_parameter_symbols
 
         calibrated_system = recursive_solve_symbolic(equations, symbolic_data, max_iter)
-        initial_values = np.array(
+        initial_values_flat = np.array(
             [data.get(x.name, np.nan) for x in all_model_objects], dtype="float64"
         )
         fitted_values = np.array(
@@ -826,11 +859,41 @@ class CGEModel:
             success=success,
             variables=self.unpacked_variable_names,
             parameters=self.unpacked_parameter_names,
-            initial_values=initial_values,
+            initial_values=initial_values_flat,
             fitted_values=fitted_values,
         )
 
         return result
+
+    def _calibrate_context_built(
+        self,
+        data: Mapping[str, float | np.ndarray],
+        initial_values: Mapping[str, float | np.ndarray],
+        max_iter: int,
+        name: str,
+    ) -> Result:
+        # cge_modeling.tools.calibration imports the compile modules, which import this module.
+        from cge_modeling.tools.calibration import (
+            calibrate_entries,
+            compile_calibration_system,
+            flatten_entries,
+            residual_is_converged,
+        )
+
+        system = compile_calibration_system(self)
+        fitted_values, residual = calibrate_entries(
+            system=system, data=data, initial_values=initial_values, max_iter=max_iter
+        )
+        initial_values_flat, _ = flatten_entries(system=system, values=data, fill=np.nan)
+
+        return Result(
+            name=name,
+            success=residual_is_converged(residual),
+            variables=self.unpacked_variable_names,
+            parameters=self.unpacked_parameter_names,
+            initial_values=initial_values_flat,
+            fitted_values=fitted_values,
+        )
 
     def _solve_with_euler_approximation(self, data, theta_final, n_steps):
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)

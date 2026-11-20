@@ -259,11 +259,11 @@ def pytensor_euler_step(
     step_size = [(x - y) / n_steps for x, y in zip(theta_final, theta0)]
 
     try:
-        Bv = pytensor.gradient.Rop(system, parameters, step_size)
+        Bv = pytensor.gradient.pushforward(system, parameters, step_size)
     except NotImplementedError:
         _log.warning(
             "Tried to compute jvp of model with respect to parameters but failed; an Op in your model does not "
-            "have an implemented Rop method. Falling back to direct computation via jacobian. This is slow and "
+            "have an implemented pushforward. Falling back to direct computation via jacobian. This is slow and "
             "memory intensive for large models."
         )
         v = flatten_equations(step_size)
