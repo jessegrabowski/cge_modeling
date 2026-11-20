@@ -472,63 +472,6 @@ def replace_indexed_variables(equations, sub_dict):
     return sub_all_eqs(sp_equations, sub_dict)
 
 
-def jacobian_as_dok_data(eqs: list[sp.Expr], variables: list[sp.Symbol]):
-    """
-    Compute non-zero elements of the jacobian of a system of equations with respect to a set of variables and return
-    them in dictionary-of-keys (dok) format.
-
-    Dictionary of keys (dok) format is a dictionary with keys as tuples of row and column indices, and values as the
-    corresponding elements of the jacobian matrix.
-
-    Parameters
-    ----------
-    eqs
-    variables
-
-    Returns
-    -------
-    shape: tuple
-        The shape of the jacobian matrix
-    dok: dict
-        A dictionary of non-zero elements of the jacobian matrix
-    """
-    dok = {}
-    shape = (len(eqs), len(variables))
-    for i, eq in enumerate(eqs):
-        atoms = eq.atoms()
-        for j, x in enumerate(variables):
-            if x in atoms:
-                dy_dx = eq.diff(x)
-                dok[(i, j)] = dy_dx
-    return shape, dok
-
-
-def sparse_jacobian(eqs: list[sp.Expr] | sp.Matrix, variables: list[sp.Symbol]):
-    """
-    Compute the jacobian of a system of equations with respect to a set of variables, and return the result as a sympy
-    SparseMatrix object.
-
-    Parameters
-    ----------
-    eqs: list of equations
-        The equations to differentiate
-    variables: list of symbols
-        The variables to differentiate with respect to
-
-    Returns
-    -------
-    jacobian: sympy SparseMatrix
-        A sparse matrix representation of the jacobian matrix
-    """
-    if isinstance(eqs, sp.Matrix):
-        if not eqs.shape[-1] == 1:
-            raise ValueError("If in a matrix, the equations must be a column vector")
-        eqs = [eqs[i] for i in range(eqs.shape[0])]
-
-    shape, dok_data = jacobian_as_dok_data(eqs, variables)
-    return sp.SparseMatrix(*shape, dok_data)
-
-
 def recursive_solve_symbolic(equations, known_values=None, max_iter=100):
     """
     Solve a system of symbolic equations iteratively, given known initial values

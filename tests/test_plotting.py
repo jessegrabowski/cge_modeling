@@ -26,7 +26,7 @@ def auto_close_all_figures():
 
 @pytest.fixture(scope="session")
 def cge_model():
-    model = load_model_2(backend="sympytensor")
+    model = load_model_2()
     initial_calib_data = calibrate_model_2(**model_2_data)
 
     sim_results_idata = model.simulate(

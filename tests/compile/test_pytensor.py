@@ -13,10 +13,8 @@ from tests.utilities.models import (
 
 def test_context_built_model_compiles_to_the_string_model_functions():
     context_model = build_model_1_in_context()
-    compile_model(context_model, backend="pytensor", functions_to_compile=("root", "minimize"))
-    string_model = load_and_cache_model(
-        model_id=1, backend="pytensor", functions_to_compile=("root", "minimize")
-    )
+    compile_model(context_model, functions_to_compile=("root", "minimize"))
+    string_model = load_and_cache_model(model_id=1, functions_to_compile=("root", "minimize"))
 
     calibrated = calibrate_model_1(**model_1_data)
     x, theta = variable_dict_to_flat_array(
@@ -41,12 +39,8 @@ def test_context_built_model_compiles_to_the_string_model_functions():
 
 def test_context_built_model_scan_euler_matches_the_string_model():
     context_model = build_model_1_in_context()
-    compile_model(
-        context_model, backend="pytensor", functions_to_compile=("euler",), use_scan_euler=True
-    )
-    string_model = load_model_1(
-        backend="pytensor", functions_to_compile=("euler",), use_scan_euler=True
-    )
+    compile_model(context_model, functions_to_compile=("euler",), use_scan_euler=True)
+    string_model = load_model_1(functions_to_compile=("euler",), use_scan_euler=True)
     calibrated = calibrate_model_1(**model_1_data)
     _, theta_final = variable_dict_to_flat_array(
         {**calibrated, "L_s": calibrated["L_s"] * 1.5},

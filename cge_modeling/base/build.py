@@ -1,8 +1,7 @@
 import logging
 
-from collections.abc import Callable, Sequence
-from functools import partial
-from typing import Any, Literal
+from collections.abc import Sequence
+from typing import Literal
 
 from pytensor.compile import get_mode
 
@@ -10,29 +9,8 @@ from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Equation, Parameter, Variable
 from cge_modeling.compile.constants import CompiledFunctions
 from cge_modeling.compile.pytensor import compile_pytensor_cge_functions
-from cge_modeling.compile.sympytensor import compile_sympytensor_cge_functions
 
 _log = logging.getLogger(__name__)
-
-COMPILE_FUNC_FACTORY: dict[str, Callable[..., tuple[Any, ...]]] = {
-    "pytensor": compile_pytensor_cge_functions,
-    "sympytensor": compile_sympytensor_cge_functions,
-}
-
-
-def determine_default_backend(
-    equations: Sequence[Equation],
-) -> Literal["pytensor", "sympytensor"]:
-    # Check for Sum/Prod in the equations, if found, use sympytensor
-    if any("Sum(" in eq.equation or "Prod(" in eq.equation for eq in equations):
-        return "sympytensor"
-
-    # Alternatively, if we find broadcasting logic in the equations, use pytensor
-    if any("[:, None]" in eq.equation or "[None, :]" in eq.equation for eq in equations):
-        return "pytensor"
-
-    # Default to sympytensor if there is no info
-    return "sympytensor"
 
 
 def _parse_compile_kwarg(
@@ -49,27 +27,16 @@ def _parse_compile_kwarg(
 
 def compile_model(
     model: CGEModel,
-    backend: Literal["pytensor", "sympytensor"] | None = None,
     mode: str | None = None,
-    use_sparse_matrices: bool = False,
     functions_to_compile: CompiledFunctions | Sequence[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
     use_rk4: bool = False,
 ) -> CGEModel:
-    if backend is None:
-        raise ValueError(f"backend must be one of {list(COMPILE_FUNC_FACTORY)}, found None")
-
     model.check_initialization()
-    if model._model_objects and backend != "pytensor":
-        raise ValueError(
-            f"Models built in a `with` block compile with backend='pytensor', found {backend!r}."
-        )
     _log.info(
         f"Compiling a model with {model.n_equations} equations, {model.n_variables} variables, "
         f"{model.n_parameters} parameters"
     )
-
-    func_maker = partial(COMPILE_FUNC_FACTORY[backend], use_rk4=use_rk4)
 
     compile_list = list(_parse_compile_kwarg(functions_to_compile) or [])
 
@@ -77,12 +44,12 @@ def compile_model(
     #  a bug in PyTensor. Remove this once the bug is fixed.
     mode = get_mode(mode).excluding("inplace_elemwise_optimizer")
 
-    f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler = func_maker(
+    f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler = compile_pytensor_cge_functions(
         cge_model=model,
         functions_to_compile=compile_list,
         mode=mode,
         use_scan_euler=use_scan_euler,
-        use_sparse_matrices=use_sparse_matrices,
+        use_rk4=use_rk4,
     )
     model.f_system = f_system
     model.f_jac = f_jac
@@ -93,7 +60,6 @@ def compile_model(
     model.f_euler = f_euler
 
     model._compiled = compile_list
-    model._compile_backend = backend
     model.mode = mode.upper() if isinstance(mode, str) else mode
 
     return model
@@ -106,30 +72,23 @@ def cge_model(
     equations: list[Equation] | None = None,
     numeraire: str | None = None,
     apply_sympy_simplify: bool = False,
-    backend: Literal["pytensor", "sympytensor"] | None = None,
     mode: str | None = None,
-    use_sparse_matrices: bool = False,
     functions_to_compile: CompiledFunctions | Sequence[CompiledFunctions] | None = "all",
     use_scan_euler: bool = False,
     use_rk4_euler: bool = False,
 ) -> CGEModel:
-    if backend is None:
-        backend = determine_default_backend(equations or [])
-
     model = CGEModel(
         coords=coords,
         variables=variables,
         parameters=parameters,
         equations=equations,
         numeraire=numeraire,
-        parse_equations_to_sympy=backend == "sympytensor",
+        parse_equations_to_sympy=False,
     )
 
     return compile_model(
         model,
-        backend=backend,
         mode=mode,
-        use_sparse_matrices=use_sparse_matrices,
         functions_to_compile=functions_to_compile,
         use_scan_euler=use_scan_euler,
         use_rk4=use_rk4_euler,

@@ -50,9 +50,7 @@ def test_context_built_model_matches_string_model_objects_and_size(
     model_id, build, calibrate, data
 ):
     model = build()
-    string_model = load_and_cache_model(
-        model_id=model_id, backend="pytensor", functions_to_compile=None
-    )
+    string_model = load_and_cache_model(model_id=model_id, functions_to_compile=None)
 
     assert model.variable_names == string_model.variable_names
     assert model.parameter_names == string_model.parameter_names
@@ -92,7 +90,7 @@ def test_context_built_model_solves_like_the_string_model(
     model_id, build, calibrate, data, optimizer_mode, optimizer_kwargs
 ):
     context_model = build()
-    string_model = load_and_cache_model(model_id=model_id, backend="pytensor")
+    string_model = load_and_cache_model(model_id=model_id)
     calibrated = calibrate(**data)
     scenario = {
         "final_delta_pct": {"L_s": 0.5},
@@ -105,7 +103,6 @@ def test_context_built_model_solves_like_the_string_model(
     context_result = context_model.simulate(calibrated, **scenario)
     string_result = string_model.simulate(calibrated, **scenario)
 
-    assert context_model._compile_backend == "pytensor"
     xr_testing.assert_allclose(
         context_result["optimizer"]["variables"].dataset,
         string_result["optimizer"]["variables"].dataset,
@@ -116,7 +113,7 @@ def test_context_built_model_solves_like_the_string_model(
 
 def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_euler_path():
     context_model = build_model_1_in_context()
-    string_model = load_and_cache_model(model_id=1, backend="pytensor")
+    string_model = load_and_cache_model(model_id=1)
     calibrated = calibrate_model_1(**model_1_data)
     scenario = {
         "final_delta_pct": {"L_s": 0.5},
@@ -419,7 +416,7 @@ def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_mod
         P = cm.Variable("P", dims="i")
         P_bar = cm.Parameter("P_bar")
         cm.Equation("Price of <dim:i>", P, P_bar)
-    compile_model(model, backend="pytensor", functions_to_compile=("root",))
+    compile_model(model, functions_to_compile=("root",))
 
     with caplog.at_level(logging.INFO, logger="cge_modeling"):
         model.check_for_equilibrium({"P": np.array([1.0, 3.0]), "P_bar": 1.0})

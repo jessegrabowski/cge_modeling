@@ -1,7 +1,6 @@
 import logging
 
 from collections.abc import Callable
-from importlib.util import find_spec
 
 import numpy as np
 import pytest
@@ -24,8 +23,6 @@ from tests.utilities.models import (
     model_1_data,
     model_2_data,
 )
-
-JAX_INSTALLED = find_spec("jax") is not None
 
 
 @pytest.fixture()
@@ -351,11 +348,8 @@ def test_long_unpack():
     ],
     ids=["simple_model", "3-goods simple"],
 )
-@pytest.mark.parametrize("backend", ["sympytensor", "pytensor"], ids=["sympytensor", "pytensor"])
-def test_model_gradients(model_id, jac_function, backend):
-    mod = load_and_cache_model(
-        model_id, mode="FAST_RUN", backend=backend, functions_to_compile=("root", "minimize")
-    )
+def test_model_gradients(model_id, jac_function):
+    mod = load_and_cache_model(model_id, mode="FAST_RUN", functions_to_compile=("root", "minimize"))
 
     data = generate_data(mod.variables + mod.parameters, mod.coords)
     x, theta = variable_dict_to_flat_array(data, mod.variables, mod.parameters)
@@ -369,36 +363,6 @@ def test_model_gradients(model_id, jac_function, backend):
 
     np.testing.assert_allclose(J_expected, J_actual, atol=1e-8)
     np.testing.assert_allclose(H_actual[:, 0], Hp_actual.ravel())
-
-
-@pytest.mark.parametrize(
-    "model_id, calibrate_model, f_expected_jac, data",
-    [
-        (1, calibrate_model_1, expected_model_1_jacobian, model_1_data),
-        (2, calibrate_model_2, expected_model_2_jacobian, model_2_data),
-    ],
-    ids=["simple_model", "3-goods simple"],
-)
-@pytest.mark.parametrize("sparse", [False, True], ids=["dense", "sparse"])
-def test_pytensor_from_sympy(model_id, calibrate_model, f_expected_jac, data, sparse):
-    mod = load_and_cache_model(
-        model_id,
-        backend="sympytensor",
-        mode="FAST_RUN" if not JAX_INSTALLED or sparse else "JAX",
-        use_sparse_matrices=sparse,
-        functions_to_compile="root",
-    )
-
-    calibated_data = calibrate_model(**data)
-    x, theta = variable_dict_to_flat_array(calibated_data, mod.variables, mod.parameters)
-    resid = mod.f_system(x, theta)
-    np.testing.assert_allclose(resid, 0, atol=1e-8)
-
-    jac = mod.f_jac(x, theta)
-    if sparse:
-        jac = jac.todense()
-    expected_jac = f_expected_jac(**calibated_data)
-    np.testing.assert_allclose(jac, expected_jac, atol=1e-8)
 
 
 @pytest.mark.parametrize(
@@ -453,10 +417,10 @@ def test_jax_mode_agrees_with_default_mode(
 ):
     pytest.importorskip("jax")
     model_default = load_and_cache_model(
-        model_id=model_id, backend="pytensor", functions_to_compile=functions_to_compile
+        model_id=model_id, functions_to_compile=functions_to_compile
     )
     model_jax = load_and_cache_model(
-        model_id=model_id, backend="pytensor", mode="JAX", functions_to_compile=functions_to_compile
+        model_id=model_id, mode="JAX", functions_to_compile=functions_to_compile
     )
 
     def solver_agreement_checks(results: list, names: list):
@@ -512,7 +476,7 @@ def test_jax_mode_agrees_with_default_mode(
     ids=["stops_before_first_step", "reaches_equilibrium"],
 )
 def test_minimize_success_reflects_equilibrium_residuals(gtol, expected_success):
-    model = load_and_cache_model(model_id=2, backend="pytensor", functions_to_compile="minimize")
+    model = load_and_cache_model(model_id=2, functions_to_compile="minimize")
     calibrated_data = calibrate_model_2(**model_2_data)
     shocked_data = {**calibrated_data, "L_s": calibrated_data["L_s"] * 1.5}
     _, theta_final = variable_dict_to_flat_array(shocked_data, model.variables, model.parameters)
@@ -530,10 +494,9 @@ def test_minimize_success_reflects_equilibrium_residuals(gtol, expected_success)
     assert "equilibrium_tol" in result.message
 
 
-@pytest.mark.parametrize("backend", ["pytensor", "sympytensor"])
-def test_scan_euler_matches_python_loop_euler(backend):
-    scan_model = load_model_1(backend=backend, functions_to_compile=("euler",), use_scan_euler=True)
-    loop_model = load_model_1(backend=backend, functions_to_compile=("euler",))
+def test_scan_euler_matches_python_loop_euler():
+    scan_model = load_model_1(functions_to_compile=("euler",), use_scan_euler=True)
+    loop_model = load_model_1(functions_to_compile=("euler",))
     calibrated_data = calibrate_model_1(**model_1_data)
     _, theta_final = variable_dict_to_flat_array(
         {**calibrated_data, "L_s": 10_000}, scan_model.variables, scan_model.parameters
@@ -555,9 +518,7 @@ def test_scan_euler_matches_python_loop_euler(backend):
 
 
 def test_simulate_with_scan_euler_reports_no_nans(caplog):
-    mod = load_model_1(
-        backend="pytensor", functions_to_compile=("euler", "root"), use_scan_euler=True
-    )
+    mod = load_model_1(functions_to_compile=("euler", "root"), use_scan_euler=True)
     initial_state = calibrate_model_1(**model_1_data)
 
     with caplog.at_level(logging.WARNING, logger="cge_modeling"):
@@ -568,7 +529,7 @@ def test_simulate_with_scan_euler_reports_no_nans(caplog):
 
 
 def test_generate_SAM():
-    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
+    mod = load_and_cache_model(model_id=1, functions_to_compile="minimize")
     param_dict = {
         "alpha": 0.75,
         "A": 2.0,
@@ -600,7 +561,7 @@ def test_generate_SAM():
 
 
 def test_generate_SAM_with_fixed_value_matches_free_solution():
-    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
+    mod = load_and_cache_model(model_id=1, functions_to_compile="minimize")
     param_dict = {"alpha": 0.75, "A": 2.0, "L_s": 1000, "K_s": 5000, "w": 1.0}
     initial_guess = {
         "C": 10000,
@@ -637,7 +598,7 @@ def test_generate_SAM_with_fixed_value_matches_free_solution():
 
 
 def test_generate_SAM_rejects_fixed_values_outside_minimize():
-    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
+    mod = load_and_cache_model(model_id=1, functions_to_compile="minimize")
 
     with pytest.raises(ValueError, match="only supported with solve_method='minimize'"):
         mod.generate_SAM(
@@ -646,7 +607,7 @@ def test_generate_SAM_rejects_fixed_values_outside_minimize():
 
 
 def test_generate_SAM_rejects_unknown_fixed_value_names():
-    mod = load_and_cache_model(model_id=1, backend="pytensor", functions_to_compile="minimize")
+    mod = load_and_cache_model(model_id=1, functions_to_compile="minimize")
 
     with pytest.raises(ValueError, match=r"not model variables: \{'alpha'\}"):
         mod.generate_SAM(
@@ -658,9 +619,7 @@ def test_generate_SAM_rejects_unknown_fixed_value_names():
 
 
 def test_invalid_simulation_raises():
-    mod = load_and_cache_model(
-        model_id=1, backend="sympytensor", functions_to_compile=("root", "euler")
-    )
+    mod = load_and_cache_model(model_id=1, functions_to_compile=("root", "euler"))
     initial_state = calibrate_model_1(**model_1_data)
 
     with pytest.raises(
@@ -709,7 +668,7 @@ def test_invalid_simulation_raises():
     ids=["final_values", "final_delta_pct", "final_delta", "combined"],
 )
 def test_simulate(scenario_kwargs, expected_result):
-    mod = load_and_cache_model(model_id=1, backend="sympytensor")
+    mod = load_and_cache_model(model_id=1)
     initial_state = calibrate_model_1(**model_1_data)
 
     res = mod.simulate(initial_state, **scenario_kwargs)
@@ -726,7 +685,6 @@ def test_simulate_compiles_an_uncompiled_model():
 
     res = mod.simulate(initial_state, final_values={"L_s": 1500}, n_iter_euler=100)
 
-    assert mod._compile_backend == "sympytensor"
     assert list(mod._compiled) == ["euler", "root"]
     assert res["optimizer"]["parameters"]["L_s"].isel(step=-1) == 1500
 
@@ -756,7 +714,7 @@ def test_calibrate_flags_inconsistent_data():
 
 
 def test_check_for_equilibrium_reads_simulation_datatree(caplog):
-    mod = load_and_cache_model(model_id=1, backend="sympytensor")
+    mod = load_and_cache_model(model_id=1)
     initial_state = calibrate_model_1(**model_1_data)
     res = mod.simulate(initial_state, final_delta_pct={"L_s": 0.5})
 
@@ -767,7 +725,7 @@ def test_check_for_equilibrium_reads_simulation_datatree(caplog):
 
 
 def test_check_for_equilibrium_flags_mismatched_state(caplog):
-    mod = load_and_cache_model(model_id=1, backend="sympytensor")
+    mod = load_and_cache_model(model_id=1)
     initial_state = calibrate_model_1(**model_1_data)
     optimizer = mod.simulate(initial_state, final_delta_pct={"L_s": 0.5})["optimizer"]
 
@@ -785,7 +743,7 @@ def test_check_for_equilibrium_flags_mismatched_state(caplog):
 
 
 def test_check_for_equilibrium_requires_variables_and_parameters():
-    mod = load_and_cache_model(model_id=1, backend="sympytensor")
+    mod = load_and_cache_model(model_id=1)
     variables_only = xr.DataTree.from_dict({"variables": xr.Dataset()})
 
     with pytest.raises(ValueError, match="DataTree must contain variables and parameters children"):

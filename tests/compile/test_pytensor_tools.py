@@ -40,13 +40,11 @@ def test_object_to_pytensor(cls, name, coords):
     [
         (
             load_model_1,
-            {"backend": "sympytensor"},
+            {},
         ),
         (
             load_model_2,
-            {
-                "backend": "pytensor",
-            },
+            {},
         ),
     ],
     ids=["1_Sector", "3_Sector"],

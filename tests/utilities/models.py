@@ -8,7 +8,7 @@ from cge_modeling import model as cm
 from cge_modeling.production_functions import CES, CET, CobbDouglas, Leontief
 
 
-def load_model_1_components(**kargs):
+def load_model_1_components():
     variable_info = [
         # Firm Variables
         Variable(name="Y", description="Total output of goods"),
@@ -55,7 +55,7 @@ def load_model_1_components(**kargs):
 
 
 def load_model_1(**kwargs):
-    variable_info, param_info, equations, _ = load_model_1_components(**kwargs)
+    variable_info, param_info, equations, _ = load_model_1_components()
 
     return cge_model(
         variables=variable_info,
@@ -153,12 +153,9 @@ def expected_model_1_jacobian(Y, L_d, K_d, C, income, r, P, resid, alpha, A, L_s
     # @formatter:on
 
 
-def load_modeL_2_components(**kwargs):
-    backend = kwargs.get("backend", "sympytensor")
-
+def load_modeL_2_components():
     sectors = ["0", "1", "2"]
     coords = {"i": sectors, "j": sectors}
-    n_sectors = len(sectors)
 
     variable_info = [
         # Firm Variables
@@ -279,14 +276,11 @@ def load_modeL_2_components(**kwargs):
         # Value chain bundle
         Equation(
             "Sector <dim:i> production of intermediate goods bundle",
-            "VC * P_VC = (P[:, None] * X).sum(axis=0).ravel()"
-            if backend == "pytensor"
-            else "VC * P_VC = Sum(P.subs({i:j}) * X.subs([(i,k), (j,i), (k,j)]), "
-            + f"(j, 0, {n_sectors - 1}))",
+            "VC * P_VC = (P[:, None] * X).sum(axis=0).ravel()",
         ),
         Equation(
             "Sector <dim:i> demand for sector <dim:j> intermediate input",
-            "X = psi_X * VC[None]" if backend == "pytensor" else "X = psi_X * VC.subs({i:j})",
+            "X = psi_X * VC[None]",
         ),
         # Value add bundle
         Equation(
@@ -306,33 +300,25 @@ def load_modeL_2_components(**kwargs):
         Equation("Household income", "income = w * L_s + r * K_s"),
         Equation(
             "Household utility",
-            "U = (C**gamma).prod()"
-            if backend == "pytensor"
-            else "U = Product(C**gamma, " + f"(i, 0, {n_sectors - 1}))",
+            "U = (C**gamma).prod()",
         ),
         Equation("Household demand for good <dim:i>", "C = gamma * income / P"),
         # # Market clearning conditions
         Equation(
             "Labor market clearing",
-            "L_s = L_d.sum() + resid"
-            if backend == "pytensor"
-            else "L_s = resid + Sum(L_d, " + f"(i, 0, {n_sectors - 1}))",
+            "L_s = L_d.sum() + resid",
         ),
         Equation(
             "Capital market clearing",
-            "K_s = K_d.sum()"
-            if backend == "pytensor"
-            else f"K_s = Sum(K_d, (i, 0, {n_sectors - 1}))",
+            "K_s = K_d.sum()",
         ),
         Equation(
             "Sector <dim:i> goods market clearing",
-            "Y = C + X.sum(axis=1)"
-            if backend == "pytensor"
-            else f"Y = C + Sum(X, (j, 0, {n_sectors - 1}))",
+            "Y = C + X.sum(axis=1)",
         ),
         Equation(
             "Numeraire",
-            "P[0] = P_Ag_bar" if backend == "pytensor" else "P.subs({i:0}) = P_Ag_bar",
+            "P[0] = P_Ag_bar",
         ),
     ]
 
@@ -340,7 +326,7 @@ def load_modeL_2_components(**kwargs):
 
 
 def load_model_2(**kwargs):
-    variable_info, param_info, equations, coords = load_modeL_2_components(**kwargs)
+    variable_info, param_info, equations, coords = load_modeL_2_components()
 
     return cge_model(
         variables=variable_info,
@@ -1375,29 +1361,11 @@ def build_model_5_in_context() -> CGEModel:
 
 
 @cache
-def load_and_cache_model(
-    model_id: Literal[1, 2],
-    backend,
-    mode="FAST_RUN",
-    use_sparse_matrices=False,
-    functions_to_compile="all",
-):
+def load_and_cache_model(model_id: Literal[1, 2], mode="FAST_RUN", functions_to_compile="all"):
     match model_id:
         case 1:
-            model = load_model_1(
-                backend=backend,
-                mode=mode,
-                use_sparse_matrices=use_sparse_matrices,
-                functions_to_compile=functions_to_compile,
-            )
+            return load_model_1(mode=mode, functions_to_compile=functions_to_compile)
         case 2:
-            model = load_model_2(
-                backend=backend,
-                mode=mode,
-                use_sparse_matrices=use_sparse_matrices,
-                functions_to_compile=functions_to_compile,
-            )
+            return load_model_2(mode=mode, functions_to_compile=functions_to_compile)
         case _:
             raise ValueError("Invalid model_id. Use 1 or 2.")
-
-    return model
