@@ -417,9 +417,8 @@ class CGEModel:
         self,
         variables: Literal["all", "variables", "parameters"] | list[str] = "all",
         results: Result | list[Result] | None = None,
-        expand_indices: bool = False,
-        index_labels: dict[str, list[str]] | None = None,
-    ):
+    ) -> None:
+        """Display a table of the symbols and descriptions of ``variables``, with columns from each of ``results``."""
         results = [] if results is None else results
         if isinstance(results, Result):
             results = [results]
@@ -456,11 +455,11 @@ class CGEModel:
             initial, final = result_df.loc[variables, :].values.T
             info_dict[result.name] = {"Initial": initial, "Final": final}
 
-        return info_dict
-        # display_latex_table(info_dict)
+        display_latex_table(info_dict)
 
-    def equation_table(self, display=True):
-        info_dict = {"": [], "Name": [], "Equation": []}
+    def equation_table(self) -> None:
+        """Display a table of the model's equations, numbered, with their names and LaTeX forms."""
+        info_dict: dict[str, list[Any]] = {"": [], "Name": [], "Equation": []}
         for number, equation in enumerate(self._xtensor_equations.values(), start=1):
             info_dict[""].append(number)
             info_dict["Name"].append(_replace_dim_marker_with_dim_name(equation.name))
