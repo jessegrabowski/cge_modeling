@@ -3,12 +3,12 @@ from typing import Literal
 
 import numpy as np
 
-from cge_modeling import CGEModel, Equation, Parameter, Variable, cge_model
+from cge_modeling import CGEModel, Equation, Parameter, Variable, compile_model
 from cge_modeling import model as cm
 from cge_modeling.production_functions import CES, CET, CobbDouglas, Leontief
 
 
-def load_model_1_components(**kargs):
+def load_model_1_components():
     variable_info = [
         # Firm Variables
         Variable(name="Y", description="Total output of goods"),
@@ -54,15 +54,8 @@ def load_model_1_components(**kargs):
     return variable_info, param_info, equations, coords
 
 
-def load_model_1(**kwargs):
-    variable_info, param_info, equations, _ = load_model_1_components(**kwargs)
-
-    return cge_model(
-        variables=variable_info,
-        parameters=param_info,
-        equations=equations,
-        **kwargs,
-    )
+def load_model_1(**compile_kwargs):
+    return compile_model(build_model_1_in_context(), **compile_kwargs)
 
 
 def calibrate_model_1(L_s, K_s, P, r):
@@ -132,33 +125,9 @@ def build_model_1_in_context() -> CGEModel:
 model_1_data = {"L_s": 7000.0, "K_s": 4000.0, "P": 1.0, "r": 1.0}
 
 
-def expected_model_1_jacobian(Y, L_d, K_d, C, income, r, P, resid, alpha, A, L_s, K_s, w):
-    d1_dL_d = -A * K_d**alpha * (1 - alpha) * L_d ** (-alpha)
-    d1_dK_d = -A * alpha * K_d ** (alpha - 1) * L_d ** (1 - alpha)
-
-    # @formatter:off
-    #                Y,                 L_d,    K_d,      C, inc, r,    P,                 resid
-    return np.array(
-        [
-            [1, d1_dL_d, d1_dK_d, 0, 0, 0, 0, 0],
-            [-alpha * P, 0, r, 0, 0, K_d, -alpha * Y, 0],
-            [-(1 - alpha) * P, w, 0, 0, 0, 0, -(1 - alpha) * Y, 0],
-            [0, 0, 0, 0, 1, -K_s, 0, 0],
-            [0, 0, 0, P, -1, 0, C, 0],
-            [0, -1, 0, 0, 0, 0, 0, -1],
-            [0, 0, -1, 0, 0, 0, 0, 0],
-            [1, 0, 0, -1, 0, 0, 0, 0],
-        ]
-    )
-    # @formatter:on
-
-
-def load_modeL_2_components(**kwargs):
-    backend = kwargs.get("backend", "sympytensor")
-
+def load_modeL_2_components():
     sectors = ["0", "1", "2"]
     coords = {"i": sectors, "j": sectors}
-    n_sectors = len(sectors)
 
     variable_info = [
         # Firm Variables
@@ -279,14 +248,11 @@ def load_modeL_2_components(**kwargs):
         # Value chain bundle
         Equation(
             "Sector <dim:i> production of intermediate goods bundle",
-            "VC * P_VC = (P[:, None] * X).sum(axis=0).ravel()"
-            if backend == "pytensor"
-            else "VC * P_VC = Sum(P.subs({i:j}) * X.subs([(i,k), (j,i), (k,j)]), "
-            + f"(j, 0, {n_sectors - 1}))",
+            "VC * P_VC = (P[:, None] * X).sum(axis=0).ravel()",
         ),
         Equation(
             "Sector <dim:i> demand for sector <dim:j> intermediate input",
-            "X = psi_X * VC[None]" if backend == "pytensor" else "X = psi_X * VC.subs({i:j})",
+            "X = psi_X * VC[None]",
         ),
         # Value add bundle
         Equation(
@@ -306,49 +272,33 @@ def load_modeL_2_components(**kwargs):
         Equation("Household income", "income = w * L_s + r * K_s"),
         Equation(
             "Household utility",
-            "U = (C**gamma).prod()"
-            if backend == "pytensor"
-            else "U = Product(C**gamma, " + f"(i, 0, {n_sectors - 1}))",
+            "U = (C**gamma).prod()",
         ),
         Equation("Household demand for good <dim:i>", "C = gamma * income / P"),
         # # Market clearning conditions
         Equation(
             "Labor market clearing",
-            "L_s = L_d.sum() + resid"
-            if backend == "pytensor"
-            else "L_s = resid + Sum(L_d, " + f"(i, 0, {n_sectors - 1}))",
+            "L_s = L_d.sum() + resid",
         ),
         Equation(
             "Capital market clearing",
-            "K_s = K_d.sum()"
-            if backend == "pytensor"
-            else f"K_s = Sum(K_d, (i, 0, {n_sectors - 1}))",
+            "K_s = K_d.sum()",
         ),
         Equation(
             "Sector <dim:i> goods market clearing",
-            "Y = C + X.sum(axis=1)"
-            if backend == "pytensor"
-            else f"Y = C + Sum(X, (j, 0, {n_sectors - 1}))",
+            "Y = C + X.sum(axis=1)",
         ),
         Equation(
             "Numeraire",
-            "P[0] = P_Ag_bar" if backend == "pytensor" else "P.subs({i:0}) = P_Ag_bar",
+            "P[0] = P_Ag_bar",
         ),
     ]
 
     return variable_info, param_info, equations, coords
 
 
-def load_model_2(**kwargs):
-    variable_info, param_info, equations, coords = load_modeL_2_components(**kwargs)
-
-    return cge_model(
-        variables=variable_info,
-        parameters=param_info,
-        equations=equations,
-        coords=coords,
-        **kwargs,
-    )
+def load_model_2(**compile_kwargs):
+    return compile_model(build_model_2_in_context(), **compile_kwargs)
 
 
 def build_model_2_in_context() -> CGEModel:
@@ -493,178 +443,6 @@ model_2_data = {
     "w": 1.0,
     "P_Ag_bar": 1.0,
 }
-
-
-def expected_model_2_jacobian(
-    Y,
-    VA,
-    VC,
-    X,
-    L_d,
-    K_d,
-    U,
-    C,
-    income,
-    r,
-    w,
-    P_VA,
-    P_VC,
-    P,
-    resid,
-    psi_VA,
-    psi_VC,
-    psi_X,
-    alpha,
-    A,
-    L_s,
-    K_s,
-    gamma,
-    P_Ag_bar,
-    phi_VA,
-):
-    Y_columns = np.array([0, 1, 2])
-    VA_columns = np.array([3, 4, 5])
-    VC_columns = np.array([6, 7, 8])
-    X_columns = np.array([9, 10, 11, 12, 13, 14, 15, 16, 17])
-    L_d_columns = np.array([18, 19, 20])
-    K_d_columns = np.array([21, 22, 23])
-    U_columns = np.array([24])
-    C_columns = np.array([25, 26, 27])
-    income_columns = np.array([28])
-    r_columns = np.array([29])
-    w_columns = np.array([30])
-    P_VA_columns = np.array([31, 32, 33])
-    P_VC_columns = np.array([34, 35, 36])
-    P_columns = np.array([37, 38, 39])
-    resid_columns = np.array([40])
-
-    J = np.zeros((41, 41))
-
-    # Equation 0-2: P * Y = P_VC * VC + P_VA * VA
-    row_idx = np.array([0, 1, 2])
-    J[row_idx, P_columns] = Y
-    J[row_idx, Y_columns] = P
-    J[row_idx, P_VC_columns] = -VC
-    J[row_idx, VC_columns] = -P_VC
-
-    J[row_idx, P_VA_columns] = -VA
-    J[row_idx, VA_columns] = -P_VA
-
-    # Equation 3-5: VC = psi_VC * Y
-    row_idx = np.array([3, 4, 5])
-    J[row_idx, VC_columns] = 1
-    J[row_idx, Y_columns] = -psi_VC
-
-    # Equation 6-8: VA = psi_VA * Y
-    row_idx = np.array([6, 7, 8])
-    J[row_idx, VA_columns] = 1
-    J[row_idx, Y_columns] = -psi_VA
-
-    # Equation 9-11: VC * P_VC = (P[:, None] * X).sum(axis=0).ravel()
-    row_idx = np.array([9, 10, 11])
-    row_slice = np.s_[9:12]
-    J[row_idx, VC_columns] = P_VC
-    J[row_idx, P_VC_columns] = VC
-    J[row_slice, X_columns] = -np.hstack([np.eye(3) * P[i] for i in range(3)])
-    J[row_slice, P_columns] = -X.T
-
-    # Equation 12-20: X = psi_X * VC[None]
-    row_idx = np.array([12, 13, 14, 15, 16, 17, 18, 19, 20])
-    J[row_idx, X_columns] = 1
-
-    row_slice = np.s_[12:21]
-    col_slice = np.s_[6:9]
-    J[row_slice, col_slice] = -np.vstack([np.diag(psi_X[i]) for i in range(3)])
-
-    # Equation 21-23: VA = A * (alpha * K_d**((phi_VA - 1) / phi_VA) + (1 - alpha) * L_d**((phi_VA - 1) / phi_VA)) **
-    #                           (phi_VA / (phi_VA - 1))
-    row_idx = np.array([21, 22, 23])
-    J[row_idx, VA_columns] = 1
-    J[row_idx, K_d_columns] = (
-        -A
-        * (alpha * K_d ** ((phi_VA - 1) / phi_VA) + (1 - alpha) * L_d ** ((phi_VA - 1) / phi_VA))
-        ** (1 / (phi_VA - 1))
-        * alpha
-        * K_d ** (-1 / phi_VA)
-    )
-    J[row_idx, L_d_columns] = (
-        -A
-        * (alpha * K_d ** ((phi_VA - 1) / phi_VA) + (1 - alpha) * L_d ** ((phi_VA - 1) / phi_VA))
-        ** (1 / (phi_VA - 1))
-        * (1 - alpha)
-        * L_d ** (-1 / phi_VA)
-    )
-
-    # Equation 24-26: K_d = VA / A * (alpha * P_VA * A / r) ** phi_VA
-    row_idx = np.array([24, 25, 26])
-    J[row_idx, K_d_columns] = 1
-    J[row_idx, VA_columns] = -1 / A * (alpha * P_VA * A / r) ** phi_VA
-    J[row_idx, P_VA_columns] = (
-        -VA / A * (alpha * P_VA * A / r) ** (phi_VA - 1) * alpha * A / r * phi_VA
-    )
-    J[row_idx, r_columns] = (
-        VA / A * (alpha * P_VA * A / r) ** (phi_VA - 1) * alpha * A * phi_VA * P_VA / r**2
-    )
-
-    # Equation 27-29: L_d = VA / A * ((1 - alpha) * A * P_VA / w) ** phi_VA
-    row_idx = np.array([27, 28, 29])
-    J[row_idx, L_d_columns] = 1
-    J[row_idx, VA_columns] = -1 / A * ((1 - alpha) * A * P_VA / w) ** phi_VA
-    J[row_idx, P_VA_columns] = (
-        -VA / A * ((1 - alpha) * A * P_VA / w) ** (phi_VA - 1) * (1 - alpha) * A / w * phi_VA
-    )
-    J[row_idx, w_columns] = (
-        VA
-        / A
-        * ((1 - alpha) * A * P_VA / w) ** (phi_VA - 1)
-        * (1 - alpha)
-        * A
-        * phi_VA
-        * P_VA
-        / w**2
-    )
-
-    # Equation 30: income = w * L_s + r * K_s
-    row_idx = np.array([30])
-    J[row_idx, income_columns] = 1
-    J[row_idx, w_columns] = -L_s
-    J[row_idx, r_columns] = -K_s
-
-    # Equation 31: U = (C**gamma).prod()
-    row_idx = np.array([31])
-    J[row_idx, U_columns] = 1
-    U_val = np.prod(C**gamma)
-    J[row_idx, C_columns] = -gamma * U_val / C
-
-    # Equation 32-34: C = gamma * income / P
-    row_idx = np.array([32, 33, 34])
-    J[row_idx, C_columns] = 1
-    J[row_idx, income_columns] = -gamma / P
-    J[row_idx, P_columns] = gamma * income / P**2
-
-    # Equation 35: L_s = L_d.sum() + resid
-    row_idx = np.array([35])
-    J[row_idx, L_d_columns] = -1
-    J[row_idx, resid_columns] = -1
-
-    # Equation 36: K_s = K_d.sum()
-    row_idx = np.array([36])
-    J[row_idx, K_d_columns] = -1
-
-    # Equation 37-39: Y = C + X.sum(axis=1)
-    row_idx = np.array([37, 38, 39])
-    J[row_idx, Y_columns] = 1
-    J[row_idx, C_columns] = -1
-
-    row_slice = np.s_[37:40]
-    col_slice = np.s_[9:18]
-    J[row_slice, col_slice] = -np.kron(np.eye(3), np.ones(3))
-
-    # Equation 40: P[0] = P_Ag_bar
-    row_idx = np.array([40])
-    J[row_idx, P_columns[0]] = 1
-
-    return J
 
 
 model_3_data = {
@@ -1375,29 +1153,11 @@ def build_model_5_in_context() -> CGEModel:
 
 
 @cache
-def load_and_cache_model(
-    model_id: Literal[1, 2],
-    backend,
-    mode="FAST_RUN",
-    use_sparse_matrices=False,
-    functions_to_compile="all",
-):
+def load_and_cache_model(model_id: Literal[1, 2], mode="FAST_RUN", functions_to_compile="all"):
     match model_id:
         case 1:
-            model = load_model_1(
-                backend=backend,
-                mode=mode,
-                use_sparse_matrices=use_sparse_matrices,
-                functions_to_compile=functions_to_compile,
-            )
+            return load_model_1(mode=mode, functions_to_compile=functions_to_compile)
         case 2:
-            model = load_model_2(
-                backend=backend,
-                mode=mode,
-                use_sparse_matrices=use_sparse_matrices,
-                functions_to_compile=functions_to_compile,
-            )
+            return load_model_2(mode=mode, functions_to_compile=functions_to_compile)
         case _:
             raise ValueError("Invalid model_id. Use 1 or 2.")
-
-    return model

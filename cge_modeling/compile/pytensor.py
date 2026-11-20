@@ -295,8 +295,6 @@ def compile_pytensor_cge_functions(
     mode: str | None = None,
     use_scan_euler: bool = False,
     use_rk4: bool = False,
-    *args,
-    **kwargs,
 ) -> tuple[Callable[..., Any] | None, ...]:
     if cge_model._model_objects:
         system, variables, parameters = xtensor_cge_primitives_to_pytensor(cge_model)

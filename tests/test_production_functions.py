@@ -149,7 +149,7 @@ def test_model_built_with_cobb_douglas_solves_to_the_analytic_equilibrium():
             tfp=A,
         )
         cm.Equation("Capital supply", K, K_s)
-    compile_model(model, backend="pytensor", functions_to_compile=("root",))
+    compile_model(model, functions_to_compile=("root",))
 
     parameters = {"r": 1.2, "w": 0.8, "alpha": 0.3, "A": 1.5, "K_s": 2.0}
     K_star = parameters["K_s"]

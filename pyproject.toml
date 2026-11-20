@@ -49,7 +49,6 @@ dependencies = [
     "rich<16",
     "scipy<2",
     "sympy>=1.14.0,<2",
-    "sympytensor>=2.2.0,<3",
     "texttable<2",
     "xarray<2027",
   ]
@@ -118,7 +117,6 @@ module = [
     "scipy.*",
     "squarify",
     "sympy.*",
-    "sympytensor",
     "texttable",
 ]
 ignore_missing_imports = true

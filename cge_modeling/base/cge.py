@@ -117,9 +117,8 @@ class CGEModel:
             to the model fixing the numéraire variable to 1.
 
         parse_equations_to_sympy: bool, default
-            If True, the equations will be parsed to sympy expressions. This is required for the model to be compiled to
-            the "sympytensor" backend. If False, the equations will be converted to symbolic pytensor expressions.
-            This is required for the model to be compiled to the "pytensor" backend. Defaults to True.
+            If True, the equations will be parsed to sympy expressions, which ``calibrate`` and ``equation_table``
+            read for models built from strings. Defaults to True.
 
         Notes
         -----
@@ -192,7 +191,6 @@ class CGEModel:
         self.scenarios: dict[str, Result] = {}
 
         self._compiled: Sequence[str] = []
-        self._compile_backend: Literal["pytensor", "sympytensor"] | None = None
         self.mode: Mode | str | None = None
 
         self.f_system: Callable | None = None
@@ -359,11 +357,6 @@ class CGEModel:
         # cge_modeling.base.build imports this module, so compile_model can only be imported here.
         from cge_modeling.base.build import compile_model
 
-        if self._model_objects or not self.parse_equations_to_sympy:
-            backend = "pytensor"
-        else:
-            backend = "sympytensor"
-        compile_kwargs.setdefault("backend", self._compile_backend or backend)
         compile_model(self, **compile_kwargs)
 
     def check_initialization(self):
