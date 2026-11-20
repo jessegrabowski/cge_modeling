@@ -25,6 +25,11 @@ from cge_modeling.compile.pytensor_tools import (
     pushforward,
     rewrite_pregrad,
 )
+from cge_modeling.compile.sparse import (
+    compile_sparse_euler_step,
+    compile_sparse_system_and_jacobian,
+    compressed_jacobian,
+)
 from cge_modeling.tools.utils import at_least_list
 
 _log = logging.getLogger(__name__)
@@ -230,8 +235,18 @@ def compile_pytensor_cge_functions(
     mode: str | None = None,
     use_scan_euler: bool = False,
     use_rk4: bool = False,
+    use_sparse_matrices: bool = False,
 ) -> tuple[Callable[..., Any] | None, ...]:
+    if use_sparse_matrices and use_scan_euler and "euler" in functions_to_compile:
+        raise ValueError(
+            "use_sparse_matrices=True requires the Python-loop Euler approximation; set use_scan_euler=False."
+        )
+    if use_sparse_matrices and use_rk4 and "euler" in functions_to_compile:
+        raise NotImplementedError("RK4 not yet implemented for Pytensor")
+
     system, variables, parameters = xtensor_cge_primitives_to_pytensor(cge_model)
+    if use_sparse_matrices:
+        compressed, layout = compressed_jacobian(system, variables, parameters)
 
     # Always compile the system -- used to check residuals
     f_system = compile_with_packed_inputs(
@@ -245,12 +260,17 @@ def compile_pytensor_cge_functions(
     f_hess = None
     f_hessp = None
     f_euler: Callable[..., Any] | None = None
+    f_sparse_system_and_jac = None
 
     # jac and grad can be reused if both root/minimize and euler are requested
     jac = None
     grad = None
 
-    if "root" in functions_to_compile:
+    if "root" in functions_to_compile and use_sparse_matrices:
+        f_sparse_system_and_jac = compile_sparse_system_and_jacobian(
+            system, variables, parameters, compressed=compressed, layout=layout, mode=mode
+        )
+    elif "root" in functions_to_compile:
         jac, f_jac = compile_pytensor_jacobian_function(system, variables, parameters, mode=mode)
 
     if "minimize" in functions_to_compile:
@@ -265,11 +285,15 @@ def compile_pytensor_cge_functions(
 
     if "euler" in functions_to_compile:
         if not use_scan_euler:
-            inputs, outputs = pytensor_euler_step(
-                system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
-            )
-
-            f_step = compile_with_packed_inputs(inputs, outputs, mode=mode)
+            if use_sparse_matrices:
+                f_step = compile_sparse_euler_step(
+                    system, variables, parameters, compressed=compressed, layout=layout, mode=mode
+                )
+            else:
+                inputs, outputs = pytensor_euler_step(
+                    system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
+                )
+                f_step = compile_with_packed_inputs(inputs, outputs, mode=mode)
 
             f_euler = partial(
                 pytensor_euler_function_with_python_loop,
@@ -288,4 +312,4 @@ def compile_pytensor_cge_functions(
                 mode=mode,
             )
 
-    return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler
+    return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler, f_sparse_system_and_jac

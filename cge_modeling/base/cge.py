@@ -44,6 +44,7 @@ from cge_modeling.base.utilities import (
     unpack_equation_name,
     variable_dict_to_flat_array,
 )
+from cge_modeling.solvers.sparse_root import sparse_root
 from cge_modeling.tools.latex import equation_to_latex
 from cge_modeling.tools.output_tools import (
     datatree_to_value_dict,
@@ -108,6 +109,7 @@ class CGEModel:
         self.f_hessp: Callable | None = None
         self.f_jac: Callable | None = None
         self.f_euler: Callable | None = None
+        self.f_sparse_system_and_jac: Callable | None = None
 
     @property
     def n_variables(self) -> int:
@@ -516,7 +518,7 @@ class CGEModel:
         verbose: bool = True,
         **optimizer_kwargs,
     ):
-        method: root_method = optimizer_kwargs.pop("method", "hybr")
+        method: root_method | None = optimizer_kwargs.pop("method", None)
 
         use_hess = optimizer_kwargs.pop("use_hess", None)
         _ = optimizer_kwargs.pop("use_hessp", None)
@@ -528,12 +530,26 @@ class CGEModel:
         if use_jac and "root" not in self._compiled:
             raise ValueError("Jacobian has not been compiled.")
 
+        x0, _theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
+
+        if use_jac and self.f_sparse_system_and_jac is not None:
+            if method is not None:
+                raise ValueError(
+                    "This model was compiled with use_sparse_matrices=True, so roots are found by sparse_root. "
+                    "Pass a sparse_root strategy as `solver=` instead of `method=`."
+                )
+            return sparse_root(
+                self.f_sparse_system_and_jac,
+                x0,
+                args=(theta_final,),
+                progressbar=progressbar,
+                **optimizer_kwargs,
+            )
+
         f_system = wrap_compiled_function_for_scipy(self._compiled_function("f_system"))
         f_jac = (
             wrap_compiled_function_for_scipy(self._compiled_function("f_jac")) if use_jac else None
         )
-
-        x0, _theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
 
         res = root(
             f=f_system,
@@ -542,7 +558,7 @@ class CGEModel:
             jac=f_jac,
             progressbar=progressbar,
             verbose=verbose,
-            method=method,
+            method="hybr" if method is None else method,
             **optimizer_kwargs,
         )
 
