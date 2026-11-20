@@ -2,6 +2,7 @@ import logging
 
 from collections.abc import Callable
 from functools import partial
+from typing import cast
 
 import cvxpy as cp
 import numpy as np
@@ -150,7 +151,10 @@ def _crossentropy_method_setup(
             raise ValueError("Must use gradient to compute Hessian")
         rewrite_pregrad(grad_ce)
         p = pt.dvector("p")
-        jvp_ce = pytensor.gradient.pushforward(grad_ce, x, p)
+        jvp_ce = cast(
+            pt.TensorVariable,
+            pytensor.gradient.pushforward(cast(pt.TensorVariable, grad_ce), x, p),
+        )
         f_jvp_ce = compile_fn([x, p], jvp_ce)
 
     return f_X, f_ce, f_1, f_2, f_grad, f_1_grad, f_2_grad, f_hess, f_jvp_ce

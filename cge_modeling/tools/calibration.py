@@ -1,7 +1,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from graphlib import TopologicalSorter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pytensor.tensor as pt
@@ -61,8 +61,10 @@ def compile_calibration_system(model: "CGEModel") -> CalibrationSystem:
 
     tangent = pt.vector("tangent", shape=(n_entries,))
     tangent_columns = pt.matrix("tangent_columns", shape=(None, n_entries))
-    jvp = pushforward(system, entries, pt.unpack(tangent, packed_shapes=shapes))
-    jvp_columns = vectorize_graph(jvp, replace={tangent: tangent_columns})
+    jvp = cast(
+        pt.TensorVariable, pushforward(system, entries, pt.unpack(tangent, packed_shapes=shapes))
+    )
+    jvp_columns = cast(pt.TensorVariable, vectorize_graph(jvp, replace={tangent: tangent_columns}))
     residual_and_jvp_columns = compile_with_packed_inputs(
         inputs=[("z", entries), tangent_columns], outputs=[system, jvp_columns]
     )
