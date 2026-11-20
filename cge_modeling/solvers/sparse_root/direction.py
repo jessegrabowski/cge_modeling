@@ -3,7 +3,7 @@ import warnings
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -384,7 +384,8 @@ class KrylovDirection:
             predicted_norm = float(np.linalg.norm(res + jac @ dx))
 
         self._prev_res_norm = res_norm
-        self._prev_pred_norm = predicted_norm
+        # Both branches above leave predicted_norm a float.
+        self._prev_pred_norm = cast(float, predicted_norm)
 
         return _descent_proposal(dx, res, jac, kind=kind)
 

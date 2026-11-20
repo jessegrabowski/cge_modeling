@@ -66,8 +66,8 @@ def pytensor_euler_function_with_python_loop(
 
 def symbolic_euler_approximation(
     system: pt.TensorVariable,
-    variables: list[pt.Variable],
-    parameters: list[pt.Variable],
+    variables: list[pt.TensorVariable],
+    parameters: list[pt.TensorVariable],
     jacobian: pt.TensorVariable | None = None,
     use_rk4: bool = False,
 ) -> tuple[pt.TensorVariable, pt.TensorVariable, list[pt.TensorVariable]]:

@@ -377,9 +377,11 @@ class CGEModel:
             var_names = self.variable_names
         return [self.get_variable(name) for name in ensure_input_is_sequence(var_names)]
 
-    def get(self, names: str | list[str] | None = None) -> list[Variable | Parameter]:
+    def get(
+        self, names: str | list[str] | None = None
+    ) -> Variable | Parameter | list[Variable | Parameter]:
         """
-        Retrieve a list of model objects (variables or parameters) from the model by name.
+        Retrieve model objects (variables or parameters) from the model by name.
 
         Parameters
         ----------
@@ -388,8 +390,8 @@ class CGEModel:
 
         Returns
         -------
-        out: list of Variable or Parameter
-            The requested model objects.
+        out: Variable, Parameter, or list of Variable or Parameter
+            The requested model object when one name matches, otherwise the list of requested objects.
         """
         if names is None:
             names = self.parameter_names + self.variable_names

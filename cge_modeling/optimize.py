@@ -1,6 +1,7 @@
 import functools as ft
 
 from collections.abc import Mapping
+from typing import cast
 
 import numpy as np
 import pytensor
@@ -101,7 +102,9 @@ def scan_body(*args, F, J, initial_step_size, tol, has_exog, n_endog, n_exog):
     return [*return_X, is_converged, new_step_size, new_n_steps]
 
 
-def _process_root_data(data: Mapping[str, np.ndarray | float] | None) -> list[pt.TensorLike]:
+def _process_root_data(
+    data: Mapping[str, np.ndarray | float] | None,
+) -> list[pt.TensorVariable]:
     if data is None:
         return [pt.as_tensor_variable(np.nan, name="dummy_exog", shape=())]
     else:
@@ -162,7 +165,7 @@ def root(
     """
 
     init_step_size = np.float64(step_size)
-    converged = np.array(False)
+    initial_converged = np.array(False)
     initial_n_steps = 0
     has_exog = parameters is not None
 
@@ -185,12 +188,12 @@ def root(
 
     outputs, _updates = pytensor.scan(
         root_func,
-        outputs_info=[*x0, converged, init_step_size, initial_n_steps],
+        outputs_info=[*x0, initial_converged, init_step_size, initial_n_steps],
         non_sequences=exog,
         n_steps=max_iter,
         strict=True,
     )
 
-    *root_histories, converged, step_size, n_steps = outputs
+    *root_histories, converged, step_sizes, n_steps = cast(list[pt.TensorVariable], outputs)
 
-    return root_histories, converged, step_size, n_steps
+    return root_histories, converged, step_sizes, n_steps

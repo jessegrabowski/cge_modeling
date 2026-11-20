@@ -85,8 +85,8 @@ def make_jvp(
     n_eq = grad.type.shape[0]
     grad = rewrite_pregrad(grad)
 
-    jvp_chunks = pt.grad(pt.sum(grad * p), x)
-    jvp = pt.concatenate([x.ravel() for x in jvp_chunks], axis=-1)
+    jvp_chunks = cast(list[pt.TensorVariable], pt.grad(pt.sum(grad * p), x))
+    jvp = pt.concatenate([chunk.ravel() for chunk in jvp_chunks], axis=-1)
     jvp = pt.specify_shape(jvp, shape=(n_eq,))
 
     return jvp
@@ -135,8 +135,10 @@ def compile_pytensor_gradient_function(
     n_variables: int,
     mode: str | None = None,
 ) -> tuple[pt.TensorVariable, Function]:
-    grad = pytensor.grad(loss, variables)
-    grad = pt.specify_shape(pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]), n_variables)
+    grad_parts = cast(list[pt.TensorVariable], pytensor.grad(loss, variables))
+    grad = pt.specify_shape(
+        pt.concatenate([pt.atleast_1d(part).ravel() for part in grad_parts]), n_variables
+    )
     grad = rewrite_pregrad(grad)
 
     f_grad = compile_with_packed_inputs(
