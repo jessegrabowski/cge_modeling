@@ -13,7 +13,6 @@ from typing import Any, Literal, cast
 import numpy as np
 import pandas as pd
 import pytensor.tensor as pt
-import sympy as sp
 import xarray as xr
 
 from better_optimize import minimize, root
@@ -31,24 +30,18 @@ from cge_modeling.base.function_wrappers import (
     select_free_variable_entries,
     wrap_compiled_function_for_scipy,
 )
-from cge_modeling.base.primitives import (
-    Equation,
-    Parameter,
-    Result,
-    Variable,
-    _SympyEquation,
-)
+from cge_modeling.base.primitives import Parameter, Result, Variable
 from cge_modeling.base.utilities import (
     _replace_dim_marker_with_dim_name,
-    _validate_input,
     create_final_param_dict,
     ensure_input_is_sequence,
+    expand_obj_by_indices,
     flat_array_to_variable_dict,
     get_method_defaults,
     infer_object_shape_from_coords,
     make_flat_array_return_mask,
+    make_indexed_name,
     unpack_equation_name,
-    unpack_equation_strings,
     variable_dict_to_flat_array,
 )
 from cge_modeling.tools.latex import equation_to_latex
@@ -58,67 +51,21 @@ from cge_modeling.tools.output_tools import (
     list_of_array_to_idata,
     optimizer_result_to_idata,
 )
-from cge_modeling.tools.sympy_tools import (
-    expand_obj_by_indices,
-    find_equation_dims,
-    indexed_variables_to_sub_dict,
-    make_indexed_name,
-    recursive_solve_symbolic,
-    sub_all_eqs,
-    substitute_reduce_ops,
-)
 
 _log = logging.getLogger(__name__)
 
 
-ValidGroups = Literal[
-    "variables",
-    "parameters",
-    "equations",
-    "_unpacked_variables",
-    "_unpacked_parameters",
-    "_unpacked_equations",
-]
-
-
 class CGEModel:
-    def __init__(
-        self,
-        coords: dict[str, list[str]] | None = None,
-        variables: list[Variable] | None = None,
-        parameters: list[Parameter] | None = None,
-        equations: list[Equation] | None = None,
-        numeraire: str | None = None,
-        parse_equations_to_sympy: bool = True,
-    ):
+    def __init__(self, coords: dict[str, list[str]] | None = None):
         """
-        Main interface for interacting with the a CGE model.
+        Main interface for interacting with a CGE model.
 
         Parameters
         ----------
-        coords: dict[str, Sequence[str]]
+        coords: dict[str, Sequence[str]], optional
             A dictionary of dimension names and labels associated with each dimension. For example, if certain objects in
             the model are indexed by "sector", then coords should contain a key "sector" with a list of sector labels as
             values: {"sector": ["Agriculture", "Industry", "Service"]}.
-
-        variables: list of Variables
-            A list of endogenous variables associated with the model. These will be solved for during simulation.
-
-        parameters: list of Parameters
-            A list of parameters associated with the model. These are fixed during simulation. Note that exogenous variables
-            should be included as parameters.
-
-        equations: list of Equations
-            A list of equations associated with the model. These define relationships between the variables and parameters.
-
-        numeraire: str, optional
-            Name of the numéraire variable. If supplied, the numéraire will be removed from the model, and all instances of the
-            numéraire in model equations will be set to 1. This feature is not recommended. Instead, add an equation
-            to the model fixing the numéraire variable to 1.
-
-        parse_equations_to_sympy: bool, default
-            If True, the equations will be parsed to sympy expressions, which ``calibrate`` and ``equation_table``
-            read for models built from strings. Defaults to True.
 
         Notes
         -----
@@ -126,67 +73,28 @@ class CGEModel:
         parameters. The purpose of this class is to provide an organized framework for declaring and studying this class
         of models.
 
-        At it's most basic, a CGE model is comprised of three types of objects: variables, parameters, and equations. Each
-        of these should declared separately using the appropriate object type. For example, to declare a variable, use the
-        Variable class. Distinction between variables and parameters is enforced to check that the model is square (there
-        are as many equations as there are variables), and to determine which objects to solve for during simulation.
+        A model is built from pytensor xtensor expressions: create it with ``coords``, then declare variables,
+        parameters, and equations with :mod:`cge_modeling.model` inside ``with model:`` or with ``model=model``.
+        Distinction between variables and parameters is enforced to check that the model is square (there are as many
+        equations as there are variables), and to determine which objects to solve for during simulation.
 
-        Another important job of a model is to hold information about the dimensions of the model. Variables and parameters
-        are declared with abstract indices, called dims. This is meant to match the notation used in the literature. For
-        example, a variable representing the demand for capital in sector i would be written as ..math :: K_{d,i}. To
-        represent this in a CGE model, we would declare a Variable with name "K_d" and dims "i". The dims on the Variable
-        are arbitrary, but become concrete when placed in the context of a model. Therefore, the model must be supplied with
-        a dictionary of dimension names and labels, called "coordinates" in packages for multi-dimensional array handing
-        (e.g. xArray). For example, if the model will recieve data with dimension i, then the coords dictionary should
-        provide a mapping from "i" to a list of labels for the dimension i. For example, {"i": ["Agriculture", "Industry",
-        "Service"]}.
-
-        When considering the "squareness" of a model, the "unpacked" dimensions of the variables and equations are
+        Variables and parameters are declared with abstract indices, called dims, which ``coords`` makes concrete. When
+        considering the "squareness" of a model, the "unpacked" dimensions of the variables and equations are
         considered. Therefore, it may not be the case that the number of variables declared is equal to the number of
         equations declared.
-
-        A model can instead be built from pytensor xtensor expressions: create it with only ``coords``, then declare
-        objects and equations with :mod:`cge_modeling.model` inside ``with model:`` or with ``model=model``. A model
-        built this way does not accept the ``variables``, ``parameters``, and ``equations`` lists, and the reverse.
-
         """
-
-        self.numeraire = None
         self.coords: dict[str, list[str]] = {} if coords is None else coords
-        self.parse_equations_to_sympy = parse_equations_to_sympy
-
-        self._sympy_cache: dict[Any, Any] = {}
-        self._pytensor_cache: dict[Any, Any] = {}
-        self._symbolic_coords = {sp.Idx(k): v for k, v in self.coords.items()}
 
         self._variables: dict[str, Variable] = {}
         self._parameters: dict[str, Parameter] = {}
-        self._equations: dict[str, Equation] = {}
 
         self._unpacked_variables: dict[str, dict[str, Any]] = {}
         self._unpacked_parameters: dict[str, dict[str, Any]] = {}
-        self._unpacked_equations: dict[str, dict[str, Any] | None] = {}
+        self._unpacked_equations: dict[str, None] = {}
 
         self._model_objects: dict[str, ModelObjectVariable] = {}
         self._xtensor_equations: dict[str, XTensorEquation] = {}
         self._context_tokens: list = []
-
-        self._initialize_group(variables, "variables")
-        if numeraire is not None:
-            if numeraire not in self.variable_names:
-                raise ValueError("Requested numeraire not found among supplied variables")
-            self.numeraire = self._variables[numeraire]
-
-        self._initialize_group(parameters, "parameters")
-        self._initialize_group(equations, "equations")
-
-        if self.parse_equations_to_sympy:
-            self._simplify_unpacked_sympy_representation()
-
-        if numeraire:
-            del self._variables[numeraire]
-
-        self.check_initialization()
 
         self.scenarios: dict[str, Result] = {}
 
@@ -214,11 +122,6 @@ class CGEModel:
         return len(self.unpacked_equation_names)
 
     def __enter__(self) -> "CGEModel":
-        if self._is_string_built():
-            raise ValueError(
-                "This model was built from Variable, Parameter, and Equation lists, so objects cannot be added "
-                "to it in a `with` block."
-            )
         self._context_tokens.append(model_stack.set((*model_stack.get(), self)))
         return self
 
@@ -233,10 +136,6 @@ class CGEModel:
             raise KeyError(
                 f"{name!r} is not a variable or parameter registered in a `with` block on this model."
             ) from None
-
-    def _is_string_built(self) -> bool:
-        has_string_objects = bool(self._variables or self._parameters or self._equations)
-        return has_string_objects and not self._model_objects
 
     def label_positions(self, dim: str, labels: Any) -> int | list[int]:
         """Map one label, or a list of labels, of ``dim`` to positions along it."""
@@ -366,38 +265,6 @@ class CGEModel:
                 "System is not square. Check your model equations."
             )
 
-    def _initialize_group(self, objects, group_name):
-        if objects is None:
-            return
-
-        add_func = getattr(self, f"add_{group_name}")
-        unpack_func = getattr(self, f"_unpack_{group_name}")
-
-        add_func(objects)
-        unpack_func(objects)
-
-    def _simplify_unpacked_sympy_representation(self, n_jobs=-1):
-        equations = [eq._eq for eq in self.unpacked_equations]
-        variables = [x.to_sympy() for x in self.unpacked_variables]
-        parameters = [x.to_sympy() for x in self.unpacked_parameters]
-
-        # Remove indices from equations, variables, and parameters
-        remove_indices_subdict = indexed_variables_to_sub_dict(
-            self.unpacked_variables + self.unpacked_parameters
-        )
-
-        equations = sub_all_eqs(equations, remove_indices_subdict, n_jobs)
-        variables = sub_all_eqs(variables, remove_indices_subdict, n_jobs)
-        parameters = sub_all_eqs(parameters, remove_indices_subdict, n_jobs)
-
-        for group, simplified_symbols in zip(
-            ["parameters", "variables", "equations"], [parameters, variables, equations]
-        ):
-            for name, symbol in zip(
-                getattr(self, f"unpacked_{group[:-1]}_names"), simplified_symbols
-            ):
-                getattr(self, f"_unpacked_{group}")[name]["symbol"] = symbol
-
     @property
     def variable_names(self) -> list[str]:
         return list(self._variables.keys())
@@ -414,13 +281,6 @@ class CGEModel:
     def unpacked_variables(self) -> list[Variable]:
         return [
             self._unpacked_variables[var_name]["modelobj"]
-            for var_name in self.unpacked_variable_names
-        ]
-
-    @property
-    def unpacked_variable_symbols(self) -> list[sp.Symbol]:
-        return [
-            self._unpacked_variables[var_name]["symbol"]
             for var_name in self.unpacked_variable_names
         ]
 
@@ -444,82 +304,30 @@ class CGEModel:
         ]
 
     @property
-    def unpacked_parameter_symbols(self) -> list[sp.Symbol]:
-        return [
-            self._unpacked_parameters[param_name]["symbol"]
-            for param_name in self.unpacked_parameter_names
-        ]
-
-    @property
     def equation_names(self) -> list[str]:
-        return [*self._equations, *self._xtensor_equations]
+        return list(self._xtensor_equations)
 
     @property
-    def equations(self) -> list[Equation] | list[XTensorEquation]:
-        """The model's equations: records from :func:`cge_modeling.model.Equation` for a model built in a ``with``
-        block, otherwise the :class:`Equation` objects it was constructed with."""
-        if self._model_objects:
-            return list(self._xtensor_equations.values())
-        return list(self._equations.values())
+    def equations(self) -> list[XTensorEquation]:
+        """The records :func:`cge_modeling.model.Equation` registered on the model."""
+        return list(self._xtensor_equations.values())
 
     @property
     def unpacked_equation_names(self):
         return list(self._unpacked_equations.keys())
 
-    @property
-    def unpacked_equation_symbols(self):
-        if self.parse_equations_to_sympy:
-            return [
-                self._unpacked_equations[eq_name]["symbol"]
-                for eq_name in self.unpacked_equation_names
-            ]
-        else:
-            raise NotImplementedError(
-                "Symbolic equations not available when sympy parsing is disabled"
-            )
-
-    @property
-    def unpacked_equations(self):
-        if self.parse_equations_to_sympy:
-            return [
-                self._unpacked_equations[eq_name]["modelobj"]
-                for eq_name in self.unpacked_equation_names
-            ]
-        else:
-            raise NotImplementedError("Cannot unpack equations when sympy parsing is disabled")
-
-    def _add_object(
-        self,
-        obj: Variable | Parameter | Equation,
-        group: ValidGroups,
-        overwrite: bool = False,
-    ):
-        if self._model_objects:
-            raise ValueError(
-                f"Cannot add {obj.name}; this model is built in a `with` block, so add objects with the "
-                "constructors in cge_modeling.model."
-            )
-        obj_dict = getattr(self, f"_{group}")
-        obj_names = getattr(self, f"{group[:-1]}_names")
-        if obj.name in obj_names and not overwrite:
-            raise ValueError(
-                f"Cannot add {obj.name}; a {group} of this name already exists. Pass overwrite=True to "
-                f"allow existing {group}s to be overwritten."
-            )
-        obj_dict.update({obj["name"]: obj})
-
-    def _unpack_objects(self, objs: Sequence[Variable | Parameter | Equation]):
+    def _unpack_objects(self, objs: Sequence[Variable | Parameter]):
         """
         Convert a single object with dimension index to a list of objects with coordinate indices.
 
         Parameters
         ----------
-        objs : Variable | Parameter | Equation
+        objs : Variable | Parameter
             The object to be unpacked.
 
         Returns
         -------
-        list[Variable | Parameter | Equation]
+        list[Variable | Parameter]
             A list of objects with coordinate indices.
         """
 
@@ -531,123 +339,6 @@ class CGEModel:
             expanded_objects.extend(expanded_objs)
 
         return expanded_objects
-
-    def _add_objects(
-        self,
-        obj_list: Sequence[Variable | Parameter | Equation],
-        group: ValidGroups,
-        overwrite: bool = False,
-    ):
-        for obj in obj_list:
-            self._add_object(obj, group, overwrite)
-
-    def add_parameter(self, parameter: Parameter, overwrite=False):
-        _validate_input(parameter, Parameter)
-        self._add_object(parameter, "parameters", overwrite)
-
-    def add_parameters(self, parameters: Parameter | Sequence[Parameter], overwrite=False):
-        parameter_list = ensure_input_is_sequence(parameters)
-        [_validate_input(parameter, Parameter) for parameter in parameter_list]
-        self._add_objects(parameter_list, "parameters", overwrite)
-
-    def _unpack_parameters(self, parameters: Sequence[Parameter]):
-        unpacked_params = self._unpack_objects(parameters)
-        unpacked_names = [make_indexed_name(param) for param in unpacked_params]
-        param_dicts = [{"modelobj": param} for param in unpacked_params]
-        self._unpacked_parameters = dict(zip(unpacked_names, param_dicts))
-
-    def add_variable(self, variable: Variable, overwrite=False):
-        _validate_input(variable, Variable)
-        self._add_object(variable, "variables", overwrite)
-
-    def add_variables(self, variables: Variable | Sequence[Variable], overwrite=False):
-        variable_list = ensure_input_is_sequence(variables)
-        [_validate_input(variable, Variable) for variable in variable_list]
-        self._add_objects(variable_list, "variables", overwrite)
-
-    def _unpack_variables(self, variables: Sequence[Variable]):
-        unpacked_vars = self._unpack_objects(variables)
-        unpacked_names = [make_indexed_name(param) for param in unpacked_vars]
-        param_dicts = [{"modelobj": param} for param in unpacked_vars]
-        self._unpacked_variables = dict(zip(unpacked_names, param_dicts))
-
-    def add_sympy_equation(self, equation: Equation, overwrite: bool = False):
-        _validate_input(equation, Equation)
-        var_dict = {k: v.to_sympy() for k, v in self._variables.items()}
-        fancy_var_dict = {k: v.to_sympy(use_latex_name=True) for k, v in self._variables.items()}
-
-        param_dict = {k: v.to_sympy() for k, v in self._parameters.items()}
-        fancy_param_dict = {k: v.to_sympy(use_latex_name=True) for k, v in self._parameters.items()}
-
-        str_dim_to_symbol = dict(zip(self.coords.keys(), self._symbolic_coords.keys()))
-
-        local_dict = var_dict | param_dict | str_dim_to_symbol
-        fancy_dict = fancy_var_dict | fancy_param_dict | str_dim_to_symbol
-
-        try:
-            sympy_eq = sp.parse_expr(
-                equation.equation, local_dict=local_dict, transformations="all"
-            )
-            fancy_eq = sp.parse_expr(
-                equation.equation, local_dict=fancy_dict, transformations="all"
-            )
-        except Exception as e:
-            raise ValueError(
-                f"""Could not parse equation "{equation.name}":\n{equation.equation}\n\nEncountered the """
-                f"following error:\n{e}"
-            )
-
-        if self.numeraire:
-            x = self.numeraire.to_sympy()
-            sympy_eq = sympy_eq.subs({x: 1})
-
-        # Standardize equation
-        try:
-            standard_eq = substitute_reduce_ops(sympy_eq.lhs - sympy_eq.rhs, self.coords)
-        except Exception as e:
-            raise ValueError(
-                f"""Could not standardize equation "{equation.name}":\n{sympy_eq}\n\nEncountered the """
-                f"following error:\n{e}"
-            )
-
-        eq_id = equation.eq_id
-        if eq_id is None:
-            eq_id = len(self._equations) + 1
-
-        new_eq = _SympyEquation(
-            name=equation.name,
-            equation=equation.equation,
-            symbolic_eq=sympy_eq,
-            _eq=standard_eq,
-            _fancy_eq=fancy_eq,
-            dims=find_equation_dims(standard_eq, list(str_dim_to_symbol.values())),
-            eq_id=eq_id,
-        )
-
-        self._add_object(new_eq, "equations", overwrite)
-
-    def add_pytensor_equation(self, equation: Equation, overwrite: bool = False) -> None:
-        self._add_object(equation, "equations", overwrite)
-
-    def add_equations(self, equations: Equation | Sequence[Equation], overwrite: bool = False):
-        equation_list = ensure_input_is_sequence(equations)
-        [_validate_input(equation, Equation) for equation in equation_list]
-        add_function = (
-            self.add_sympy_equation if self.parse_equations_to_sympy else self.add_pytensor_equation
-        )
-        for equation in equation_list:
-            add_function(equation, overwrite)  # type: ignore
-
-    def _unpack_equations(self, *args):
-        string_equations = list(self._equations.values())
-        if self.parse_equations_to_sympy:
-            unpacked_eqs = self._unpack_objects(string_equations)
-            unpacked_names = [eq.name for eq in unpacked_eqs]
-            param_dicts = [{"modelobj": eq} for eq in unpacked_eqs]
-            self._unpacked_equations = dict(zip(unpacked_names, param_dicts))
-        else:
-            unpacked_eq_names = unpack_equation_strings(string_equations, self.coords)
-            self._unpacked_equations = dict.fromkeys(unpacked_eq_names, None)
 
     def _get_object(self, obj_name: str, group: Literal["variables", "parameters"]):
         return getattr(self, f"_{group}")[obj_name]
@@ -700,37 +391,6 @@ class CGEModel:
 
         return out
 
-    def get_symbol(self, names: str | list[str] | None = None):
-        if names is None:
-            names = self.unpacked_parameter_names + self.unpacked_parameter_symbols
-        if isinstance(names, str):
-            names = [names]
-
-        out = []
-        for name in names:
-            if name in self.unpacked_parameter_names:
-                out.append(self._unpacked_parameters[name]["symbol"])
-            elif name in self.unpacked_variable_names:
-                out.append(self._unpacked_variables[name]["symbol"])
-            else:
-                raise ValueError(
-                    f'Requested name "{name}" is not a known parameter or variable. Did you append the '
-                    f"indices?"
-                )
-
-        if len(out) == 1:
-            return out[0]
-
-        return out
-
-    def get_unpacked_parent_object(self, name):
-        if name in self.unpacked_variable_names:
-            return self._unpacked_variables[name]["modelobj"]
-        elif name in self.unpacked_parameter_names:
-            return self._unpacked_parameters[name]["modelobj"]
-        else:
-            raise ValueError(f"Object {name} not found in model")
-
     def get_shape(self, name):
         obj = self.get(name)
         return (len(self.coords[dim]) for dim in obj.dims)
@@ -782,22 +442,11 @@ class CGEModel:
         # display_latex_table(info_dict)
 
     def equation_table(self, display=True):
-        if self._model_objects:
-            names_and_equations = [
-                (equation.name, Latex(equation_to_latex(equation, model=self)))
-                for equation in self._xtensor_equations.values()
-            ]
-        else:
-            names_and_equations = [
-                (record["name"], record["fancy_eq"])
-                for record in (equation.to_dict() for equation in self._equations.values())
-            ]
-
         info_dict = {"": [], "Name": [], "Equation": []}
-        for number, (name, equation) in enumerate(names_and_equations, start=1):
+        for number, equation in enumerate(self._xtensor_equations.values(), start=1):
             info_dict[""].append(number)
-            info_dict["Name"].append(_replace_dim_marker_with_dim_name(name))
-            info_dict["Equation"].append(equation)
+            info_dict["Name"].append(_replace_dim_marker_with_dim_name(equation.name))
+            info_dict["Equation"].append(Latex(equation_to_latex(equation, model=self)))
 
         display_latex_table(info_dict)
 
@@ -820,63 +469,13 @@ class CGEModel:
         name : str, optional
             Name of the returned result. Default is ``"initial_calibration"``.
         initial_values : dict of str to float or ndarray, optional
-            Starting values for unknowns, keyed by name. Used only by models built in a ``with`` block.
+            Starting values for unknowns, keyed by name.
 
         Returns
         -------
         result : Result
             The given and solved values, with ``success`` set when every equation holds.
         """
-        data = {} if data is None else data
-        initial_values = {} if initial_values is None else initial_values
-
-        if self._model_objects:
-            return self._calibrate_context_built(
-                data=data, initial_values=initial_values, max_iter=max_iter, name=name
-            )
-
-        if not self._compiled:
-            self._compile()
-
-        equations = self.unpacked_equation_symbols
-        symbolic_data = {self.get_symbol(k): v for k, v in data.items()}
-
-        all_model_objects = self.unpacked_variable_symbols + self.unpacked_parameter_symbols
-
-        calibrated_system = recursive_solve_symbolic(equations, symbolic_data, max_iter)
-        initial_values_flat = np.array(
-            [data.get(x.name, np.nan) for x in all_model_objects], dtype="float64"
-        )
-        fitted_values = np.array(
-            [calibrated_system.get(x, np.nan) for x in all_model_objects],
-            dtype="float64",
-        )
-
-        x0, theta0 = (
-            fitted_values[: len(self.unpacked_variable_names)],
-            fitted_values[len(self.unpacked_variable_names) :],
-        )
-
-        success = self._compiled_function("f_resid")(x0, theta0) < 1e-6
-
-        result = Result(
-            name=name,
-            success=success,
-            variables=self.unpacked_variable_names,
-            parameters=self.unpacked_parameter_names,
-            initial_values=initial_values_flat,
-            fitted_values=fitted_values,
-        )
-
-        return result
-
-    def _calibrate_context_built(
-        self,
-        data: Mapping[str, float | np.ndarray],
-        initial_values: Mapping[str, float | np.ndarray],
-        max_iter: int,
-        name: str,
-    ) -> Result:
         # cge_modeling.tools.calibration imports the compile modules, which import this module.
         from cge_modeling.tools.calibration import (
             calibrate_entries,
@@ -884,6 +483,9 @@ class CGEModel:
             flatten_entries,
             residual_is_converged,
         )
+
+        data = {} if data is None else data
+        initial_values = {} if initial_values is None else initial_values
 
         system = compile_calibration_system(self)
         fitted_values, residual = calibrate_entries(

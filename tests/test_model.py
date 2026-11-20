@@ -7,15 +7,15 @@ import xarray.testing as xr_testing
 from pytensor.graph import rewrite_graph
 from pytensor.graph.traversal import explicit_graph_inputs
 
-from cge_modeling import CGEModel, Equation, Variable, compile_model
+from cge_modeling import CGEModel, compile_model
 from cge_modeling import model as cm
 from cge_modeling.base.utilities import variable_dict_to_flat_array
 from tests.utilities.models import (
-    build_model_1_in_context,
-    build_model_2_in_context,
-    build_model_3_in_context,
-    build_model_4_in_context,
-    build_model_5_in_context,
+    build_model_1,
+    build_model_2,
+    build_model_3,
+    build_model_4,
+    build_model_5,
     calibrate_model_1,
     calibrate_model_2,
     calibrate_model_3,
@@ -39,8 +39,8 @@ def evaluate(xtensor, values):
 @pytest.mark.parametrize(
     "build, calibrate, data",
     [
-        (build_model_1_in_context, calibrate_model_1, model_1_data),
-        (build_model_2_in_context, calibrate_model_2, model_2_data),
+        (build_model_1, calibrate_model_1, model_1_data),
+        (build_model_2, calibrate_model_2, model_2_data),
     ],
     ids=["model_1", "model_2"],
 )
@@ -60,8 +60,8 @@ def test_context_built_model_residuals_vanish_at_the_calibrated_point(build, cal
 @pytest.mark.parametrize(
     "build, calibrate, data",
     [
-        (build_model_1_in_context, calibrate_model_1, model_1_data),
-        (build_model_2_in_context, calibrate_model_2, model_2_data),
+        (build_model_1, calibrate_model_1, model_1_data),
+        (build_model_2, calibrate_model_2, model_2_data),
     ],
     ids=["model_1", "model_2"],
 )
@@ -97,7 +97,7 @@ def test_labor_supply_shock_reaches_an_equilibrium(
 
 
 def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_euler_path():
-    context_model = build_model_1_in_context()
+    context_model = build_model_1()
     calibrated = calibrate_model_1(**model_1_data)
     scenario = {
         "final_delta_pct": {"L_s": 0.5},
@@ -112,7 +112,7 @@ def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_euler_
 
 
 def test_model_3_is_square_and_holds_at_the_calibrated_point():
-    model = build_model_3_in_context()
+    model = build_model_3()
     calibrated = calibrate_model_3(**model_3_data)
 
     assert model.n_variables == model.n_equations == 39
@@ -127,7 +127,7 @@ def test_model_3_is_square_and_holds_at_the_calibrated_point():
 
 
 def test_model_3_labor_supply_shock_clears_every_market():
-    model = build_model_3_in_context()
+    model = build_model_3()
     calibrated = calibrate_model_3(**model_3_data)
 
     result = model.simulate(
@@ -148,7 +148,7 @@ def test_model_3_labor_supply_shock_clears_every_market():
 
 @pytest.mark.parametrize("closure", ["savings_driven", "fixed_investment"])
 def test_model_4_is_square_and_holds_at_the_calibrated_point(closure):
-    model = build_model_4_in_context(closure=closure)
+    model = build_model_4(closure=closure)
     calibrated = calibrate_model_4(**model_4_data)
 
     assert model.n_variables == model.n_equations == 19
@@ -187,7 +187,7 @@ def test_model_4_calibration_reproduces_the_published_base_year():
 
 
 def test_model_4_doubling_the_exchange_rate_doubles_prices_and_leaves_quantities():
-    model = build_model_4_in_context(closure="savings_driven")
+    model = build_model_4(closure="savings_driven")
     calibrated = calibrate_model_4(**model_4_data)
 
     result = model.simulate(
@@ -203,7 +203,7 @@ def test_model_4_doubling_the_exchange_rate_doubles_prices_and_leaves_quantities
 
 
 def test_model_4_tariff_cut_reproduces_the_published_sales_tax_increase():
-    model = build_model_4_in_context(closure="fixed_investment")
+    model = build_model_4(closure="fixed_investment")
     calibrated = calibrate_model_4(**model_4_data)
     published = {
         "E": 0.33,
@@ -237,7 +237,7 @@ def test_model_4_tariff_cut_reproduces_the_published_sales_tax_increase():
 
 
 def test_model_5_is_square_and_holds_at_the_calibrated_point():
-    model = build_model_5_in_context()
+    model = build_model_5()
     calibrated = calibrate_model_5(**model_5_data)
 
     assert model.n_variables == model.n_equations == 59
@@ -266,7 +266,7 @@ def test_model_5_calibration_reproduces_the_published_parameters():
 
 
 def test_model_5_abolishing_the_manufactures_tax_clears_every_market():
-    model = build_model_5_in_context()
+    model = build_model_5()
     calibrated = calibrate_model_5(**model_5_data)
     tax_rates = calibrated["t"] * np.array([1.0, 0.0, 1.0])
 
@@ -302,19 +302,19 @@ def test_model_5_abolishing_the_manufactures_tax_clears_every_market():
     "build, calibrate, data, unknown",
     [
         (
-            build_model_1_in_context,
+            build_model_1,
             calibrate_model_1,
             model_1_data,
             ["Y", "L_d", "K_d", "C", "income", "resid", "alpha", "A"],
         ),
         (
-            build_model_2_in_context,
+            build_model_2,
             calibrate_model_2,
             model_2_data,
             ["U", "psi_VA", "psi_VC", "psi_X", "alpha", "A", "gamma"],
         ),
         (
-            build_model_3_in_context,
+            build_model_3,
             calibrate_model_3,
             model_3_data,
             [
@@ -334,7 +334,7 @@ def test_model_5_abolishing_the_manufactures_tax_clears_every_market():
             ],
         ),
         (
-            lambda: build_model_4_in_context(closure="savings_driven"),
+            lambda: build_model_4(closure="savings_driven"),
             calibrate_model_4,
             model_4_data,
             ["wm", "we", "sy", "B", "at", "bt", "aq", "bq"],
@@ -363,7 +363,7 @@ def test_calibrate_recovers_the_hand_written_calibration(build, calibrate, data,
 
 
 def test_calibrate_flags_data_that_disagree_with_the_model():
-    model = build_model_1_in_context()
+    model = build_model_1()
     expected = calibrate_model_1(**model_1_data)
 
     result = model.calibrate(data={**model_1_data, "w": 1.0, "C": 1.1 * expected["C"]})
@@ -372,7 +372,7 @@ def test_calibrate_flags_data_that_disagree_with_the_model():
 
 
 def test_calibrate_without_data_names_the_entries_no_equation_determines():
-    model = build_model_1_in_context()
+    model = build_model_1()
 
     with pytest.raises(ValueError, match="No equation determines"):
         model.calibrate()
@@ -485,23 +485,6 @@ def test_equation_using_another_models_object_raises():
             with CGEModel():
                 inner_variable = cm.Variable("inner_variable")
                 cm.Equation("inner", inner_variable, outer_variable)
-
-
-def test_string_built_model_cannot_be_entered():
-    model = CGEModel(variables=[Variable("x")], equations=[Equation("x equation", "x = 1")])
-
-    with pytest.raises(ValueError, match="cannot be added to it in a `with` block"):
-        with model:
-            pass
-
-
-def test_context_built_model_rejects_string_objects():
-    with CGEModel() as model:
-        x = cm.Variable("x")
-        cm.Equation("x equation", x, 1.0)
-
-    with pytest.raises(ValueError, match="this model is built in a `with` block"):
-        model.add_variable(Variable("y"))
 
 
 def test_model_can_be_built_across_several_blocks():

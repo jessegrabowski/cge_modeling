@@ -3,7 +3,7 @@ import pytensor
 import pytensor.tensor as pt
 import pytest
 
-from cge_modeling.compile.euler import symbolic_euler_approximation
+from cge_modeling.compile.euler import get_step_statistics, symbolic_euler_approximation
 
 
 @pytest.mark.parametrize("use_rk4", [True, False])
@@ -82,3 +82,16 @@ def test_euler_approximation_2d():
     *x, _theta = f(*initial_point, v3_initial, v3_final, 10_000)
     np.testing.assert_allclose(x[0][-1], analytic_solution[0], atol=1e-3)
     np.testing.assert_allclose(x[1][-1], analytic_solution[1], atol=1e-3)
+
+
+def test_step_statistics_report_rmse_and_gradient_norm():
+    x, theta = np.array([1.0, 2.0]), np.array([0.5])
+
+    statistics = get_step_statistics(
+        x,
+        theta,
+        f_system=lambda x, theta: np.array([3.0, -4.0, 0.0, 0.0]),
+        f_grad=lambda x, theta: np.array([3.0, 4.0]),
+    )
+
+    assert statistics == pytest.approx({"rmse": 2.5, "grad_norm": 5.0})

@@ -3,17 +3,39 @@ import time
 
 from abc import ABC
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
 
 import pandas as pd
-import sympy as sp
 
-from sympy.abc import greeks
-from sympy.printing.latex import latex
-
-greeks = [*list(greeks), "varepsilon"]
+greeks = [
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "epsilon",
+    "zeta",
+    "eta",
+    "theta",
+    "iota",
+    "kappa",
+    "lambda",
+    "mu",
+    "nu",
+    "xi",
+    "omicron",
+    "pi",
+    "rho",
+    "sigma",
+    "tau",
+    "upsilon",
+    "phi",
+    "chi",
+    "psi",
+    "omega",
+    "varepsilon",
+]
 Greeks = [x.title() for x in greeks]
 GREEK_PATTERN = "|".join(
     [f"(((^{greek})|((?=[_^]){greek})|((?<=[_^]){greek})))" for greek in greeks + Greeks]
@@ -95,15 +117,9 @@ class ModelObject(ABC):
     _full_latex_name: str | None = None
     description: str | None = None
     base_name: str | None = None
-    real: bool = True
-    positive: bool = True
     extend_subscript: bool | int = False
-    assumptions: dict = field(default_factory=dict)
 
     def __post_init__(self):
-        self.assumptions["real"] = self.real
-        self.assumptions["positive"] = self.positive
-
         object.__setattr__(self, "sort_index", self.name)
         object.__setattr__(self, "dims", self._initialize_index())
         object.__setattr__(self, "dim_vals", self._initialize_dim_vals())
@@ -227,7 +243,7 @@ class ModelObject(ABC):
         if self.description is not None:
             self.description = _pretty_print_dim_flags(self.description, self.dims, self.dim_vals)
             return self.description
-        return f"{self._full_latex_name}, Positive = {self.positive}, Real = {self.real}"
+        return self.name
 
     def __getitem__(self, item: str):
         return getattr(self, item)
@@ -239,24 +255,10 @@ class ModelObject(ABC):
         return {
             "name": self.name,
             "dims": self.dims,
-            "sympy": self.to_sympy(long_name=False),
             "latex_name": self._full_latex_name,
             "dim_vals": self.dim_vals,
             "description": self.description,
         }
-
-    def to_sympy(self, long_name=False, use_latex_name=False):
-        indices = [sp.Idx(dim) for dim in self.dims]
-        if use_latex_name:
-            base_name = self._full_latex_name if long_name else self.latex_name
-        else:
-            base_name = self.name if long_name else self.base_name
-        if len(indices) == 0:
-            return sp.Symbol(base_name, **self.assumptions)
-        base = sp.IndexedBase(base_name, **self.assumptions)
-        dim_val_subs = {sp.Idx(k): v for k, v in self.dim_vals.items()}
-
-        return base[indices].subs(dim_val_subs)
 
     def update_dim_value(self, dim, value):
         if dim not in self.dims:
@@ -278,64 +280,6 @@ class Variable(ModelObject):
 @dataclass(order=True, frozen=False, repr=False)
 class Parameter(ModelObject):
     pass
-
-
-@dataclass(frozen=True)
-class Equation:
-    name: str
-    equation: str
-    eq_id: int | None = None
-
-    def _set_eq_id(self, new_id):
-        object.__setattr__(self, "eq_id", new_id)
-
-    def __getitem__(self, item: str):
-        return getattr(self, item)
-
-    def __repr__(self):
-        return self.name
-
-
-# noinspection PyDataclass
-@dataclass(frozen=True, kw_only=True)
-class _SympyEquation(Equation):
-    symbolic_eq: sp.Eq
-    _eq: sp.Expr
-    _fancy_eq: sp.Eq
-    dims: tuple[str, ...]
-    dim_vals: dict[str, str] = field(default_factory=dict)
-
-    def __repr__(self):
-        return self.name
-
-    def _repr_latex_(self):
-        s = latex(self.symbolic_eq, mode="plain")
-        return f"$\\displaystyle {s}$"
-
-    def copy(self):
-        return deepcopy(self)
-
-    def update_dim_value(self, dim, value):
-        if dim not in self.dims:
-            raise ValueError(f"{dim} is not a valid dimension of {self.name}.")
-        sp_dim = sp.Idx(dim)
-
-        object.__setattr__(self, "symbolic_eq", self.symbolic_eq.subs(sp_dim, value))
-        object.__setattr__(self, "_eq", self._eq.subs(sp_dim, value))
-        object.__setattr__(
-            self, "name", _pretty_print_dim_flags(self.name, self.dims, {dim: value})
-        )
-        object.__setattr__(self, "dim_vals", {dim: value})
-
-    def to_dict(self):
-        return {
-            "name": self.name,
-            "string_eq": self.equation,
-            "symbolic_eq": self.symbolic_eq,
-            "fancy_eq": self._fancy_eq,
-            "standard_eq": self._eq,
-            "eq_id": self.eq_id,
-        }
 
 
 class Result:

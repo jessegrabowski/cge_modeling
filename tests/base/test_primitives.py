@@ -7,25 +7,25 @@ from cge_modeling.base.primitives import Parameter, Variable
 @pytest.mark.parametrize(
     "name, latex_name, dims, expected",
     [
-        ("x", "x", None, ("x", "x, Positive = True, Real = True", ())),
-        ("x", "x", ("i",), ("x_{i}", "x_{i}, Positive = True, Real = True", ("i",))),
+        ("x", "x", None, ("x", "x", ())),
+        ("x", "x", ("i",), ("x_{i}", "x", ("i",))),
         (
             "x",
             r"\Omega",
             "i",
-            (r"\Omega_{i}", r"\Omega_{i}, Positive = True, Real = True", ("i",)),
+            (r"\Omega_{i}", "x", ("i",)),
         ),
         (
             "x",
             "x",
             "i,j",
-            ("x_{i, j}", "x_{i, j}, Positive = True, Real = True", ("i", "j")),
+            ("x_{i, j}", "x", ("i", "j")),
         ),
         (
             "x_d",
             "x_d",
             "i,j",
-            ("x_{d, i, j}", "x_{d, i, j}, Positive = True, Real = True", ("i", "j")),
+            ("x_{d, i, j}", "x_d", ("i", "j")),
         ),
     ],
     ids=[
@@ -70,9 +70,7 @@ def test_to_dict(cls):
     x = cls(name="x", dims="i", description="A lovely thing")
     d = x.to_dict()
 
-    assert isinstance(d, dict)
-    assert len(d) == 6
-    assert all([key in d.keys() for key in ["name", "dims", "dim_vals", "description"]])
+    assert set(d) == {"name", "dims", "latex_name", "dim_vals", "description"}
 
 
 @pytest.mark.parametrize(

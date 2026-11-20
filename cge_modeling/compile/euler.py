@@ -1,10 +1,17 @@
+import sys
+
 from typing import cast
 
 import numpy as np
 import pytensor
 
+from better_optimize.constants import CONSOLE_WIDTH
+from better_optimize.utilities import ToggleableProgress
 from pytensor import tensor as pt
 from pytensor.compile.builders import OpFromGraph
+from rich.console import Console
+from rich.progress import BarColumn, MofNCompleteColumn, TextColumn, TimeElapsedColumn
+from rich.table import Column
 
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.utilities import infer_object_shape_from_coords
@@ -14,7 +21,7 @@ from cge_modeling.compile.pytensor_tools import (
     make_jacobian,
     rewrite_pregrad,
 )
-from cge_modeling.tools.utils import at_least_list, initialize_progress_bar
+from cge_modeling.tools.utils import at_least_list
 
 
 def pytensor_euler_function_with_python_loop(
@@ -28,18 +35,12 @@ def pytensor_euler_function_with_python_loop(
     f_system=None,
     f_grad=None,
 ) -> list[np.ndarray]:
-    stat_string = None
-    if f_system is not None:
-        stat_string = "f = {task.fields[RMSE]:,.5g}"
-    if f_grad is not None:
-        stat_string = "f = {task.fields[RMSE]:,.5g}, ||grad|| = {task.fields[grad_norm]:,.5g}"
-
     trajectory = np.empty((n_steps, x.shape[0] + theta.shape[0]))
     theta_initial = theta
 
-    progress = initialize_progress_bar(stat_string)
+    progress = euler_progress_bar(show_rmse=f_system is not None, show_grad_norm=f_grad is not None)
     value_dict = get_step_statistics(x, theta, f_system, f_grad)
-    task = progress.add_task("[green]Euler Approximation", total=n_steps, **value_dict)
+    task = progress.add_task("Euler Approximation", total=n_steps, **value_dict)
 
     with progress:
         for t in range(n_steps):
@@ -210,12 +211,30 @@ def symbolic_euler_approximation(
     return theta_final, n_steps, final_result
 
 
+def euler_progress_bar(*, show_rmse: bool, show_grad_norm: bool) -> ToggleableProgress:
+    """Return a progress bar for the Euler approximation, with one headed column per step statistic."""
+    columns = [
+        BarColumn(bar_width=None, table_column=Column("Euler Approximation", ratio=1)),
+        TimeElapsedColumn(table_column=Column("Elapsed", ratio=1)),
+        MofNCompleteColumn(table_column=Column("Step")),
+    ]
+    if show_rmse:
+        columns.append(TextColumn("{task.fields[rmse]:0.8f}", table_column=Column("RMSE", ratio=1)))
+    if show_grad_norm:
+        columns.append(
+            TextColumn("{task.fields[grad_norm]:0.8f}", table_column=Column("||grad||", ratio=1))
+        )
+
+    return ToggleableProgress(
+        *columns, expand=False, console=Console(file=sys.stderr, width=CONSOLE_WIDTH)
+    )
+
+
 def get_step_statistics(x, theta, f_system=None, f_grad=None) -> dict[str, float]:
     value_dict = {}
     if f_system is not None:
         errors = np.asarray(f_system(x, theta))
-        rmse = (errors**2).sum() / min(1, int(np.prod(errors.shape)))
-        value_dict["RMSE"] = rmse
+        value_dict["rmse"] = float(np.sqrt(np.mean(errors**2)))
     if f_grad is not None:
         grad_norm = np.linalg.norm(f_grad(x, theta))
         value_dict["grad_norm"] = grad_norm

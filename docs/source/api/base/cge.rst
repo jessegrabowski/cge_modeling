@@ -12,11 +12,11 @@ CGE
 Model Components
 ----------------
 
-.. currentmodule:: cge_modeling.base.primitives
+.. currentmodule:: cge_modeling.model
 
 .. autosummary::
     :toctree: generated/
 
-    Parameter
     Variable
+    Parameter
     Equation
