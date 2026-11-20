@@ -5,6 +5,7 @@ from abc import ABC
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import cast
 
 import pandas as pd
 import sympy as sp
@@ -41,6 +42,27 @@ def _tokenize_latex_subscript(subscript):
 
     tokens = [x.strip() for x in subscript.split(",")]
     return tokens if tokens != [""] else []
+
+
+def _split_latex_subscript(latex_name: str) -> tuple[str, list[str]]:
+    """
+    Split ``latex_name`` at its first underscore outside braces into a base and subscript tokens.
+
+    A braced subscript, as in ``"\\bar{P}_{Ag}"``, gives its comma-separated entries. A bare one, as in ``"P_VA_E"``,
+    gives each part between underscores.
+    """
+    depth = 0
+    for position, character in enumerate(latex_name):
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+        elif character == "_" and depth == 0:
+            base, subscript = latex_name[:position], latex_name[position + 1 :]
+            if subscript.startswith("{") and subscript.endswith("}"):
+                return base, _tokenize_latex_subscript("_" + subscript)
+            return base, subscript.split("_")
+    return latex_name, []
 
 
 @dataclass(slots=True, order=True, frozen=False, repr=False)
@@ -138,9 +160,12 @@ class ModelObject(ABC):
         return latex_name
 
     def _initialize_full_latex_name(self):
-        idx_subscript = self._make_latex_subscript()
+        return self.latex_name_with_subscript(self._make_latex_subscript())
+
+    def latex_name_with_subscript(self, idx_subscript: str) -> str:
+        """Return the LaTeX name with ``idx_subscript``, a string of the form ``"_{i, j}"``, as its index."""
         idx_subscript_tokens = _tokenize_latex_subscript(idx_subscript)
-        base_latex_name = self.latex_name
+        base_latex_name = cast(str, self.latex_name)
         int_extend = int(self.extend_subscript)
 
         if self.extend_subscript:
@@ -158,12 +183,16 @@ class ModelObject(ABC):
             else:
                 idx_subscript = "_{" + ", ".join(subscript_tokens) + "}"
 
-        if "_" in base_latex_name:
-            base_latex_name = r"\text{" + base_latex_name + "}"
+            if "_" in base_latex_name:
+                base_latex_name = r"\text{" + base_latex_name + "}"
 
-        latex_name = base_latex_name + idx_subscript
+            return base_latex_name + idx_subscript
 
-        return latex_name
+        base_latex_name, name_subscript_tokens = _split_latex_subscript(base_latex_name)
+        subscript_tokens = name_subscript_tokens + idx_subscript_tokens
+        if not subscript_tokens:
+            return base_latex_name
+        return base_latex_name + "_{" + ", ".join(subscript_tokens) + "}"
 
     def _initialize_description(self):
         if self.description is not None:

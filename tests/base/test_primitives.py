@@ -84,7 +84,14 @@ def test_to_dict(cls):
         ("x_F", ["i", "j"], True, "x_{F, i=\\text{A}, j}"),
         ("x_{Fish}", ["i", "i"], True, "x_{Fish, i=\\text{A}, i=\\text{A}}"),
         ("x_K_d", ["i", "j"], 2, "x_{K, d, i=\\text{A}, j}"),
-        ("var_with_underscore", ["i"], False, "\\text{var_with_underscore}_{i=\\text{A}}"),
+        (
+            "var_with_underscore",
+            ["i"],
+            False,
+            "var_{with, underscore, i=\\text{A}}",
+        ),
+        ("K_d", None, False, "K_{d}"),
+        ("psi_VA_E", ["i"], False, "\\psi_{VA, E, i=\\text{A}}"),
         ("P_CE", None, True, "P_{CE}"),
     ],
 )
