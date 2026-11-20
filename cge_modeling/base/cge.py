@@ -56,6 +56,22 @@ from cge_modeling.tools.output_tools import (
 _log = logging.getLogger(__name__)
 
 
+def _judge_equilibrium(
+    res: OptimizeResult, squared_error: float, equilibrium_tol: float
+) -> OptimizeResult:
+    """Set ``res.success`` from the sum of squared residuals, noting in ``res.message`` when this overrules the solver."""
+    # A solver can stop on a flat objective well short of an equilibrium, or fail to make progress at one, so
+    # success is judged on the residuals themselves.
+    is_equilibrium = squared_error < equilibrium_tol
+    if bool(res.success) != is_equilibrium:
+        res.message = (
+            f"{res.message} Sum of squared residuals is {squared_error:.3e}, "
+            f"{'below' if is_equilibrium else 'above'} equilibrium_tol={equilibrium_tol:g}."
+        )
+    res.success = is_equilibrium
+    return res
+
+
 class CGEModel:
     def __init__(self, coords: dict[str, list[str]] | None = None):
         """
@@ -516,6 +532,7 @@ class CGEModel:
         use_jac=True,
         progressbar=True,
         verbose: bool = True,
+        equilibrium_tol: float = 1e-6,
         **optimizer_kwargs,
     ):
         method: root_method | None = optimizer_kwargs.pop("method", None)
@@ -538,13 +555,15 @@ class CGEModel:
                     "This model was compiled with use_sparse_matrices=True, so roots are found by sparse_root. "
                     "Pass a sparse_root strategy as `solver=` instead of `method=`."
                 )
-            return sparse_root(
+            res = sparse_root(
                 self.f_sparse_system_and_jac,
                 x0,
                 args=(theta_final,),
                 progressbar=progressbar,
                 **optimizer_kwargs,
             )
+            squared_error = np.inf if res.fun is None else float(np.sum(res.fun**2))
+            return _judge_equilibrium(res, squared_error, equilibrium_tol)
 
         f_system = wrap_compiled_function_for_scipy(self._compiled_function("f_system"))
         f_jac = (
@@ -562,7 +581,7 @@ class CGEModel:
             **optimizer_kwargs,
         )
 
-        return res
+        return _judge_equilibrium(res, float(np.sum(np.asarray(res.fun) ** 2)), equilibrium_tol)
 
     def _solve_with_minimize(
         self,
@@ -625,19 +644,8 @@ class CGEModel:
             **optimizer_kwargs,
         )
 
-        # The optimizer's gradient tolerance can stop on a flat objective well short of an equilibrium, or fail
-        # to make progress at one, so success is judged on the residuals themselves. The objective is half the
-        # sum of squared residuals.
-        squared_error = 2 * float(res.fun)
-        is_equilibrium = squared_error < equilibrium_tol
-        if bool(res.success) != is_equilibrium:
-            res.message = (
-                f"{res.message} Sum of squared residuals is {squared_error:.3e}, "
-                f"{'below' if is_equilibrium else 'above'} equilibrium_tol={equilibrium_tol:g}."
-            )
-        res.success = is_equilibrium
-
-        return res
+        # The objective is half the sum of squared residuals.
+        return _judge_equilibrium(res, 2 * float(res.fun), equilibrium_tol)
 
     def generate_SAM(
         self,
