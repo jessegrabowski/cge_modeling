@@ -7,16 +7,16 @@ import pytest
 import sympy as sp
 import xarray as xr
 
+from scipy.differentiate import jacobian
+
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.primitives import Equation, Parameter, Variable
 from cge_modeling.base.utilities import flat_array_to_variable_dict, variable_dict_to_flat_array
 from cge_modeling.tools.sympy_tools import get_inputs
-from tests.utilities.fake_data import generate_data
 from tests.utilities.models import (
+    build_model_1_in_context,
     calibrate_model_1,
     calibrate_model_2,
-    expected_model_1_jacobian,
-    expected_model_2_jacobian,
     load_and_cache_model,
     load_model_1,
     load_model_1_components,
@@ -334,35 +334,41 @@ def test_long_unpack():
     assert "[" not in str_eq
 
 
+def numeric_jacobian(function, x, *args):
+    """Differentiate ``function`` at ``x`` with :func:`scipy.differentiate.jacobian`, evaluating one point at a time."""
+
+    def evaluate_points(points):
+        flat_points = points.reshape(points.shape[0], -1)
+        values = np.stack(
+            [function(flat_points[:, column], *args) for column in range(flat_points.shape[1])],
+            axis=-1,
+        )
+        return values.reshape(values.shape[:1] + points.shape[1:])
+
+    return jacobian(evaluate_points, x)
+
+
 @pytest.mark.parametrize(
-    "model_id, jac_function",
-    [
-        (
-            1,
-            expected_model_1_jacobian,
-        ),  # expected_model_1_grad, expected_model_1_hessian),
-        (
-            2,
-            expected_model_2_jacobian,
-        ),  # expected_model_2_grad, expected_model_2_hessian),
-    ],
+    "model_id, calibrate_model, data",
+    [(1, calibrate_model_1, model_1_data), (2, calibrate_model_2, model_2_data)],
     ids=["simple_model", "3-goods simple"],
 )
-def test_model_gradients(model_id, jac_function):
+def test_model_gradients(model_id, calibrate_model, data):
     mod = load_and_cache_model(model_id, mode="FAST_RUN", functions_to_compile=("root", "minimize"))
+    x, theta = variable_dict_to_flat_array(calibrate_model(**data), mod.variables, mod.parameters)
+    rng = np.random.default_rng(0)
+    x = x * rng.uniform(0.9, 1.1, size=x.shape)
+    p = rng.normal(size=x.shape)
 
-    data = generate_data(mod.variables + mod.parameters, mod.coords)
-    x, theta = variable_dict_to_flat_array(data, mod.variables, mod.parameters)
-    p = np.eye(mod.n_equations)[:, 0]
+    system_jacobian = numeric_jacobian(mod.f_system, x, theta)
+    gradient_jacobian = numeric_jacobian(mod.f_grad, x, theta)
 
-    J_expected = jac_function(**data)
-
-    J_actual = mod.f_jac(x, theta)
-    H_actual = mod.f_hess(x, theta)
-    Hp_actual = mod.f_hessp(x, p, theta)
-
-    np.testing.assert_allclose(J_expected, J_actual, atol=1e-8)
-    np.testing.assert_allclose(H_actual[:, 0], Hp_actual.ravel())
+    assert system_jacobian.success.all() and gradient_jacobian.success.all()
+    np.testing.assert_allclose(mod.f_jac(x, theta), system_jacobian.df, rtol=1e-6, atol=1e-8)
+    np.testing.assert_allclose(mod.f_hess(x, theta), gradient_jacobian.df, rtol=1e-6, atol=1e-8)
+    np.testing.assert_allclose(
+        mod.f_hessp(x, p, theta).ravel(), mod.f_hess(x, theta) @ p, rtol=1e-10, atol=1e-8
+    )
 
 
 @pytest.mark.parametrize(
@@ -679,8 +685,7 @@ def test_simulate(scenario_kwargs, expected_result):
 
 
 def test_simulate_compiles_an_uncompiled_model():
-    variables, parameters, equations, coords = load_model_1_components()
-    mod = CGEModel(coords=coords, variables=variables, parameters=parameters, equations=equations)
+    mod = build_model_1_in_context()
     initial_state = calibrate_model_1(**model_1_data)
 
     res = mod.simulate(initial_state, final_values={"L_s": 1500}, n_iter_euler=100)

@@ -2,6 +2,7 @@ import numpy as np
 import pytensor.tensor as pt
 import pytest
 
+from cge_modeling import CGEModel
 from cge_modeling.base.primitives import Parameter, Variable
 from cge_modeling.compile.pytensor import cge_primitives_to_pytensor
 from cge_modeling.compile.pytensor_tools import (
@@ -9,7 +10,7 @@ from cge_modeling.compile.pytensor_tools import (
     make_jacobian,
     object_to_pytensor,
 )
-from tests.utilities.models import load_model_1, load_model_2
+from tests.utilities.models import load_model_1_components, load_modeL_2_components
 
 test_cases = [
     (Parameter, "K_d", {}),
@@ -36,21 +37,19 @@ def test_object_to_pytensor(cls, name, coords):
 
 
 @pytest.mark.parametrize(
-    "model_func, kwargs",
-    [
-        (
-            load_model_1,
-            {},
-        ),
-        (
-            load_model_2,
-            {},
-        ),
-    ],
+    "load_components",
+    [load_model_1_components, load_modeL_2_components],
     ids=["1_Sector", "3_Sector"],
 )
-def test_compile_to_pytensor(model_func, kwargs):
-    cge_model = model_func(**kwargs)
+def test_compile_to_pytensor(load_components):
+    variables, parameters, equations, coords = load_components()
+    cge_model = CGEModel(
+        coords=coords,
+        variables=variables,
+        parameters=parameters,
+        equations=equations,
+        parse_equations_to_sympy=False,
+    )
     n_variables = n_eq = len(cge_model.unpacked_variable_names)
     n_params = len(cge_model.unpacked_parameter_names)
 

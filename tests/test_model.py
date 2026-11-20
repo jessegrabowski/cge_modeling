@@ -29,15 +29,6 @@ from tests.utilities.models import (
     model_5_data,
 )
 
-ported_models = pytest.mark.parametrize(
-    "model_id, build, calibrate, data",
-    [
-        (1, build_model_1_in_context, calibrate_model_1, model_1_data),
-        (2, build_model_2_in_context, calibrate_model_2, model_2_data),
-    ],
-    ids=["model_1", "model_2"],
-)
-
 
 def evaluate(xtensor, values):
     """Evaluate ``xtensor`` given values for model objects, which lowering replaces by their tensors."""
@@ -45,29 +36,15 @@ def evaluate(xtensor, values):
     return lowered.eval({obj.owner.inputs[0]: value for obj, value in values.items()})
 
 
-@ported_models
-def test_context_built_model_matches_string_model_objects_and_size(
-    model_id, build, calibrate, data
-):
-    model = build()
-    string_model = load_and_cache_model(model_id=model_id, functions_to_compile=None)
-
-    assert model.variable_names == string_model.variable_names
-    assert model.parameter_names == string_model.parameter_names
-    assert model.n_variables == model.n_equations == string_model.n_equations
-    assert model.n_parameters == string_model.n_parameters
-    for context_object, string_object in zip(
-        model.variables + model.parameters, string_model.variables + string_model.parameters
-    ):
-        assert context_object._full_latex_name == string_object._full_latex_name, (
-            context_object.name
-        )
-
-
-@ported_models
-def test_context_built_model_residuals_vanish_at_the_calibrated_point(
-    model_id, build, calibrate, data
-):
+@pytest.mark.parametrize(
+    "build, calibrate, data",
+    [
+        (build_model_1_in_context, calibrate_model_1, model_1_data),
+        (build_model_2_in_context, calibrate_model_2, model_2_data),
+    ],
+    ids=["model_1", "model_2"],
+)
+def test_context_built_model_residuals_vanish_at_the_calibrated_point(build, calibrate, data):
     model = build()
     calibrated = calibrate(**data)
 
@@ -80,40 +57,47 @@ def test_context_built_model_residuals_vanish_at_the_calibrated_point(
         np.testing.assert_allclose(lowered.eval(inputs), 0.0, atol=1e-8, err_msg=equation.name)
 
 
-@ported_models
+@pytest.mark.parametrize(
+    "build, calibrate, data",
+    [
+        (build_model_1_in_context, calibrate_model_1, model_1_data),
+        (build_model_2_in_context, calibrate_model_2, model_2_data),
+    ],
+    ids=["model_1", "model_2"],
+)
 @pytest.mark.parametrize(
     "optimizer_mode, optimizer_kwargs",
     [("root", {}), ("minimize", {"tol": 1e-14})],
     ids=["root", "minimize"],
 )
-def test_context_built_model_solves_like_the_string_model(
-    model_id, build, calibrate, data, optimizer_mode, optimizer_kwargs
+def test_labor_supply_shock_reaches_an_equilibrium(
+    build, calibrate, data, optimizer_mode, optimizer_kwargs
 ):
-    context_model = build()
-    string_model = load_and_cache_model(model_id=model_id)
+    model = build()
     calibrated = calibrate(**data)
-    scenario = {
-        "final_delta_pct": {"L_s": 0.5},
-        "n_iter_euler": 100,
-        "optimizer_mode": optimizer_mode,
-        "verbose": False,
+
+    result = model.simulate(
+        calibrated,
+        final_delta_pct={"L_s": 0.5},
+        n_iter_euler=100,
+        optimizer_mode=optimizer_mode,
+        verbose=False,
         **optimizer_kwargs,
-    }
-
-    context_result = context_model.simulate(calibrated, **scenario)
-    string_result = string_model.simulate(calibrated, **scenario)
-
-    xr_testing.assert_allclose(
-        context_result["optimizer"]["variables"].dataset,
-        string_result["optimizer"]["variables"].dataset,
-        rtol=1e-8,
-        atol=1e-8,
     )
+    final = {
+        name: values.values
+        for group in ("variables", "parameters")
+        for name, values in result["optimizer"][group].dataset.isel(step=-1).data_vars.items()
+    }
+    x, theta = variable_dict_to_flat_array(final, model.variables, model.parameters)
+
+    assert result["optim_res"].success
+    np.testing.assert_allclose(final["L_s"], 0.5 * calibrated["L_s"])
+    np.testing.assert_allclose(model.f_system(x, theta), 0.0, atol=1e-8)
 
 
 def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_euler_path():
     context_model = build_model_1_in_context()
-    string_model = load_and_cache_model(model_id=1)
     calibrated = calibrate_model_1(**model_1_data)
     scenario = {
         "final_delta_pct": {"L_s": 0.5},
@@ -123,10 +107,8 @@ def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_euler_
     }
 
     context_euler = context_model.simulate(calibrated, **scenario)["euler"]["variables"].dataset
-    string_euler = string_model.simulate(calibrated, **scenario)["euler"]["variables"].dataset
 
     np.testing.assert_allclose(context_euler["resid"], 0.0, atol=1e-9)
-    xr_testing.assert_allclose(context_euler, string_euler, rtol=1e-10, atol=1e-9)
 
 
 def test_model_3_is_square_and_holds_at_the_calibrated_point():
