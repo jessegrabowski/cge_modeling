@@ -94,6 +94,11 @@ def test_to_dict(cls):
         ("K_d", None, False, "K_{d}"),
         ("psi_VA_E", ["i"], False, "\\psi_{\\mathrm{VA}, E, i=\\text{A}}"),
         ("P_CE", None, True, "P_{\\mathrm{CE}}"),
+        ("P_bar", None, False, "\\bar{P}"),
+        ("K_d_tilde", ["i"], False, "\\tilde{K}_{d, i=\\text{A}}"),
+        ("x_star", None, False, "x^{\\star}"),
+        ("alpha_hat", None, False, "\\hat{\\alpha}"),
+        ("Px_bar", None, False, "\\bar{\\mathrm{Px}}"),
     ],
 )
 def test_sub_label(base_name, dims, extend, expected):

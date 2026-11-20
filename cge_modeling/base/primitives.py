@@ -19,6 +19,10 @@ GREEK_PATTERN = "|".join(
     [f"(((^{greek})|((?=[_^]){greek})|((?<=[_^]){greek})))" for greek in greeks + Greeks]
 )
 
+ACCENT_DECORATIONS = frozenset({"bar", "hat", "tilde", "dot", "ddot", "check", "vec"})
+SUPERSCRIPT_DECORATIONS = {"star": r"\star", "prime": r"\prime"}
+DECORATIONS = ACCENT_DECORATIONS | SUPERSCRIPT_DECORATIONS.keys()
+
 
 def _pretty_print_dim_flags(s, dims, dim_vals):
     for dim in dims:
@@ -63,6 +67,16 @@ def _split_latex_subscript(latex_name: str) -> tuple[str, list[str]]:
                 return base, _tokenize_latex_subscript("_" + subscript)
             return base, subscript.split("_")
     return latex_name, []
+
+
+def _apply_decorations(base_latex_name: str, tokens: list[str]) -> tuple[str, list[str]]:
+    """Apply the decoration tokens, such as ``"bar"`` or ``"star"``, to the base and return the remaining tokens."""
+    for token in tokens:
+        if token in ACCENT_DECORATIONS:
+            base_latex_name = rf"\{token}{{{base_latex_name}}}"
+        elif token in SUPERSCRIPT_DECORATIONS:
+            base_latex_name = f"{base_latex_name}^{{{SUPERSCRIPT_DECORATIONS[token]}}}"
+    return base_latex_name, [token for token in tokens if token not in DECORATIONS]
 
 
 def upright_multiletter_name(latex_name: str) -> str:
@@ -198,7 +212,9 @@ class ModelObject(ABC):
             return upright_multiletter_name(base_latex_name) + idx_subscript
 
         base_latex_name, name_subscript_tokens = _split_latex_subscript(base_latex_name)
-        base_latex_name = upright_multiletter_name(base_latex_name)
+        base_latex_name, name_subscript_tokens = _apply_decorations(
+            upright_multiletter_name(base_latex_name), name_subscript_tokens
+        )
         subscript_tokens = [
             upright_multiletter_name(token)
             for token in name_subscript_tokens + idx_subscript_tokens
