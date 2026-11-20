@@ -35,11 +35,9 @@ def prod_to_no_zero_prod(fgraph, node):
         return [new_op(x)]
 
 
-def rewrite_pregrad(graph):
-    """Apply simplifying or stabilizing rewrites to graph that are safe to use
-    pre-grad.
-    """
-    return rewrite_graph(graph, include=("canonicalize", "stabilize"))
+def rewrite_pregrad(graph: pt.TensorVariable) -> pt.TensorVariable:
+    """Return ``graph`` with the canonicalize and stabilize rewrites applied, which are safe before differentiating."""
+    return cast(pt.TensorVariable, rewrite_graph(graph, include=("canonicalize", "stabilize")))
 
 
 def clone_and_rename(x: pt.TensorVariable, suffix: str = "_next") -> pt.TensorVariable:
@@ -248,7 +246,7 @@ def make_jacobian(
     n_eq = system.type.shape[0]
     n_vars = int(np.sum([np.prod(var.type.shape) for var in x]))
 
-    rewrite_pregrad(system)
+    system = rewrite_pregrad(system)
     column_list = pytensor.gradient.jacobian(system, x)
 
     jac = pt.concatenate([pt.atleast_2d(x).reshape((n_eq, -1)) for x in column_list], axis=-1)
