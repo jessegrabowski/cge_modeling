@@ -391,6 +391,13 @@ def test_calibrate_flags_data_that_disagree_with_the_model():
     assert not result.success
 
 
+def test_calibrate_without_data_names_the_entries_no_equation_determines():
+    model = build_model_1_in_context()
+
+    with pytest.raises(ValueError, match="No equation determines"):
+        model.calibrate()
+
+
 def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_model(caplog):
     with CGEModel(coords={"i": ["Agriculture", "Industry"]}) as model:
         P = cm.Variable("P", dims="i")
