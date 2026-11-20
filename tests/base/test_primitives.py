@@ -82,17 +82,18 @@ def test_to_dict(cls):
         ("x^j", ["i"], False, "x^j_{i=\\text{A}}"),
         ("x^{j}", ["i"], False, "x^{j}_{i=\\text{A}}"),
         ("x_F", ["i", "j"], True, "x_{F, i=\\text{A}, j}"),
-        ("x_{Fish}", ["i", "i"], True, "x_{Fish, i=\\text{A}, i=\\text{A}}"),
+        ("x_{Fish}", ["i", "i"], True, "x_{\\mathrm{Fish}, i=\\text{A}, i=\\text{A}}"),
         ("x_K_d", ["i", "j"], 2, "x_{K, d, i=\\text{A}, j}"),
         (
             "var_with_underscore",
             ["i"],
             False,
-            "var_{with, underscore, i=\\text{A}}",
+            "\\mathrm{var}_{\\mathrm{with}, \\mathrm{underscore}, i=\\text{A}}",
         ),
+        ("Tax", None, False, "\\mathrm{Tax}"),
         ("K_d", None, False, "K_{d}"),
-        ("psi_VA_E", ["i"], False, "\\psi_{VA, E, i=\\text{A}}"),
-        ("P_CE", None, True, "P_{CE}"),
+        ("psi_VA_E", ["i"], False, "\\psi_{\\mathrm{VA}, E, i=\\text{A}}"),
+        ("P_CE", None, True, "P_{\\mathrm{CE}}"),
     ],
 )
 def test_sub_label(base_name, dims, extend, expected):

@@ -65,6 +65,13 @@ def _split_latex_subscript(latex_name: str) -> tuple[str, list[str]]:
     return latex_name, []
 
 
+def upright_multiletter_name(latex_name: str) -> str:
+    """Wrap a name or subscript of two or more plain letters in ``\\mathrm``, so it doesn't read as a product."""
+    if re.fullmatch(r"[A-Za-z]{2,}", latex_name):
+        return rf"\mathrm{{{latex_name}}}"
+    return latex_name
+
+
 @dataclass(slots=True, order=True, frozen=False, repr=False)
 class ModelObject(ABC):
     name: str
@@ -176,7 +183,9 @@ class ModelObject(ABC):
                 base_tokens, subscript_tokens = subscript_tokens, base_tokens
             base_latex_name = "_".join(base_tokens)
 
-            subscript_tokens = subscript_tokens + idx_subscript_tokens
+            subscript_tokens = [
+                upright_multiletter_name(token) for token in subscript_tokens + idx_subscript_tokens
+            ]
 
             if len(subscript_tokens) == 0:
                 idx_subscript = ""
@@ -186,10 +195,14 @@ class ModelObject(ABC):
             if "_" in base_latex_name:
                 base_latex_name = r"\text{" + base_latex_name + "}"
 
-            return base_latex_name + idx_subscript
+            return upright_multiletter_name(base_latex_name) + idx_subscript
 
         base_latex_name, name_subscript_tokens = _split_latex_subscript(base_latex_name)
-        subscript_tokens = name_subscript_tokens + idx_subscript_tokens
+        base_latex_name = upright_multiletter_name(base_latex_name)
+        subscript_tokens = [
+            upright_multiletter_name(token)
+            for token in name_subscript_tokens + idx_subscript_tokens
+        ]
         if not subscript_tokens:
             return base_latex_name
         return base_latex_name + "_{" + ", ".join(subscript_tokens) + "}"
