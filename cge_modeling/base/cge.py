@@ -840,22 +840,21 @@ class CGEModel:
     def _calibrate_context_built(self, data, initial_values, max_iter, name):
         # cge_modeling.tools.calibration imports the compile modules, which import this module.
         from cge_modeling.tools.calibration import (
-            RESIDUAL_TOLERANCE,
             calibrate_entries,
             compile_calibration_system,
             flatten_entries,
+            residual_is_converged,
         )
 
         system = compile_calibration_system(self)
-        fitted_values, residual = calibrate_entries(system, data, initial_values, max_iter)
-        initial_values_flat, _ = flatten_entries(system, data, fill=np.nan)
-        success = bool(
-            np.isfinite(residual).all() and 0.5 * np.sum(residual**2) < RESIDUAL_TOLERANCE
+        fitted_values, residual = calibrate_entries(
+            system=system, data=data, initial_values=initial_values, max_iter=max_iter
         )
+        initial_values_flat, _ = flatten_entries(system=system, values=data, fill=np.nan)
 
         return Result(
             name=name,
-            success=success,
+            success=residual_is_converged(residual),
             variables=self.unpacked_variable_names,
             parameters=self.unpacked_parameter_names,
             initial_values=initial_values_flat,

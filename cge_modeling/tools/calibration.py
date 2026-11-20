@@ -47,6 +47,11 @@ class SolveBlock:
     unknowns: np.ndarray
 
 
+def residual_is_converged(residual: np.ndarray) -> bool:
+    """Return whether ``residual`` is finite with half its squared norm below ``RESIDUAL_TOLERANCE``."""
+    return bool(np.isfinite(residual).all() and 0.5 * np.sum(residual**2) < RESIDUAL_TOLERANCE)
+
+
 def compile_calibration_system(model: "CGEModel") -> CalibrationSystem:
     """
     Compile the residual, Jacobian columns and structural sparsity pattern of a model built in a ``with`` block.
@@ -194,7 +199,7 @@ def solve_block(
     )
     entries[columns] = result.x
     residual, _ = block_residual_and_jacobian(result.x)
-    if not np.isfinite(residual).all() or 0.5 * np.sum(residual**2) >= RESIDUAL_TOLERANCE:
+    if not residual_is_converged(residual):
         equation_names = [system.equation_names[row] for row in rows]
         unknown_names = [system.entry_names[column] for column in columns]
         raise ValueError(
@@ -239,8 +244,8 @@ def calibrate_entries(
     if overlap:
         raise ValueError(f"{sorted(overlap)} are in both data and initial_values.")
 
-    starts, _ = flatten_entries(system, initial_values, fill=DEFAULT_START)
-    entries, given = flatten_entries(system, data, fill=np.nan)
+    starts, _ = flatten_entries(system=system, values=initial_values, fill=DEFAULT_START)
+    entries, given = flatten_entries(system=system, values=data, fill=np.nan)
     unknown_columns = np.flatnonzero(~given)
     entries[unknown_columns] = starts[unknown_columns]
 
@@ -253,7 +258,13 @@ def calibrate_entries(
 
     for block in blocks:
         try:
-            solve_block(system, entries, block.equations, unknown_columns[block.unknowns], max_iter)
+            solve_block(
+                system=system,
+                entries=entries,
+                rows=block.equations,
+                columns=unknown_columns[block.unknowns],
+                max_iter=max_iter,
+            )
         except ValueError as error:
             if not unmatched_equations.size:
                 raise
