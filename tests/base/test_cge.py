@@ -11,7 +11,7 @@ from scipy.differentiate import jacobian
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.utilities import flat_array_to_variable_dict, variable_dict_to_flat_array
 from tests.utilities.models import (
-    build_model_1_in_context,
+    build_model_1,
     calibrate_model_1,
     calibrate_model_2,
     load_and_cache_model,
@@ -372,7 +372,7 @@ def test_simulate(scenario_kwargs, expected_result):
 
 
 def test_simulate_compiles_an_uncompiled_model():
-    mod = build_model_1_in_context()
+    mod = build_model_1()
     initial_state = calibrate_model_1(**model_1_data)
 
     res = mod.simulate(initial_state, final_values={"L_s": 1500}, n_iter_euler=100)

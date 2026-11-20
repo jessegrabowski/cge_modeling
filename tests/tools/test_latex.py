@@ -6,14 +6,14 @@ from cge_modeling import CGEModel
 from cge_modeling import model as cm
 from cge_modeling.tools.latex import equation_to_latex
 from tests.utilities.models import (
-    build_model_1_in_context,
-    build_model_2_in_context,
-    build_model_3_in_context,
+    build_model_1,
+    build_model_2,
+    build_model_3,
 )
 
 
 def test_model_1_prints_powers_value_form_demands_and_greek_names():
-    model = build_model_1_in_context()
+    model = build_model_1()
     equations = model._xtensor_equations
 
     assert equation_to_latex(equations["Final good production"], model) == (
@@ -28,7 +28,7 @@ def test_model_1_prints_powers_value_form_demands_and_greek_names():
 
 
 def test_leontief_bundle_prints_the_sum_over_the_renamed_dim():
-    model = build_model_2_in_context()
+    model = build_model_2()
     equations = model._xtensor_equations
 
     assert equation_to_latex(equations["Production of intermediate goods bundle"], model) == (
@@ -40,7 +40,7 @@ def test_leontief_bundle_prints_the_sum_over_the_renamed_dim():
 
 
 def test_selection_by_label_prints_the_label_in_the_subscript():
-    model = build_model_3_in_context()
+    model = build_model_3()
 
     assert equation_to_latex(model._xtensor_equations["Numeraire"], model) == (
         r"P_{\text{agriculture}} = \bar{P}"

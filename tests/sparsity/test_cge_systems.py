@@ -24,15 +24,15 @@ def nonzero_point_near(calibrated, tensors, rng):
 @pytest.mark.parametrize(
     "build, calibrate, data",
     [
-        (models.build_model_1_in_context, models.calibrate_model_1, models.model_1_data),
-        (models.build_model_2_in_context, models.calibrate_model_2, models.model_2_data),
-        (models.build_model_3_in_context, models.calibrate_model_3, models.model_3_data),
+        (models.build_model_1, models.calibrate_model_1, models.model_1_data),
+        (models.build_model_2, models.calibrate_model_2, models.model_2_data),
+        (models.build_model_3, models.calibrate_model_3, models.model_3_data),
         (
-            lambda: models.build_model_4_in_context(closure="savings_driven"),
+            lambda: models.build_model_4(closure="savings_driven"),
             models.calibrate_model_4,
             models.model_4_data,
         ),
-        (models.build_model_5_in_context, models.calibrate_model_5, models.model_5_data),
+        (models.build_model_5, models.calibrate_model_5, models.model_5_data),
     ],
     ids=["model_1", "model_2", "model_3", "model_4", "model_5"],
 )

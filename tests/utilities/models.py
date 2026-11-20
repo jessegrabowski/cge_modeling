@@ -9,7 +9,7 @@ from cge_modeling.production_functions import CES, CET, CobbDouglas, Leontief
 
 
 def load_model_1(**compile_kwargs):
-    return compile_model(build_model_1_in_context(), **compile_kwargs)
+    return compile_model(build_model_1(), **compile_kwargs)
 
 
 def calibrate_model_1(L_s, K_s, P, r):
@@ -41,7 +41,7 @@ def calibrate_model_1(L_s, K_s, P, r):
     return calib_dict
 
 
-def build_model_1_in_context() -> CGEModel:
+def build_model_1() -> CGEModel:
     with CGEModel() as model:
         Y = cm.Variable("Y", description="Total output of goods")
         L_d = cm.Variable("L_d", description="Labor demanded by firms")
@@ -80,10 +80,10 @@ model_1_data = {"L_s": 7000.0, "K_s": 4000.0, "P": 1.0, "r": 1.0}
 
 
 def load_model_2(**compile_kwargs):
-    return compile_model(build_model_2_in_context(), **compile_kwargs)
+    return compile_model(build_model_2(), **compile_kwargs)
 
 
-def build_model_2_in_context() -> CGEModel:
+def build_model_2() -> CGEModel:
     sectors = ["0", "1", "2"]
 
     with CGEModel(coords={"i": sectors, "j": sectors}) as model:
@@ -315,7 +315,7 @@ def calibrate_model_3(K_d, L_d, X, X_EN, K_d_E, L_d_E, X_E, P, P_E, r, w):
     }
 
 
-def build_model_3_in_context() -> CGEModel:
+def build_model_3() -> CGEModel:
     """
     Two goods sectors and one energy sector, each a Leontief combination of a Cobb-Douglas value-added bundle and
     a Leontief intermediate bundle. Goods producers buy goods and energy; the energy producer buys goods.
@@ -577,7 +577,7 @@ def calibrate_model_4(
     }
 
 
-def build_model_4_in_context(*, closure: Literal["savings_driven", "fixed_investment"]) -> CGEModel:
+def build_model_4(*, closure: Literal["savings_driven", "fixed_investment"]) -> CGEModel:
     """
     The 1-2-3 model with government and investment of Devarajan, Go, Lewis, Robinson and Sinko (1997), Table 6.3.
 
@@ -791,7 +791,7 @@ def calibrate_model_5(
     }
 
 
-def build_model_5_in_context() -> CGEModel:
+def build_model_5() -> CGEModel:
     """
     The simple static model of Mexico of Kehoe and Kehoe (1994), equations (1) to (14) and (20).
 
