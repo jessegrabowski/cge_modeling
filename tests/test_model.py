@@ -399,6 +399,21 @@ def test_calibrate_without_data_names_the_entries_no_equation_determines():
         model.calibrate()
 
 
+def test_equation_table_shows_the_latex_of_context_built_equations(monkeypatch):
+    shown = {}
+    monkeypatch.setattr("cge_modeling.base.cge.display_latex_table", shown.update)
+    with CGEModel(coords={"i": ["a", "b"]}) as model:
+        P = cm.Variable("P", dims="i")
+        P_bar = cm.Parameter("P_bar", latex_name=r"\bar{P}")
+        cm.Equation("Price of <dim:i>", P, P_bar)
+
+    model.equation_table()
+
+    assert shown[""] == [1]
+    assert shown["Name"] == ["Price of i"]
+    assert [equation.data for equation in shown["Equation"]] == [r"P_{i} = \bar{P}"]
+
+
 def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_model(caplog):
     with CGEModel(coords={"i": ["Agriculture", "Industry"]}) as model:
         P = cm.Variable("P", dims="i")
