@@ -1,31 +1,6 @@
 from typing import Any, cast
 
 from IPython import display
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
-from rich.table import Column
-
-
-def initialize_progress_bar(stat_string: str | None = None):
-    text_column = TextColumn("{task.description}", table_column=Column(ratio=1))
-    bar_column = BarColumn(bar_width=None, table_column=Column(ratio=2))
-    time_column = TimeElapsedColumn()
-    m_of_n = MofNCompleteColumn()
-    spinner = SpinnerColumn()
-
-    columns = [text_column, spinner, bar_column, time_column, m_of_n]
-
-    if stat_string is not None:
-        stat_column = TextColumn(stat_string, table_column=Column(ratio=1))
-        columns = [*columns, stat_column]
-
-    return Progress(*columns, expand=False)
 
 
 def print_latex(eqs):
