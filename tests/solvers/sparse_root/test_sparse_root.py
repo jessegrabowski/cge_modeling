@@ -1,0 +1,438 @@
+from dataclasses import astuple
+
+import numpy as np
+import pytest
+import scipy.sparse as sp
+
+from better_optimize import OptimizationInterrupted
+
+from cge_modeling.solvers.sparse_root import (
+    GaussNewtonTrustRegion,
+    LevenbergMarquardt,
+    SparseDogleg,
+    chord,
+    inexact_newton_krylov,
+    newton_armijo,
+    newton_nonmonotone,
+    sparse_root,
+)
+from cge_modeling.solvers.sparse_root.direction import NewtonDirection
+from cge_modeling.solvers.sparse_root.globalization import ArmijoBacktracking
+
+
+def scaled_quadratic(x, scale):
+    return scale * (x**2 - np.array([1.0, 4.0])), sp.diags(2.0 * scale * x, format="csc")
+
+
+def raises_on_third_step(exception):
+    calls = {"n": 0}
+
+    class RaisesOnThirdStep(NewtonDirection):
+        def compute(self, x, res, jac):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise exception
+            return super().compute(x, res, jac)
+
+    return RaisesOnThirdStep()
+
+
+def uphill_everywhere(x):
+    """Residuals that are small only at the starting point [5, 5], so every trial step is rejected."""
+    res = x - 1.0 if np.all(x == 5.0) else np.array([1e3, 1e3])
+    return res, sp.eye(2, format="csc")
+
+
+class TestSparseRootInputs:
+    @pytest.mark.parametrize(
+        ("bad_fun", "error", "match"),
+        [
+            (lambda x: x, ValueError, "must return a tuple"),
+            (
+                lambda x: (list(x), sp.eye(2, format="csc")),
+                TypeError,
+                "residuals as a numpy ndarray",
+            ),
+            (lambda x: (x, np.eye(2)), TypeError, "Jacobian as a scipy sparse matrix"),
+        ],
+        ids=["not_a_tuple", "list_residuals", "dense_jacobian"],
+    )
+    def test_rejects_malformed_fun(self, bad_fun, error, match):
+        with pytest.raises(error, match=match):
+            sparse_root(bad_fun, np.zeros(2), progressbar=False)
+
+    def test_args_are_forwarded_to_fun(self):
+        result = sparse_root(scaled_quadratic, np.array([2.0, 3.0]), args=(3.0,), progressbar=False)
+
+        assert result.success
+        np.testing.assert_allclose(result.x, [1.0, 2.0], rtol=1e-8)
+        np.testing.assert_allclose(result.fun, 0.0, atol=1e-8)
+
+    def test_list_x0_reaches_fun_as_float_array(self):
+        seen = []
+
+        def recording_quadratic(x):
+            seen.append(x)
+            return scaled_quadratic(x, 1.0)
+
+        result = sparse_root(recording_quadratic, [2, 3], progressbar=False)
+
+        assert result.success
+        assert all(isinstance(x, np.ndarray) and x.dtype == np.float64 for x in seen)
+
+    def test_integer_x0_is_solved_in_float(self):
+        result = sparse_root(scaled_quadratic, np.array([2, 3]), args=(1.0,), progressbar=False)
+
+        assert result.success
+        assert result.x.dtype == np.float64
+        np.testing.assert_allclose(result.x, [1.0, 2.0], rtol=1e-8)
+
+    def test_a_step_below_tolerance_is_a_stall_not_convergence(self):
+        result = sparse_root(
+            scaled_quadratic,
+            np.array([2.0, 3.0]),
+            args=(1.0,),
+            f_tol=1e-300,
+            x_tol=1e-6,
+            progressbar=False,
+        )
+
+        assert not result.success
+        assert "x_tol" in result.message
+        assert np.max(np.abs(result.fun)) > 1e-300
+
+    def test_a_system_with_no_root_reports_failure(self):
+        def no_real_root(x):
+            return np.array([x[0] ** 2 + 1.0]), sp.csc_matrix([[2.0 * x[0]]])
+
+        result = sparse_root(no_real_root, np.array([0.0]), progressbar=False)
+
+        assert not result.success
+        assert "gradient vanished at a non-root" in result.message
+        np.testing.assert_array_equal(result.fun, [1.0])
+
+
+class TestSparseRootFailureMessages:
+    def test_line_search_failure_is_reported(self):
+        solver = newton_armijo(globalization=ArmijoBacktracking(max_iter=1, c1=0.99))
+        result = sparse_root(
+            scaled_quadratic,
+            np.array([100.0, 100.0]),
+            args=(1.0,),
+            solver=solver,
+            progressbar=False,
+        )
+
+        assert not result.success
+        assert result.message.startswith("Line search failed after 1 reductions")
+        assert result.nit == 0
+
+    @pytest.mark.parametrize(
+        ("solver", "suffix"),
+        [
+            (SparseDogleg(max_reject=3), "dogleg rejected 3 consecutive steps"),
+            (GaussNewtonTrustRegion(max_reject=3), "trust region rejected 3 consecutive steps"),
+            (LevenbergMarquardt(max_reject=3), "damping reached 1.0e+00"),
+            (LevenbergMarquardt(lam0=0.5, max_lam=1.0), "damping reached 1.0e+00"),
+        ],
+        ids=[
+            "dogleg",
+            "gauss_newton",
+            "levenberg_marquardt_max_reject",
+            "levenberg_marquardt_max_lam",
+        ],
+    )
+    def test_trust_region_rejection_is_reported(self, solver, suffix):
+        result = sparse_root(
+            uphill_everywhere, np.array([5.0, 5.0]), solver=solver, progressbar=False
+        )
+
+        assert not result.success
+        assert "fatal" in result.message
+        assert result.message.endswith(suffix)
+        np.testing.assert_array_equal(result.x, [5.0, 5.0])
+
+    def test_a_failed_solve_reports_the_last_accepted_iterate(self):
+        solver = newton_armijo(direction=raises_on_third_step(ZeroDivisionError))
+        result = sparse_root(
+            scaled_quadratic,
+            np.array([100.0, 100.0]),
+            args=(1.0,),
+            solver=solver,
+            progressbar=False,
+        )
+
+        assert not result.success
+        assert "ZeroDivisionError" in result.message
+        assert result.nit == 2
+        assert result.nsolve == 2
+        assert sp.issparse(result.jac)
+        np.testing.assert_array_equal(result.fun, scaled_quadratic(result.x, 1.0)[0])
+
+    def test_an_interrupted_solve_raises_with_the_last_accepted_iterate(self):
+        solver = newton_armijo(direction=raises_on_third_step(KeyboardInterrupt))
+
+        with pytest.raises(OptimizationInterrupted) as interrupted:
+            sparse_root(
+                scaled_quadratic,
+                np.array([100.0, 100.0]),
+                args=(1.0,),
+                solver=solver,
+                progressbar=False,
+            )
+
+        result = interrupted.value.result
+        assert not result.success
+        assert "KeyboardInterrupt" in result.message
+        assert sp.issparse(result.jac)
+        np.testing.assert_array_equal(result.fun, scaled_quadratic(result.x, 1.0)[0])
+
+    def test_a_failure_mid_line_search_reports_the_accepted_iterate_not_the_trial(self):
+        evaluated = []
+
+        def fails_on_the_second_trial(x):
+            evaluated.append(x.copy())
+            # Calls 1 and 2 evaluate x0, call 3 is a full Newton step that c1=0.99 rejects, call 4 the next trial.
+            if len(evaluated) == 4:
+                raise ZeroDivisionError
+            return scaled_quadratic(x, 1.0)
+
+        x0 = np.array([100.0, 100.0])
+        solver = newton_armijo(globalization=ArmijoBacktracking(c1=0.99))
+        result = sparse_root(fails_on_the_second_trial, x0, solver=solver, progressbar=False)
+
+        assert not result.success
+        np.testing.assert_array_equal(result.x, x0)
+        assert not np.array_equal(result.x, evaluated[2])
+        np.testing.assert_array_equal(result.fun, scaled_quadratic(x0, 1.0)[0])
+
+    def test_a_failure_before_the_first_iterate_still_reports_every_field(self):
+        calls = {"n": 0}
+
+        def fails_during_init(x):
+            calls["n"] += 1
+            # Call 1 is input validation and call 2 is the solver's first evaluation.
+            if calls["n"] == 2:
+                raise ZeroDivisionError
+            return scaled_quadratic(x, 1.0)
+
+        result = sparse_root(fails_during_init, np.array([2.0, 3.0]), progressbar=False)
+
+        assert not result.success
+        assert result.fun is None
+        assert result.jac is None
+        assert (result.nit, result.nfev, result.njev, result.nsolve, result.nreject) == (
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+
+
+class TestTrustRegionAccounting:
+    @staticmethod
+    def _counting(fun):
+        calls = {"n": 0}
+
+        def counting_fun(x):
+            calls["n"] += 1
+            return fun(x)
+
+        return counting_fun, calls
+
+    # Steihaug-CG and the Levenberg-Marquardt damped matrix both change with the trust region parameter, so each
+    # rejected trial genuinely needs its own solve. The dogleg's Newton step does not, which is why it is tested
+    # separately below rather than held to the same identity.
+    @pytest.mark.parametrize(
+        "solver",
+        [GaussNewtonTrustRegion(max_reject=3), LevenbergMarquardt(lam0=0.5, max_lam=1.0)],
+        ids=["gauss_newton", "levenberg_marquardt"],
+    )
+    def test_a_per_trial_solver_solves_once_per_trial(self, solver):
+        counting_fun, calls = self._counting(uphill_everywhere)
+        state = solver.init(counting_fun, np.array([5.0, 5.0]), ())
+        state, info = solver.step(counting_fun, state, ())
+
+        assert not info.accepted
+        assert calls["n"] > 1
+        assert state.stats.nfev == calls["n"]
+        assert state.stats.njev == calls["n"]
+        assert state.stats.nreject == calls["n"] - 1
+        assert state.stats.nsolve == calls["n"] - 1
+
+    def test_the_dogleg_solves_once_for_a_whole_rejected_step(self):
+        solver = SparseDogleg(max_reject=3)
+        counting_fun, calls = self._counting(uphill_everywhere)
+        state = solver.init(counting_fun, np.array([5.0, 5.0]), ())
+        state, info = solver.step(counting_fun, state, ())
+
+        assert not info.accepted
+        assert state.stats.nreject == calls["n"] - 1
+        assert state.stats.nsolve == 1
+
+    @pytest.mark.parametrize(
+        "solver",
+        [GaussNewtonTrustRegion(delta0=0.05), LevenbergMarquardt(lam0=1e-6)],
+        ids=["gauss_newton", "levenberg_marquardt"],
+    )
+    def test_a_per_trial_solver_pays_for_every_rejection(self, solver, rosenbrock_root):
+        fun, x0, _ = rosenbrock_root
+        state = solver.init(fun, x0, ())
+        for _ in range(200):
+            state, info = solver.step(fun, state, ())
+            if not info.accepted or np.max(np.abs(state.res)) < 1e-8:
+                break
+
+        assert state.stats.nreject > 0
+        assert state.stats.nsolve == state.stats.nit + state.stats.nreject
+
+    def test_the_result_carries_the_rejection_counts(self, rosenbrock_root):
+        fun, x0, _ = rosenbrock_root
+        solver = GaussNewtonTrustRegion(delta0=0.05)
+
+        result = sparse_root(fun, x0, solver=solver, progressbar=False, maxiter=500)
+
+        assert result.nreject > 0
+        assert result.nsolve == result.nit + result.nreject
+
+    def test_the_dogleg_pays_for_rejections_only_once_per_step(self, rosenbrock_root):
+        fun, x0, _ = rosenbrock_root
+        solver = SparseDogleg(delta0=0.05)
+        state = solver.init(fun, x0, ())
+        for _ in range(200):
+            state, info = solver.step(fun, state, ())
+            if not info.accepted or np.max(np.abs(state.res)) < 1e-8:
+                break
+
+        assert state.stats.nreject > 0
+        assert state.stats.nsolve == state.stats.nit
+
+
+class TestTrustRegionReuse:
+    @pytest.mark.parametrize(
+        "make_solver",
+        [
+            lambda: SparseDogleg(delta0=0.05),
+            lambda: GaussNewtonTrustRegion(delta0=0.05),
+            lambda: LevenbergMarquardt(lam0=1e-6),
+        ],
+        ids=["dogleg", "gauss_newton", "levenberg_marquardt"],
+    )
+    def test_reused_solver_repeats_its_first_solve(self, make_solver, rosenbrock_root):
+        fun, x0, _ = rosenbrock_root
+        solver = make_solver()
+
+        first = sparse_root(fun, x0, solver=solver, progressbar=False)
+        second = sparse_root(fun, x0, solver=solver, progressbar=False)
+
+        assert (second.nit, second.nfev) == (first.nit, first.nfev)
+        np.testing.assert_array_equal(second.x, first.x)
+
+
+class TestSolverStateIsAValue:
+    def test_an_accepted_step_does_not_move_the_earlier_states_counters(self, rosenbrock_root):
+        fun, x0, _ = rosenbrock_root
+        solver = newton_armijo()
+        first = solver.init(fun, x0, ())
+        counts_before = astuple(first.stats)
+
+        second, info = solver.step(fun, first, ())
+
+        assert info.accepted
+        assert astuple(first.stats) == counts_before
+        assert second.stats != first.stats
+
+    @pytest.mark.parametrize(
+        "solver",
+        [
+            SparseDogleg(max_reject=3),
+            GaussNewtonTrustRegion(max_reject=3),
+            LevenbergMarquardt(lam0=0.5, max_lam=1.0),
+        ],
+        ids=["dogleg", "gauss_newton", "levenberg_marquardt"],
+    )
+    def test_a_rejected_step_does_not_move_the_earlier_states_counters(self, solver):
+        x0 = np.array([5.0, 5.0])
+        first = solver.init(uphill_everywhere, x0, ())
+        counts_before = astuple(first.stats)
+
+        second, info = solver.step(uphill_everywhere, first, ())
+
+        assert not info.accepted
+        assert astuple(first.stats) == counts_before
+        assert second.stats.nreject > 0
+
+
+class TestStackedSystem:
+    def test_the_true_root_is_exact(self, stacked_system):
+        residuals, _ = stacked_system.fun(stacked_system.x_true)
+
+        np.testing.assert_array_equal(residuals, np.zeros_like(residuals))
+
+    def test_the_jacobian_is_block_tridiagonal(self, stacked_system):
+        _, jacobian = stacked_system.fun(stacked_system.x0)
+        rows, columns = jacobian.nonzero()
+
+        period_distance = np.abs(rows // stacked_system.n_vars - columns // stacked_system.n_vars)
+
+        assert period_distance.max() == 1
+
+    # The stacked Jacobian drops the y_{t-1} block of the first period and the y_{t+1} block of the last, and a variable
+    # at the end of a period couples back to the start of it, so the corners are where a column is most likely
+    # to be wrong. A random sample of a few columns out of 4800 misses all of them.
+    @pytest.mark.parametrize(
+        ("period", "variable"),
+        [(0, 0), (0, -1), (-1, 0), (-1, -1), (1, 5)],
+        ids=[
+            "first_period_first_var",
+            "first_period_wrap",
+            "last_period_first_var",
+            "last_period_wrap",
+            "interior",
+        ],
+    )
+    def test_the_jacobian_agrees_with_finite_differences(self, period, variable, stacked_system):
+        n_vars = stacked_system.n_vars
+        column = (period % stacked_system.horizon) * n_vars + (variable % n_vars)
+        residuals, jacobian = stacked_system.fun(stacked_system.x0)
+        step = 1e-7
+
+        nudged = stacked_system.x0.copy()
+        nudged[column] += step
+        difference = (stacked_system.fun(nudged)[0] - residuals) / step
+
+        np.testing.assert_allclose(difference, jacobian[:, column].toarray().ravel(), atol=1e-6)
+
+    @pytest.mark.parametrize(
+        "make_solver",
+        [
+            newton_armijo,
+            chord,
+            inexact_newton_krylov,
+            newton_nonmonotone,
+            SparseDogleg,
+            GaussNewtonTrustRegion,
+            LevenbergMarquardt,
+        ],
+        ids=[
+            "newton_armijo",
+            "chord",
+            "inexact_newton_krylov",
+            "newton_nonmonotone",
+            "dogleg",
+            "gauss_newton",
+            "levenberg_marquardt",
+        ],
+    )
+    def test_every_solver_converges_at_horizon_scale(self, make_solver, stacked_system):
+        result = sparse_root(
+            stacked_system.fun,
+            stacked_system.x0,
+            solver=make_solver(),
+            progressbar=False,
+            maxiter=100,
+        )
+
+        assert result.success
+        np.testing.assert_allclose(result.x, stacked_system.x_true, atol=1e-6)
