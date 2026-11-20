@@ -39,7 +39,6 @@ dependencies = [
     "better-optimize>=0.5.1,<1",
     "cvxpy<2",
     "ipython<10",
-    "joblib<2",
     "latextable<2",
     "matplotlib<4",
     "numba<1",
@@ -48,7 +47,6 @@ dependencies = [
     "pytensor>=3.3.8,<4",
     "rich<16",
     "scipy<2",
-    "sympy>=1.14.0,<2",
     "texttable<2",
     "xarray<2027",
   ]
@@ -111,12 +109,10 @@ env = ["MPLBACKEND=Agg"]
 module = [
     "better_optimize.*",
     "cloudpickle",
-    "joblib",
     "latextable",
     "pandas",
     "scipy.*",
     "squarify",
-    "sympy.*",
     "texttable",
 ]
 ignore_missing_imports = true
