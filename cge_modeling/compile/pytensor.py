@@ -22,6 +22,7 @@ from cge_modeling.compile.pytensor_tools import (
     flat_tensor_to_ragged_list,
     flatten_equations,
     make_jacobian,
+    pushforward,
     rewrite_pregrad,
 )
 from cge_modeling.tools.utils import at_least_list
@@ -193,7 +194,7 @@ def pytensor_euler_step(
     step_size = [(x - y) / n_steps for x, y in zip(theta_final, theta0)]
 
     try:
-        Bv = pytensor.gradient.pushforward(system, parameters, step_size)
+        [Bv] = pushforward([system], parameters, step_size)
     except NotImplementedError:
         _log.warning(
             "Tried to compute jvp of model with respect to parameters but failed; an Op in your model does not "

@@ -117,3 +117,25 @@ def test_calibrate_points_at_the_over_determining_equations_when_a_block_fails()
 
     with pytest.raises(ValueError, match=r"over-determine the model: \['Consistency'\]"):
         calibrate_entries(system, data={"a": -1.0, "b": 2.0}, initial_values={}, max_iter=100)
+
+
+def test_calibration_jacobian_columns_match_the_dense_jacobian_when_terms_share_a_cotangent():
+    with CGEModel() as model:
+        x, y, z = cm.Variable("x"), cm.Variable("y"), cm.Variable("z")
+        total = cm.Parameter("total")
+        cm.Equation("sum", total, x + y)
+        cm.Equation("difference", x - y, z)
+        cm.Equation("product", z, x * y)
+    system = compile_calibration_system(model)
+    values = np.array([2.0, 3.0, 0.5, 4.0])
+
+    _, columns = system.residual_and_jacobian_columns(values, np.arange(4))
+
+    expected = np.array(
+        [
+            [-1.0, -1.0, 0.0, 1.0],
+            [1.0, -1.0, -1.0, 0.0],
+            [-3.0, -2.0, 1.0, 0.0],
+        ]
+    )
+    np.testing.assert_allclose(columns, expected)

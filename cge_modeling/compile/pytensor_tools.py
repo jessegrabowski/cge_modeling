@@ -1,15 +1,18 @@
 import logging
 
 from collections.abc import Sequence
+from typing import cast
 
 import numpy as np
 import pytensor
 
 from pytensor import tensor as pt
 from pytensor.compile import Function, Mode
+from pytensor.gradient import pullback
 from pytensor.graph import node_rewriter, rewrite_graph
 from pytensor.graph.basic import Variable as GraphVariable
 from pytensor.graph.replace import graph_replace
+from pytensor.graph.rewriting.basic import in2out
 from pytensor.tensor.math import Prod
 from pytensor.tensor.rewriting.basic import register_stabilize
 
@@ -166,6 +169,55 @@ def compile_with_packed_inputs(
         mode=mode,
         on_unused_input=on_unused_input,
     )
+
+
+def pushforward(
+    f: Sequence[pt.TensorVariable],
+    wrt: Sequence[pt.TensorVariable],
+    tangents: Sequence[pt.TensorVariable],
+) -> list[pt.TensorVariable]:
+    """
+    Compute the Jacobian of ``f`` times ``tangents`` as the gradient of a pullback with respect to its cotangents.
+
+    The pullback of ``f`` is linear in the output cotangents, so differentiating its inner product with ``tangents``
+    with respect to those cotangents gives the Jacobian-vector product. Writing the inner product as one scalar sums
+    the terms of inputs that share a cotangent. Product reductions in ``f`` are first marked free of zeros, as
+    :func:`prod_to_no_zero_prod` does at compile time, because the zero-handling pullback of ``Prod`` has no gradient.
+
+    Parameters
+    ----------
+    f : sequence of TensorVariable
+        Outputs to differentiate.
+    wrt : sequence of TensorVariable
+        Inputs to differentiate with respect to.
+    tangents : sequence of TensorVariable
+        One tangent per entry of ``wrt``, with its shape.
+
+    Returns
+    -------
+    jvp : list of TensorVariable
+        The Jacobian-vector product of each output.
+    """
+    outputs = cast(
+        list[pt.TensorVariable],
+        rewrite_graph(list(f), include=(), custom_rewrite=in2out(prod_to_no_zero_prod), clone=True),
+    )
+    cotangents = [output.zeros_like(dtype=pytensor.config.floatX) for output in outputs]
+    input_cotangents = cast(
+        list[pt.TensorVariable],
+        pullback(outputs, list(wrt), cotangents, return_disconnected="zero"),
+    )
+
+    inner_product = pt.add(
+        *(
+            pt.sum(input_cotangent * tangent)
+            for input_cotangent, tangent in zip(input_cotangents, tangents, strict=True)
+        )
+    )
+    jvp = pullback(
+        inner_product, cotangents, pt.ones_like(inner_product), disconnected_inputs="ignore"
+    )
+    return cast(list[pt.TensorVariable], list(cast(Sequence[pt.TensorVariable], jvp)))
 
 
 def make_jacobian(

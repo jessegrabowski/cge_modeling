@@ -7,13 +7,12 @@ import numpy as np
 import pytensor.tensor as pt
 import scipy.sparse as sp
 
-from pytensor.gradient import pushforward
 from pytensor.graph.replace import vectorize_graph
 from scipy.optimize import root
 from scipy.sparse.csgraph import connected_components, maximum_bipartite_matching
 
 from cge_modeling.compile.pytensor import xtensor_cge_primitives_to_pytensor
-from cge_modeling.compile.pytensor_tools import compile_with_packed_inputs
+from cge_modeling.compile.pytensor_tools import compile_with_packed_inputs, pushforward
 from cge_modeling.sparsity import jacobian_sparsity_vjp
 
 if TYPE_CHECKING:
@@ -66,9 +65,7 @@ def compile_calibration_system(model: "CGEModel") -> CalibrationSystem:
 
     tangent = pt.vector("tangent", shape=(n_entries,))
     tangent_columns = pt.matrix("tangent_columns", shape=(None, n_entries))
-    jvp = cast(
-        pt.TensorVariable, pushforward(system, entries, pt.unpack(tangent, packed_shapes=shapes))
-    )
+    [jvp] = pushforward([system], entries, pt.unpack(tangent, packed_shapes=shapes))
     jvp_columns = cast(pt.TensorVariable, vectorize_graph(jvp, replace={tangent: tangent_columns}))
     residual_and_jvp_columns = compile_with_packed_inputs(
         inputs=[("z", entries), tangent_columns], outputs=[system, jvp_columns]
