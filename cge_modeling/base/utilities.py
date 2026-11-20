@@ -5,7 +5,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from itertools import product
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -13,6 +13,7 @@ from better_optimize.constants import MINIMIZE_MODE_KWARGS
 
 from cge_modeling.base.primitives import (
     Equation,
+    ModelObject,
     Parameter,
     Variable,
     _pretty_print_dim_flags,
@@ -489,3 +490,105 @@ def create_final_param_dict(
         scenario_params[k] *= v
 
     return scenario_params
+
+
+def make_indexed_name(obj: ModelObject, delimiter="_") -> str:
+    """
+    Construct an object name with indexing information from a ModelObject.
+
+    Parameters
+    ----------
+    obj: ModelObject
+        One of Variable, Parameter, or Equation.
+
+    delimiter: str, optional
+        The delimiter to use between the object name and the index values. Default is '_'.
+
+    Returns
+    -------
+    name: str
+        The name of the object with the index values appended, separated by the delimiter.
+    """
+
+    return "_".join([obj.name, *list(map(str, obj.dim_vals.values()))])
+
+
+def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim="raise") -> list[str]:
+    """
+    Validate that the provided dims are associated with the provided object. If not, either raise an error or ignore
+    the unused dims, based on the value of on_unused_dim.
+
+    Parameters
+    ----------
+    obj: ModelObject
+        A model object with a dims attribute, one of Variable, Parameter, or Equation
+    dims: list of str
+        A list of dimension names to be validated
+    on_unused_dim: str, optional
+        Either 'raise' or 'ignore'. If 'raise', raise an error if any of the dims are not associated with the object.
+        If 'ignore', ignore the unused dims.
+
+    Returns
+    -------
+    dims: list of str
+        A list of valid dims for the object
+    """
+
+    unknown_dims = set(dims) - set(obj.dims)
+    if len(unknown_dims) > 0:
+        unk_str = ", ".join(list(unknown_dims))
+        if on_unused_dim == "raise":
+            raise ValueError(
+                f"Dimension expansion was requested for {obj.name} on the following dims "
+                f"which are not associted with {obj.name}: {unk_str}"
+            )
+        elif on_unused_dim == "ignore":
+            return list(set(dims) - unknown_dims)
+
+    return dims
+
+
+def expand_obj_by_indices(
+    obj: ModelObject,
+    coords: dict[str, list[str]],
+    dims: list[str] | None = None,
+    on_unused_dim: Literal["raise", "ignore"] = "raise",
+) -> list[ModelObject]:
+    """
+    Expand a model object by creating a new object for each label associated to the requested dimensions.
+
+    Parameters
+    ----------
+    obj: ModelObject
+        A model object with a dims attribute, one of Variable, Parameter, or Equation
+    coords: dict of str-list pairs
+        A dictionary mapping dimension names to lists of labels
+    dims: list of str, optional
+        A list of dimension names to be expanded. If None, all dimensions will be expanded.
+    on_unused_dim: str, optional
+        Either 'raise' or 'ignore'. If 'raise', raise an error if any of the dims are not associated with the object.
+        If 'ignore', ignore the unused dims.
+
+    Returns
+    -------
+    expanded_objs: list of ModelObject
+        A list of model objects with the same name, description, and assumptions as the original object, but with the
+        dimension values updated to match the labels in coords.
+    """
+    out = []
+
+    if dims is None:
+        if not hasattr(obj, "dims"):
+            return [obj]
+        dims = obj.dims
+    dims = _validate_dims(obj, dims, on_unused_dim)
+
+    # Take the cartesian product of dimensions to be expanded to form all possible combinations of labels
+    labels = [coords[dim] for dim in dims]
+
+    for label_combination in product(*labels):
+        new_obj = obj.copy()
+        for dim, label in zip(dims, label_combination):
+            new_obj.update_dim_value(dim, label)
+        out.append(new_obj)
+    return out

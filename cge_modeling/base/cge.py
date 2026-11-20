@@ -43,10 +43,12 @@ from cge_modeling.base.utilities import (
     _validate_input,
     create_final_param_dict,
     ensure_input_is_sequence,
+    expand_obj_by_indices,
     flat_array_to_variable_dict,
     get_method_defaults,
     infer_object_shape_from_coords,
     make_flat_array_return_mask,
+    make_indexed_name,
     unpack_equation_name,
     unpack_equation_strings,
     variable_dict_to_flat_array,
@@ -59,10 +61,8 @@ from cge_modeling.tools.output_tools import (
     optimizer_result_to_idata,
 )
 from cge_modeling.tools.sympy_tools import (
-    expand_obj_by_indices,
     find_equation_dims,
     indexed_variables_to_sub_dict,
-    make_indexed_name,
     recursive_solve_symbolic,
     sub_all_eqs,
     substitute_reduce_ops,
