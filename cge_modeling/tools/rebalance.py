@@ -107,7 +107,7 @@ def _crossentropy_method_setup(
 ]:
     compile_fn = partial(pytensor.function, mode=mode)
     f_grad, f_1_grad, f_2_grad, f_hess, f_jvp_ce = None, None, None, None, None
-    grad_ce = None
+    grad_ce: pt.TensorVariable | None = None
 
     X = pt.zeros(df.shape)
     x = pt.dvector("x")
@@ -128,30 +128,30 @@ def _crossentropy_method_setup(
     f_2 = compile_fn([x], constraint_2)
 
     if use_constraint_grad:
-        rewrite_pregrad(constraint_1)
-        rewrite_pregrad(constraint_2)
+        constraint_1 = rewrite_pregrad(constraint_1)
+        constraint_2 = rewrite_pregrad(constraint_2)
 
         f_1_grad = compile_fn([x], pt.grad(constraint_1, x))
         f_2_grad = compile_fn([x], pt.grad(constraint_2, x))
 
     if use_grad:
-        rewrite_pregrad(cross_entropy)
-        grad_ce = pt.grad(cross_entropy, x)
+        cross_entropy = rewrite_pregrad(cross_entropy)
+        grad_ce = cast(pt.TensorVariable, pt.grad(cross_entropy, x))
         f_grad = compile_fn([x], grad_ce)
 
     if use_hess:
-        if not use_grad:
+        if grad_ce is None:
             raise ValueError("Must use gradient to compute Hessian")
-        rewrite_pregrad(grad_ce)
+        grad_ce = rewrite_pregrad(grad_ce)
         hess_ce = pytensor.gradient.jacobian(grad_ce, x)
         f_hess = compile_fn([x], hess_ce)
 
     if use_hessp:
-        if not use_grad:
+        if grad_ce is None:
             raise ValueError("Must use gradient to compute Hessian")
-        rewrite_pregrad(grad_ce)
+        grad_ce = rewrite_pregrad(grad_ce)
         p = pt.dvector("p")
-        [jvp_ce] = pushforward([cast(pt.TensorVariable, grad_ce)], [x], [p])
+        [jvp_ce] = pushforward([grad_ce], [x], [p])
         f_jvp_ce = compile_fn([x, p], jvp_ce)
 
     return f_X, f_ce, f_1, f_2, f_grad, f_1_grad, f_2_grad, f_hess, f_jvp_ce

@@ -35,11 +35,9 @@ def prod_to_no_zero_prod(fgraph, node):
         return [new_op(x)]
 
 
-def rewrite_pregrad(graph):
-    """Apply simplifying or stabilizing rewrites to graph that are safe to use
-    pre-grad.
-    """
-    return rewrite_graph(graph, include=("canonicalize", "stabilize"))
+def rewrite_pregrad(graph: pt.TensorVariable) -> pt.TensorVariable:
+    """Return ``graph`` with the canonicalize and stabilize rewrites applied, which are safe before differentiating."""
+    return cast(pt.TensorVariable, rewrite_graph(graph, include=("canonicalize", "stabilize")))
 
 
 def clone_and_rename(x: pt.TensorVariable, suffix: str = "_next") -> pt.TensorVariable:
@@ -88,16 +86,10 @@ def flatten_equations(eqs: Sequence[pt.TensorLike]) -> pt.TensorVariable:
     these multidimensional expressions into a single vector to compute the Jacobian of the system. This function
     performs that flattening operation.
     """
-    expr_len = 0
-    for eq in eqs:
-        if isinstance(eq, pt.TensorVariable):
-            expr_len += int(np.prod(eq.type.shape))
-        else:
-            expr_len += int(np.prod(np.atleast_1d(eq).size))
-
-    # expr_len = int(np.sum([np.prod(eq.type.shape) for eq in eqs]))
+    tensors = [pt.atleast_1d(pt.as_tensor_variable(eq)) for eq in eqs]
+    expr_len = sum(int(np.prod(tensor.type.shape)) for tensor in tensors)
     flat_expr = pt.concatenate(
-        [pt.atleast_1d(pt.cast(eq, pytensor.config.floatX)).ravel() for eq in eqs],
+        [pt.cast(tensor, pytensor.config.floatX).ravel() for tensor in tensors],
         axis=-1,
     )
     flat_expr = pt.specify_shape(flat_expr, shape=(expr_len,))
@@ -221,8 +213,8 @@ def pushforward(
 
 
 def make_jacobian(
-    system: pt.TensorLike,
-    x: list[pt.TensorLike],
+    system: pt.TensorVariable,
+    x: Sequence[pt.TensorVariable],
 ) -> pt.TensorVariable:
     """
     Make a Jacobian matrix from a system of equations and a list of variables.
@@ -248,10 +240,12 @@ def make_jacobian(
     n_eq = system.type.shape[0]
     n_vars = int(np.sum([np.prod(var.type.shape) for var in x]))
 
-    rewrite_pregrad(system)
-    column_list = pytensor.gradient.jacobian(system, x)
+    system = rewrite_pregrad(system)
+    column_list = cast(Sequence[pt.TensorVariable], pytensor.gradient.jacobian(system, list(x)))
 
-    jac = pt.concatenate([pt.atleast_2d(x).reshape((n_eq, -1)) for x in column_list], axis=-1)
+    jac = pt.concatenate(
+        [pt.atleast_2d(column).reshape((n_eq, -1)) for column in column_list], axis=-1
+    )
     jac = pt.specify_shape(jac, shape=(n_eq, n_vars))
 
     return jac

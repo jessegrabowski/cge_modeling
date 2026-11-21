@@ -10,6 +10,7 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import PercentFormatter
 
 from cge_modeling import CGEModel
+from cge_modeling.base.primitives import Parameter, Variable
 
 
 def prepare_gridspec_figure(
@@ -257,11 +258,13 @@ def plot_areas(
     elif isinstance(cmap, str):
         cmap = plt.colormaps[cmap]
 
-    dims = [mod.get(var).dims for var in var_names]
-    if not all([dim == dims[0] for dim in dims]):
+    variable_dims = [
+        cast(tuple[str, ...], cast(Variable | Parameter, mod.get(var)).dims) for var in var_names
+    ]
+    if not all([dim == variable_dims[0] for dim in variable_dims]):
         raise ValueError("Not all variables have the same dimensions, cannot plot together")
 
-    dims = list(dims[0])
+    dims = list(variable_dims[0])
 
     labels = [label for dim in dims for label in mod.coords[dim]]
     pretty_labels = [rename_dict.get(label, label) for label in labels]

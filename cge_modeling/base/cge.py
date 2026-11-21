@@ -56,6 +56,22 @@ from cge_modeling.tools.output_tools import (
 _log = logging.getLogger(__name__)
 
 
+def _judge_equilibrium(
+    res: OptimizeResult, squared_error: float, equilibrium_tol: float
+) -> OptimizeResult:
+    """Set ``res.success`` from the sum of squared residuals, noting in ``res.message`` when this overrules the solver."""
+    # A solver can stop on a flat objective well short of an equilibrium, or fail to make progress at one, so
+    # success is judged on the residuals themselves.
+    is_equilibrium = squared_error < equilibrium_tol
+    if bool(res.success) != is_equilibrium:
+        res.message = (
+            f"{res.message} Sum of squared residuals is {squared_error:.3e}, "
+            f"{'below' if is_equilibrium else 'above'} equilibrium_tol={equilibrium_tol:g}."
+        )
+    res.success = is_equilibrium
+    return res
+
+
 class CGEModel:
     def __init__(self, coords: dict[str, list[str]] | None = None):
         """
@@ -361,9 +377,11 @@ class CGEModel:
             var_names = self.variable_names
         return [self.get_variable(name) for name in ensure_input_is_sequence(var_names)]
 
-    def get(self, names: str | list[str] | None = None) -> list[Variable | Parameter]:
+    def get(
+        self, names: str | list[str] | None = None
+    ) -> Variable | Parameter | list[Variable | Parameter]:
         """
-        Retrieve a list of model objects (variables or parameters) from the model by name.
+        Retrieve model objects (variables or parameters) from the model by name.
 
         Parameters
         ----------
@@ -372,8 +390,8 @@ class CGEModel:
 
         Returns
         -------
-        out: list of Variable or Parameter
-            The requested model objects.
+        out: Variable, Parameter, or list of Variable or Parameter
+            The requested model object when one name matches, otherwise the list of requested objects.
         """
         if names is None:
             names = self.parameter_names + self.variable_names
@@ -401,9 +419,8 @@ class CGEModel:
         self,
         variables: Literal["all", "variables", "parameters"] | list[str] = "all",
         results: Result | list[Result] | None = None,
-        expand_indices: bool = False,
-        index_labels: dict[str, list[str]] | None = None,
-    ):
+    ) -> None:
+        """Display a table of the symbols and descriptions of ``variables``, with columns from each of ``results``."""
         results = [] if results is None else results
         if isinstance(results, Result):
             results = [results]
@@ -440,11 +457,11 @@ class CGEModel:
             initial, final = result_df.loc[variables, :].values.T
             info_dict[result.name] = {"Initial": initial, "Final": final}
 
-        return info_dict
-        # display_latex_table(info_dict)
+        display_latex_table(info_dict)
 
-    def equation_table(self, display=True):
-        info_dict = {"": [], "Name": [], "Equation": []}
+    def equation_table(self) -> None:
+        """Display a table of the model's equations, numbered, with their names and LaTeX forms."""
+        info_dict: dict[str, list[Any]] = {"": [], "Name": [], "Equation": []}
         for number, equation in enumerate(self._xtensor_equations.values(), start=1):
             info_dict[""].append(number)
             info_dict["Name"].append(_replace_dim_marker_with_dim_name(equation.name))
@@ -516,6 +533,7 @@ class CGEModel:
         use_jac=True,
         progressbar=True,
         verbose: bool = True,
+        equilibrium_tol: float = 1e-6,
         **optimizer_kwargs,
     ):
         method: root_method | None = optimizer_kwargs.pop("method", None)
@@ -538,13 +556,15 @@ class CGEModel:
                     "This model was compiled with use_sparse_matrices=True, so roots are found by sparse_root. "
                     "Pass a sparse_root strategy as `solver=` instead of `method=`."
                 )
-            return sparse_root(
+            res = sparse_root(
                 self.f_sparse_system_and_jac,
                 x0,
                 args=(theta_final,),
                 progressbar=progressbar,
                 **optimizer_kwargs,
             )
+            squared_error = np.inf if res.fun is None else float(np.sum(res.fun**2))
+            return _judge_equilibrium(res, squared_error, equilibrium_tol)
 
         f_system = wrap_compiled_function_for_scipy(self._compiled_function("f_system"))
         f_jac = (
@@ -562,7 +582,7 @@ class CGEModel:
             **optimizer_kwargs,
         )
 
-        return res
+        return _judge_equilibrium(res, float(np.sum(np.asarray(res.fun) ** 2)), equilibrium_tol)
 
     def _solve_with_minimize(
         self,
@@ -625,19 +645,8 @@ class CGEModel:
             **optimizer_kwargs,
         )
 
-        # The optimizer's gradient tolerance can stop on a flat objective well short of an equilibrium, or fail
-        # to make progress at one, so success is judged on the residuals themselves. The objective is half the
-        # sum of squared residuals.
-        squared_error = 2 * float(res.fun)
-        is_equilibrium = squared_error < equilibrium_tol
-        if bool(res.success) != is_equilibrium:
-            res.message = (
-                f"{res.message} Sum of squared residuals is {squared_error:.3e}, "
-                f"{'below' if is_equilibrium else 'above'} equilibrium_tol={equilibrium_tol:g}."
-            )
-        res.success = is_equilibrium
-
-        return res
+        # The objective is half the sum of squared residuals.
+        return _judge_equilibrium(res, 2 * float(res.fun), equilibrium_tol)
 
     def generate_SAM(
         self,

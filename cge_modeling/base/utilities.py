@@ -5,11 +5,11 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from itertools import product
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 
-from better_optimize.constants import MINIMIZE_MODE_KWARGS
+from better_optimize.configuration import MINIMIZE_CONFIGS
 
 from cge_modeling.base.primitives import (
     ModelObject,
@@ -143,7 +143,7 @@ def infer_object_shape_from_coords(
         infer_object_shape_from_coords(z, coords)
         # Out: (3, 3)
     """
-    dims = obj.dims
+    dims = cast(tuple[str, ...], obj.dims)
     shape = tuple(len(coords[dim]) for dim in dims)
     return shape
 
@@ -286,7 +286,7 @@ def variable_dict_to_flat_array(
 
 def get_method_defaults(use_grad, use_hess, use_hessp, method):
     use_grad, use_hess, use_hessp = (
-        MINIMIZE_MODE_KWARGS[method][f"uses_{name}"] if arg is None else arg
+        getattr(MINIMIZE_CONFIGS[method], f"uses_{name}") if arg is None else arg
         for name, arg in zip(["grad", "hess", "hessp"], [use_grad, use_hess, use_hessp])
     )
     if use_hess and use_hessp:
@@ -338,7 +338,7 @@ def create_final_param_dict(
 
 def make_indexed_name(obj: ModelObject) -> str:
     """Return the name of ``obj`` with its dim labels appended, joined by underscores."""
-    return "_".join([obj.name, *list(map(str, obj.dim_vals.values()))])
+    return "_".join([obj.name, *map(str, cast(dict[str, str], obj.dim_vals).values())])
 
 
 def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim="raise") -> list[str]:
@@ -362,7 +362,7 @@ def _validate_dims(obj: ModelObject, dims: list[str], on_unused_dim="raise") -> 
         A list of valid dims for the object
     """
 
-    unknown_dims = set(dims) - set(obj.dims)
+    unknown_dims = set(dims) - set(cast(tuple[str, ...], obj.dims))
     if len(unknown_dims) > 0:
         unk_str = ", ".join(list(unknown_dims))
         if on_unused_dim == "raise":
@@ -406,7 +406,7 @@ def expand_obj_by_indices(
     out = []
 
     if dims is None:
-        dims = obj.dims
+        dims = list(cast(tuple[str, ...], obj.dims))
     dims = _validate_dims(obj, dims, on_unused_dim)
 
     # Take the cartesian product of dimensions to be expanded to form all possible combinations of labels

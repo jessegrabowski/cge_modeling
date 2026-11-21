@@ -393,6 +393,20 @@ def test_equation_table_shows_the_latex_of_context_built_equations(monkeypatch):
     assert [equation.data for equation in shown["Equation"]] == [r"P_{i} = \bar{P}"]
 
 
+def test_summary_shows_the_symbols_and_descriptions_of_the_requested_objects(monkeypatch):
+    shown = {}
+    monkeypatch.setattr("cge_modeling.base.cge.display_latex_table", shown.update)
+    with CGEModel(coords={"i": ["a", "b"]}) as model:
+        P = cm.Variable("P", dims="i", description="Price of <dim:i>")
+        P_bar = cm.Parameter("P_bar", description="Reference price")
+        cm.Equation("Price of <dim:i>", P, P_bar)
+
+    model.summary("variables")
+
+    assert [symbol.name for symbol in shown["Symbol"]] == ["P"]
+    assert shown["Description"] == ["Price of i"]
+
+
 def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_model(caplog):
     with CGEModel(coords={"i": ["Agriculture", "Industry"]}) as model:
         P = cm.Variable("P", dims="i")

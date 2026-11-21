@@ -7,8 +7,9 @@ import pytest
 import xarray as xr
 
 from scipy.differentiate import jacobian
+from scipy.optimize import OptimizeResult
 
-from cge_modeling.base.cge import CGEModel
+from cge_modeling.base.cge import CGEModel, _judge_equilibrium
 from cge_modeling.base.utilities import flat_array_to_variable_dict, variable_dict_to_flat_array
 from tests.utilities.models import (
     build_model_1,
@@ -185,6 +186,56 @@ def test_minimize_success_reflects_equilibrium_residuals(gtol, expected_success)
 
     assert bool(result.success) is expected_success
     assert "equilibrium_tol" in result.message
+
+
+def test_root_success_reflects_equilibrium_residuals_when_hybr_stops_at_one():
+    model = load_and_cache_model(model_id=1)
+    calibrated_data = calibrate_model_1(**model_1_data)
+
+    result = model.simulate(
+        calibrated_data, final_delta_pct={"L_s": 0.1}, n_iter_euler=20, progressbar=False
+    )
+
+    assert result["optim_res"].success
+
+
+@pytest.mark.parametrize(
+    "solver_success, squared_error, expected_note",
+    [(False, 1e-20, "below equilibrium_tol=1e-06"), (True, 1.0, "above equilibrium_tol=1e-06")],
+    ids=["solver_stalled_at_equilibrium", "solver_stopped_short"],
+)
+def test_judge_equilibrium_overrules_the_solver_from_the_residuals(
+    solver_success, squared_error, expected_note
+):
+    result = OptimizeResult(success=solver_success, message="Solver message.")
+
+    judged = _judge_equilibrium(result, squared_error, equilibrium_tol=1e-6)
+
+    assert judged.success is not solver_success
+    assert judged.message.startswith("Solver message.")
+    assert expected_note in judged.message
+
+
+def test_judge_equilibrium_keeps_the_message_when_it_agrees_with_the_solver():
+    result = OptimizeResult(success=True, message="Solver message.")
+
+    judged = _judge_equilibrium(result, 1e-20, equilibrium_tol=1e-6)
+
+    assert judged.success
+    assert judged.message == "Solver message."
+
+
+def test_root_reports_failure_when_it_stops_short_of_equilibrium():
+    model = load_and_cache_model(model_id=1, functions_to_compile="root")
+    calibrated_data = calibrate_model_1(**model_1_data)
+    shocked_data = {**calibrated_data, "L_s": calibrated_data["L_s"] * 1.5}
+    _, theta_final = variable_dict_to_flat_array(shocked_data, model.variables, model.parameters)
+
+    result = model._solve_with_root(
+        calibrated_data, theta_final, progressbar=False, verbose=False, options={"maxfev": 2}
+    )
+
+    assert not result.success
 
 
 def test_scan_euler_matches_python_loop_euler():

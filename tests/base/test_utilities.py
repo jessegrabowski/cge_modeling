@@ -7,6 +7,7 @@ from cge_modeling.base.primitives import Parameter, Variable
 from cge_modeling.base.utilities import (
     expand_obj_by_indices,
     flat_array_to_variable_dict,
+    get_method_defaults,
     unpack_equation_name,
     variable_dict_to_flat_array,
 )
@@ -96,3 +97,22 @@ def test_unpack_equation_name(name, dims, expected):
     coords = {"i": ["A", "B"], "j": ["x", "y"]}
 
     assert unpack_equation_name(name, dims, coords) == expected
+
+
+@pytest.mark.parametrize(
+    "method, use_hessp, expected",
+    [
+        ("trust-ncg", None, (True, False, True)),
+        ("trust-ncg", False, (True, True, False)),
+        ("BFGS", None, (True, False, False)),
+        ("nelder-mead", None, (False, False, False)),
+    ],
+    ids=[
+        "hessp_preferred_over_hess",
+        "hess_when_hessp_declined",
+        "gradient_only",
+        "derivative_free",
+    ],
+)
+def test_get_method_defaults_reads_the_method_and_prefers_hessp(method, use_hessp, expected):
+    assert get_method_defaults(None, None, use_hessp, method) == expected

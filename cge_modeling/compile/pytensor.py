@@ -83,10 +83,10 @@ def make_jvp(
         The jacobian-vector product of the original loss function
     """
     n_eq = grad.type.shape[0]
-    rewrite_pregrad(grad)
+    grad = rewrite_pregrad(grad)
 
-    jvp_chunks = pt.grad(pt.sum(grad * p), x)
-    jvp = pt.concatenate([x.ravel() for x in jvp_chunks], axis=-1)
+    jvp_chunks = cast(list[pt.TensorVariable], pt.grad(pt.sum(grad * p), x))
+    jvp = pt.concatenate([chunk.ravel() for chunk in jvp_chunks], axis=-1)
     jvp = pt.specify_shape(jvp, shape=(n_eq,))
 
     return jvp
@@ -119,7 +119,7 @@ def compile_pytensor_error_function(
 ) -> tuple[pt.TensorVariable, Function]:
     squared_loss = 0.5 * (system**2).sum()
     squared_loss.name = "squared_loss"
-    rewrite_pregrad(squared_loss)
+    squared_loss = rewrite_pregrad(squared_loss)
 
     f_loss = compile_with_packed_inputs(
         [("x", variables), ("theta", parameters)], squared_loss, mode=mode
@@ -135,9 +135,11 @@ def compile_pytensor_gradient_function(
     n_variables: int,
     mode: str | None = None,
 ) -> tuple[pt.TensorVariable, Function]:
-    grad = pytensor.grad(loss, variables)
-    grad = pt.specify_shape(pt.concatenate([pt.atleast_1d(eq).ravel() for eq in grad]), n_variables)
-    rewrite_pregrad(grad)
+    grad_parts = cast(list[pt.TensorVariable], pytensor.grad(loss, variables))
+    grad = pt.specify_shape(
+        pt.concatenate([pt.atleast_1d(part).ravel() for part in grad_parts]), n_variables
+    )
+    grad = rewrite_pregrad(grad)
 
     f_grad = compile_with_packed_inputs(
         [("x", variables), ("theta", parameters)], grad, mode=mode, on_unused_input="ignore"
