@@ -49,7 +49,7 @@ ITEM_TEMPLATE = """
       :shadow: none
 """
 
-folder_title_map = {"getting_started": "Getting Started"}
+folder_title_map = {"getting_started": "Getting Started", "rebalance": "Balancing SAMs"}
 
 # Cell tag that picks the cell whose first image becomes the notebook's gallery thumbnail.
 THUMBNAIL_TAG = "gallery-thumbnail"

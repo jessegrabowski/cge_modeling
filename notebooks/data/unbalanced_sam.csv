@@ -1,0 +1,17 @@
+﻿,,Factor,Factor,Factor,Factor,Institution,Institution,Institution,Commodity,Commodity,Commodity,Activity,Activity,Activity,Other,Other
+,,Labor,Unskilled Labor,Skilled Labor,Capital,Household,Firm,Government,Agriculture,Industry,Service,Agriculture,Industry,Service,Capital,Rest of World
+Factor,Labor,,,,,,,,,,,690,0,0,,
+Factor,Unskilled Labor,,,,,,,,,,,480,1530,4060,,
+Factor,Skilled Labor,,,,,,,,,,,200,870,280,,
+Factor,Capital,,,,,,,,,,,50,900,250,,
+Institution,Household,600,6070,1400,1200,,,100,,,,,,,,523
+Institution,Firm,,,,,,,,,,,,,,,
+Institution,Government,,,,,1400,,,165,1365,280,50,140,90,,58
+Commodity,Agriculture,,,,,1750,,500,,,,1120,930,1150,200,331
+Commodity,Industry,,,,,1200,,1030,,,,2200,3120,3398,745,37
+Commodity,Service,,,,,3400,,2785,,,,870,2250,1100,100,1900
+Activity,Agriculture,,,,,,,,5500,,,,,,,
+Activity,Industry,,,,,,,,,9800,,,,,,
+Activity,Service,,,,,,,,,,10200,,,,,
+Other,Capital,,,,,2180,,-800,,,,,,,,-325
+Other,Rest of World,,,,,,,,150,440,95,,,,,
