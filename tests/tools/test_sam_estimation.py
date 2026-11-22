@@ -366,6 +366,8 @@ def test_subject_to():
         sam.subject_to(cap=sam.sel(row=0).sum() <= 3.0)
     with pytest.raises(TypeError, match="this SymbolicSAM"):
         sam.subject_to(foreign=other.sel(row=0).sum() <= 3.0)
+    with pytest.raises(ValueError, match="reserved"):
+        sam.subject_to(**{"accounting identity": sam.sel(row=0).sum() <= 3.0})
 
 
 def test_cells_forced_to_zero():
@@ -388,15 +390,38 @@ def test_fit_raises_on_forced_zeros():
         sam.fit()
 
 
-def test_infeasible_fit_warns():
+def test_infeasible_fit_raises():
     sam = SymbolicSAM(pd.DataFrame([[0.0, 2.0], [1.0, 0.0]], index=["a", "b"], columns=["a", "b"]))
     sam.subject_to(income=sam.sel(row="a").sum() == 5.0, spending=sam.sel(col="a").sum() == 7.0)
 
-    with pytest.warns(UserWarning, match="infeasible"):
-        estimate = sam.fit()
+    with pytest.raises(ValueError, match="no solution: solver status is 'infeasible'"):
+        sam.fit()
 
-    assert estimate.status == "infeasible"
-    assert np.isnan([estimate.sam.loc["a", "b"], estimate.sam.loc["b", "a"]]).all()
+
+@pytest.mark.parametrize(
+    "constraint",
+    [lambda cell: cell == 3.0, lambda cell: cell >= 1.0],
+    ids=["equal to nonzero", "at least positive"],
+)
+def test_unsatisfiable_constraint_on_zero_prior_cell_raises(constraint):
+    sam = SymbolicSAM(pd.DataFrame([[0.0, 2.0], [2.0, 0.0]], index=["a", "b"], columns=["a", "b"]))
+    sam.subject_to(diagonal=constraint(sam.sel(row="a", col="a")))
+
+    with pytest.raises(ValueError, match="'diagonal' involves no nonzero cell"):
+        sam.fit()
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [lambda cell: cell == 0.0, lambda cell: cell <= 1.0],
+    ids=["equal to zero", "at most positive"],
+)
+def test_satisfied_constraint_on_zero_prior_cell_is_ignored(constraint):
+    prior = pd.DataFrame([[0.0, 2.0], [2.0, 0.0]], index=["a", "b"], columns=["a", "b"])
+    sam = SymbolicSAM(prior)
+    sam.subject_to(diagonal=constraint(sam.sel(row="a", col="a")))
+
+    np.testing.assert_allclose(sam.fit().sam, prior, rtol=SOLVER_RTOL)
 
 
 def test_balanced_sam_fixed_point():
