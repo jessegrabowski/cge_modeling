@@ -123,6 +123,12 @@ class SAMExpression:
                     f"Expressions with dims {self.dims} and {other.dims} would broadcast into an outer product. "
                     f"Rename a dim first, for example sam.sum({row_dim!r}).rename({{{column_dim!r}: {row_dim!r}}})"
                 )
+            for dim in set(self.dims) & set(other.dims):
+                if not self.labels[dim].equals(other.labels[dim]):
+                    raise ValueError(
+                        f"Expressions combine position by position, but their accounts on dim {dim!r} differ: "
+                        f"{list(self.labels[dim])} and {list(other.labels[dim])}"
+                    )
             return other.tensor
 
         if isinstance(other, Real):
@@ -975,18 +981,18 @@ def _least_squares_covariance(
 
 
 def _cell_values(sam: SymbolicSAM, data: CellData, name: str) -> np.ndarray:
-    """Return ``data`` at the prior's nonzero cells. A DataFrame aligns by label, and an array must match the prior's
-    shape and order."""
-    if isinstance(data, Real):
-        values = np.full(sam.prior.shape, float(data))
-    elif isinstance(data, pd.DataFrame):
-        values = data.reindex(index=sam.prior.index, columns=sam.prior.columns).to_numpy(
+    """Return ``data`` at the prior's nonzero cells. A DataFrame or DataArray aligns by label, and an array must match
+    the prior's shape and order."""
+    labeled = data.transpose(*sam.dims).to_pandas() if isinstance(data, xr.DataArray) else data
+
+    if isinstance(labeled, Real):
+        values = np.full(sam.prior.shape, float(labeled))
+    elif isinstance(labeled, pd.DataFrame):
+        values = labeled.reindex(index=sam.prior.index, columns=sam.prior.columns).to_numpy(
             dtype=float
         )
-    elif isinstance(data, xr.DataArray):
-        values = data.transpose(*sam.dims).to_numpy().astype(float)
     else:
-        values = np.asarray(data, dtype=float)
+        values = np.asarray(labeled, dtype=float)
 
     if values.shape != sam.prior.shape:
         raise ValueError(

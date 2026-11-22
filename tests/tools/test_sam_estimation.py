@@ -325,6 +325,14 @@ def test_invalid_prior_raises(build, message):
             TypeError,
             "to the right of the expression",
         ),
+        (
+            lambda sam: (
+                sam.sel(row=[0, 1]).sum("col")
+                == sam.sel(col=[1, 0]).sum("row").rename({"col": "row"})
+            ),
+            ValueError,
+            r"accounts on dim 'row' differ: \[0, 1\] and \[1, 0\]",
+        ),
     ],
     ids=[
         "mismatched_dims",
@@ -337,6 +345,7 @@ def test_invalid_prior_raises(build, message):
         "unknown_dataframe_column_label",
         "dataarray_with_extra_dim",
         "dataarray_on_the_left",
+        "expressions_with_reordered_labels",
     ],
 )
 def test_invalid_expression_raises(build, error, message):
@@ -635,6 +644,24 @@ def test_objectives_agree_near_balance():
     for objective in [ReverseKL(), Pearson()]:
         estimate = sam.fit(objective=objective, **tolerances).sam.to_numpy()
         assert np.abs(estimate - kl_estimate).max() < 1e-2 * adjustment
+
+
+def test_dataarray_sigma_aligns_by_label():
+    prior = pd.DataFrame(
+        [[0.0, 5.0, 2.0], [1.0, 0.0, 3.0], [4.0, 6.0, 0.0]], index=list("abc"), columns=list("abc")
+    )
+    sam = SymbolicSAM(prior)
+    sigma = pd.DataFrame(
+        [[1.0, 0.5, 2.0], [3.0, 1.0, 0.2], [1.5, 4.0, 1.0]], index=list("cba"), columns=list("bca")
+    )
+    sigma_array = xr.DataArray(
+        sigma.to_numpy(), dims=["row", "col"], coords={"row": sigma.index, "col": sigma.columns}
+    )
+
+    from_frame = sam.fit(objective=LeastSquares(sigma=sigma), **TIGHT_CLARABEL).sam
+    from_array = sam.fit(objective=LeastSquares(sigma=sigma_array), **TIGHT_CLARABEL).sam
+
+    np.testing.assert_allclose(from_array, from_frame, rtol=1e-9)
 
 
 @pytest.mark.parametrize(
