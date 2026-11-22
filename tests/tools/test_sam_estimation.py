@@ -507,3 +507,33 @@ def test_inequality_binding():
 
     assert capped.loc["Factor"].to_numpy().sum() == pytest.approx(cap, rel=1e-7)
     np.testing.assert_allclose(loose, unconstrained, rtol=SOLVER_RTOL, atol=1e-6)
+
+
+def test_gras_published_example():
+    # Temurshoev, Miller and Bouwmeester (2013), Tables 1 to 3: a 3 x 4 block updated to known row
+    # and column totals. The block sits in a square SAM with a closing account, Totals, that is
+    # fixed at those totals, so the accounting identity imposes the GRAS row and column constraints.
+    rows = ["Goods", "Services", "Net taxes"]
+    columns = ["Goods use", "Services use", "Consumption", "Net exports"]
+    row_totals = pd.Series([15.0, 26.0, -1.0], index=rows)
+    column_totals = pd.Series([9.0, 16.0, 17.0, -2.0], index=columns)
+
+    accounts = [*rows, *columns, "Totals"]
+    prior = pd.DataFrame(0.0, index=accounts, columns=accounts)
+    prior.loc[rows, columns] = [[7.0, 3.0, 5.0, -3.0], [2.0, 9.0, 8.0, 0.0], [-2.0, 0.0, 2.0, 0.0]]
+    prior.loc["Totals", rows] = row_totals
+    prior.loc[columns, "Totals"] = column_totals
+
+    sam = SymbolicSAM(prior)
+    sam.subject_to(
+        row_totals=sam.sel(row="Totals", col=rows) == row_totals,
+        column_totals=sam.sel(row=columns, col="Totals") == column_totals,
+    )
+    estimate = sam.fit(**TIGHT_CLARABEL).sam
+
+    published = [
+        [8.424, 3.375, 5.200, -2.000],
+        [3.001, 12.625, 10.374, 0.0],
+        [-2.425, 0.0, 1.425, 0.0],
+    ]
+    np.testing.assert_allclose(estimate.loc[rows, columns], published, atol=5e-4)
