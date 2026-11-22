@@ -1,3 +1,5 @@
+import warnings
+
 from pathlib import Path
 
 import cvxpy as cp
@@ -751,7 +753,7 @@ def test_measurement_limits(with_error):
     def fit_household_income(error):
         sam = SymbolicSAM(prior)
         sam.subject_to(household_income=with_error(sam.sel(row=household).sum() == 9893.0, error))
-        return sam.fit(objective=Pearson(), **TIGHT_CLARABEL).sam.loc[household].sum()
+        return sam.fit(objective=Pearson(dispersion=1.0), **TIGHT_CLARABEL).sam.loc[household].sum()
 
     unconstrained_income = (
         SymbolicSAM(prior).fit(objective=Pearson(), **TIGHT_CLARABEL).sam.loc[household].sum()
@@ -773,7 +775,7 @@ def test_huber_between_normal_and_laplace():
     def fit_with(with_error):
         sam = SymbolicSAM(prior)
         sam.subject_to(household_income=with_error(sam.sel(row=household).sum() == 9893.0))
-        return sam.fit(objective=Pearson(), **TIGHT_CLARABEL).sam
+        return sam.fit(objective=Pearson(dispersion=1.0), **TIGHT_CLARABEL).sam
 
     np.testing.assert_allclose(
         fit_with(lambda measurement: measurement.huber(sigma=100.0, threshold=1e6)),
@@ -806,10 +808,64 @@ def test_measurement_scale_aligns_by_label():
     )
 
     np.testing.assert_allclose(
-        together.fit(objective=Pearson(), **TIGHT_CLARABEL).sam,
-        separate.fit(objective=Pearson(), **TIGHT_CLARABEL).sam,
+        together.fit(objective=Pearson(dispersion=1.0), **TIGHT_CLARABEL).sam,
+        separate.fit(objective=Pearson(dispersion=1.0), **TIGHT_CLARABEL).sam,
         rtol=1e-6,
     )
+
+
+@pytest.mark.parametrize(
+    "objective_in",
+    [
+        lambda unit: KL(dispersion=2.0 * unit),
+        lambda unit: ReverseKL(dispersion=2.0 * unit),
+        lambda unit: Pearson(dispersion=2.0 * unit),
+        lambda unit: LeastSquares(sigma=np.abs(load_unbalanced_sam().to_numpy()) * unit + unit),
+    ],
+    ids=["KL", "reverse KL", "Pearson", "least squares"],
+)
+def test_estimate_is_unit_invariant(objective_in):
+    # Expressing every number in thousands, including the dispersion and the standard deviations, must give the same
+    # SAM in thousands.
+    prior = load_unbalanced_sam()
+    household = ("Institution", "Household")
+
+    def fit_in(unit):
+        sam = SymbolicSAM(prior * unit)
+        measured = sam.sel(row=household).sum() == 9893.0 * unit
+        sam.subject_to(household_income=measured.normal(sigma=50.0 * unit))
+        return sam.fit(objective=objective_in(unit), **TIGHT_CLARABEL).sam / unit
+
+    np.testing.assert_allclose(fit_in(1e-3), fit_in(1.0), rtol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "objective, measured, warns",
+    [
+        (KL(), True, True),
+        (Pearson(), True, True),
+        (KL(), False, False),
+        (KL(dispersion=1.0), True, False),
+        (LeastSquares(), True, False),
+    ],
+    ids=["KL measured", "Pearson measured", "KL exact", "KL with dispersion", "least squares"],
+)
+def test_default_dispersion_warns_with_measurements(objective, measured, warns):
+    sam = SymbolicSAM(pd.DataFrame([[0.0, 2.0], [1.0, 0.0]], index=["a", "b"], columns=["a", "b"]))
+    income = sam.sel(row="a").sum() == 1.5
+    sam.subject_to(income=income.normal(sigma=0.1) if measured else income)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        sam.fit(objective=objective)
+
+    assert any("Pass dispersion" in str(warning.message) for warning in caught) == warns
+
+
+@pytest.mark.parametrize("dispersion", [0.0, -1.0, np.inf], ids=["zero", "negative", "infinite"])
+def test_invalid_dispersion_raises(dispersion):
+    with pytest.raises(ValueError, match="dispersion must be positive and finite"):
+        KL(dispersion=dispersion)
 
 
 @pytest.mark.parametrize(
@@ -839,7 +895,7 @@ def test_nonpositive_measurement_scale_raises():
     sam.subject_to(income=(sam.sel(row=0).sum() == 2.0).normal(sigma=0.0))
 
     with pytest.raises(ValueError, match="positive and finite"):
-        sam.fit()
+        sam.fit(objective=KL(dispersion=1.0))
 
 
 @pytest.mark.parametrize("measured", [False, True], ids=["identity only", "normal measurement"])
@@ -921,8 +977,11 @@ def test_covariance_raises(objective, constraint, message):
     [
         (KL(), None),
         (LeastSquares(), lambda measurement: measurement.normal(sigma=50.0)),
-        (Pearson(), lambda measurement: measurement.laplace(scale=50.0)),
-        (ReverseKL(), lambda measurement: measurement.huber(sigma=50.0, threshold=1.0)),
+        (Pearson(dispersion=20.0), lambda measurement: measurement.laplace(scale=50.0)),
+        (
+            ReverseKL(dispersion=0.5),
+            lambda measurement: measurement.huber(sigma=50.0, threshold=1.0),
+        ),
     ],
     ids=["KL", "least squares, normal", "Pearson, laplace", "reverse KL, huber"],
 )
@@ -1023,9 +1082,10 @@ def test_objective_value_rejects_candidate(candidate, message):
         (KL(), lambda x, z: np.sum(x * np.log(x / z) - x + z)),
         (ReverseKL(), lambda x, z: np.sum(z * np.log(z / x) - z + x)),
         (Pearson(), lambda x, z: 0.5 * np.sum((x - z) ** 2 / z)),
+        (KL(dispersion=4.0), lambda x, z: np.sum(x * np.log(x / z) - x + z) / 4.0),
         (LeastSquares(sigma=25.0), lambda x, z: 0.5 * np.sum(((x - z) / 25.0) ** 2)),
     ],
-    ids=["KL", "reverse KL", "Pearson", "least squares"],
+    ids=["KL", "reverse KL", "Pearson", "KL with dispersion", "least squares"],
 )
 def test_objective_value_matches_formula(objective, formula):
     # Away from the prior, where every objective is nonzero, checked against each formula on the cell magnitudes.

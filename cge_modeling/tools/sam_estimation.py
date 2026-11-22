@@ -285,7 +285,7 @@ class SAMEstimate:
     sam : pandas.DataFrame, xarray.DataArray or native frame
         The estimated SAM, in the prior's type and layout.
     objective : float
-        The objective value at the estimate, including the penalties of measurements with error, in the prior's units.
+        The objective value at the estimate, including the penalties of measurements with error.
     status : str
         The solver status, in cvxpy's vocabulary.
     """
@@ -369,8 +369,8 @@ class Objective:
     """
     A distance of the cells from the prior, which :meth:`SymbolicSAM.fit` minimizes.
 
-    Every objective is the negative log density of a prior on the cells, up to a constant, in the prior's units. That
-    puts it on the same scale as the penalties of measurements with error.
+    Every objective is the negative log density of a prior on the cells, up to a constant, so it adds to the penalties
+    of measurements with error.
     """
 
     def expression(
@@ -380,27 +380,53 @@ class Objective:
         raise NotImplementedError
 
     def unit(self, scale: float) -> float:
-        """Return the factor that converts :meth:`expression` to the prior's units."""
-        return scale
+        """Return the factor that converts :meth:`expression` to the objective."""
+        raise NotImplementedError
+
+
+class Divergence(Objective):
+    r"""
+    An objective that grows in proportion to the cells, divided by a dispersion :math:`\phi` in the prior's units.
+
+    To second order the divergence is :math:`\frac{1}{2} \sum_k (x_k - z_k)^2 / |z_k|`, so dividing it by
+    :math:`\phi` makes it the negative log density of cells with variance :math:`\phi |z_k|`, which rescales with the
+    prior's units. Without measurements with error, :math:`\phi` scales the whole objective and leaves the estimate
+    unchanged.
+    """
+
+    dispersion: float | None
+
+    def __post_init__(self):
+        if self.dispersion is not None and not (
+            np.isfinite(self.dispersion) and self.dispersion > 0.0
+        ):
+            raise ValueError(f"The dispersion must be positive and finite, not {self.dispersion}")
+
+    def unit(self, scale: float) -> float:
+        return scale / (1.0 if self.dispersion is None else self.dispersion)
 
 
 @dataclass(frozen=True, eq=False)
-class KL(Objective):
+class KL(Divergence):
     r"""
-    Weighted generalized KL divergence of the cell magnitudes from the prior magnitudes,
+    Weighted generalized KL divergence of the cell magnitudes from the prior magnitudes, divided by the dispersion,
 
     .. math::
 
-        \sum_k w_k \left( |x_k| \log \frac{|x_k|}{|z_k|} - |x_k| + |z_k| \right).
+        \frac{1}{\phi} \sum_k w_k \left( |x_k| \log \frac{|x_k|}{|z_k|} - |x_k| + |z_k| \right).
 
     Parameters
     ----------
     weights : float, numpy.ndarray, pandas.DataFrame or xarray.DataArray, optional
         Positive weight of each cell, as a number or laid out like the prior. A larger weight holds a cell closer to
         its prior value. Default is None, which weights every cell by one.
+    dispersion : float, optional
+        Positive :math:`\phi`, in the prior's units, which sets how the objective trades off against measurements with
+        error. Default is None, which uses 1.0 and warns when a measurement with error is present.
     """
 
     weights: CellData | None = None
+    dispersion: float | None = None
 
     def expression(
         self, sam: "SymbolicSAM", magnitudes: cp.Expression, scale: float
@@ -441,14 +467,22 @@ class LeastSquares(Objective):
 
 
 @dataclass(frozen=True, eq=False)
-class ReverseKL(Objective):
+class ReverseKL(Divergence):
     r"""
-    Generalized KL divergence of the prior magnitudes from the cell magnitudes,
+    Generalized KL divergence of the prior magnitudes from the cell magnitudes, divided by the dispersion,
 
     .. math::
 
-        \sum_k |z_k| \log \frac{|z_k|}{|x_k|} - |z_k| + |x_k|.
+        \frac{1}{\phi} \sum_k |z_k| \log \frac{|z_k|}{|x_k|} - |z_k| + |x_k|.
+
+    Parameters
+    ----------
+    dispersion : float, optional
+        Positive :math:`\phi`, in the prior's units, which sets how the objective trades off against measurements with
+        error. Default is None, which uses 1.0 and warns when a measurement with error is present.
     """
+
+    dispersion: float | None = None
 
     def expression(
         self, sam: "SymbolicSAM", magnitudes: cp.Expression, scale: float
@@ -457,14 +491,23 @@ class ReverseKL(Objective):
 
 
 @dataclass(frozen=True, eq=False)
-class Pearson(Objective):
+class Pearson(Divergence):
     r"""
-    Pearson chi-squared distance of the cells from the prior, which equals :class:`KL` to second order,
+    Pearson chi-squared distance of the cells from the prior, divided by the dispersion, which equals :class:`KL` to
+    second order,
 
     .. math::
 
-        \frac{1}{2} \sum_k \frac{(x_k - z_k)^2}{|z_k|}.
+        \frac{1}{2 \phi} \sum_k \frac{(x_k - z_k)^2}{|z_k|}.
+
+    Parameters
+    ----------
+    dispersion : float, optional
+        Positive :math:`\phi`, in the prior's units, which sets how the objective trades off against measurements with
+        error. Default is None, which uses 1.0 and warns when a measurement with error is present.
     """
+
+    dispersion: float | None = None
 
     def expression(
         self, sam: "SymbolicSAM", magnitudes: cp.Expression, scale: float
@@ -623,6 +666,12 @@ class SymbolicSAM:
         ValueError
             If balancing would set cells to zero, a constraint involves no nonzero cell where it cannot hold, or the
             solver finds the problem infeasible or unbounded.
+
+        Warns
+        -----
+        UserWarning
+            If the solve is not optimal, or a :class:`Divergence` objective without a ``dispersion`` meets a
+            measurement with error.
         """
         forced_to_zero = cells_forced_to_zero(self)
         if forced_to_zero:
@@ -633,6 +682,7 @@ class SymbolicSAM:
 
         if objective is None:
             objective = KL()
+        _warn_if_unit_dependent(objective, self.constraints)
 
         dual_applies = (
             isinstance(objective, KL) and objective.weights is None and not self.constraints
@@ -646,7 +696,7 @@ class SymbolicSAM:
                     f"The {DUAL_SOLVER!r} solver covers only the unweighted KL objective under the accounting "
                     f"identity. Use a cvxpy solver for a SAM with constraints or another objective"
                 )
-            return _fit_dual(self, **solver_kwargs)
+            return _fit_dual(self, objective, **solver_kwargs)
 
         constraints = dict(self.constraints)
         linear = linear_constraints(self, _hard_constraints(self, constraints))
@@ -694,7 +744,7 @@ class SymbolicSAM:
         self, candidate: IntoDataFrame | xr.DataArray, objective: Objective | None = None
     ) -> float:
         """
-        Return the objective at ``candidate``, including the penalties of measurements with error, in the prior's units.
+        Return the objective at ``candidate``, including the penalties of measurements with error.
 
         This is the quantity :meth:`fit` minimizes, under the measurements in :attr:`constraints` as they stand now. It
         equals :attr:`SAMEstimate.objective` at an estimate fitted under the same constraints. Hard constraints,
@@ -722,6 +772,7 @@ class SymbolicSAM:
         """
         if objective is None:
             objective = KL()
+        _warn_if_unit_dependent(objective, self.constraints)
 
         frame, _, _ = _prior_frame_and_dims(candidate, self._index_column)
         if not (frame.index.equals(self.prior.index) and frame.columns.equals(self.prior.columns)):
@@ -900,7 +951,7 @@ def _prior_frame_and_dims(
     return prior_frame, row_dim, column_dim
 
 
-def _fit_dual(sam: SymbolicSAM, **root_kwargs) -> SAMEstimate:
+def _fit_dual(sam: SymbolicSAM, objective: Objective, **root_kwargs) -> SAMEstimate:
     """
     Balance ``sam`` under the accounting identity alone by solving for log account scales.
 
@@ -965,13 +1016,29 @@ def _fit_dual(sam: SymbolicSAM, **root_kwargs) -> SAMEstimate:
 
     return SAMEstimate(
         sam=sam.like_prior(sam.signs * balanced * scale),
-        objective=float(kl_div(balanced, weights).sum()) * scale,
+        objective=float(kl_div(balanced, weights).sum()) * objective.unit(scale),
         status=status,
         _symbolic_sam=sam,
-        _objective=KL(),
+        _objective=objective,
         _constraints={},
         _cells=sam.signs * balanced * scale,
     )
+
+
+def _warn_if_unit_dependent(objective: Objective, constraints: dict[str, Constraint]) -> None:
+    """Warn when a measurement with error makes the estimate depend on a dispersion left at its default."""
+    if not isinstance(objective, Divergence) or objective.dispersion is not None:
+        return
+    measurements = [
+        name for name, constraint in constraints.items() if constraint.penalty is not None
+    ]
+    if measurements:
+        warnings.warn(
+            f"{type(objective).__name__} is in the prior's units, while the measurements with error {measurements} "
+            f"are not, so the estimate depends on the units of the prior. Pass dispersion, in the prior's units, to "
+            f"fix the trade-off. Using dispersion=1.0",
+            stacklevel=3,
+        )
 
 
 def _least_squares_covariance(
