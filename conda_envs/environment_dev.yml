@@ -11,6 +11,7 @@ dependencies:
 - cvxpy <2
 - pip
 - pip:
+  - polars
   - pre-commit
   - pytest>=9.0.3
   - pytest-cov>=7.1.0
@@ -35,6 +36,7 @@ dependencies:
   - better-optimize>=0.5.1, <1
   - latextable<2
   - matplotlib<4
+  - narwhals<3
   - networkx<4
   - pandas<4
   - rich<16

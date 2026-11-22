@@ -41,6 +41,7 @@ dependencies = [
     "ipython<10",
     "latextable<2",
     "matplotlib<4",
+    "narwhals<3",
     "networkx<4",
     "numba<1",
     "numpy<3",
@@ -55,6 +56,7 @@ dependencies = [
 # pixi turns these extras into features of the same name.
 [project.optional-dependencies]
 dev = [
+    "polars",
     "pre-commit",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
@@ -165,7 +167,7 @@ ignore = [
 lines-between-types = 1
 
 [tool.ruff.lint.per-file-ignores]
-'docs/**/*.ipynb' = [
+'notebooks/**/*.ipynb' = [
     'F841', # Calibration functions hand their locals to CGEModel.finalize_calibration by frame inspection
 ]
 'tests/*.py' = [
