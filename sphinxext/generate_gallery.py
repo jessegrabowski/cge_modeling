@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -98,20 +99,18 @@ def write_placeholder(outfile, title, width=275, height=275):
     plt.close(fig)
 
 
-def create_thumbnail(infile, width=275, height=275, cx=0.5, cy=0.5, border=4):
-    """Overwrite `infile` with a new file of the given size."""
+def create_thumbnail(infile, width=275, height=275, border=4):
+    """Overwrite `infile` with a square thumbnail of the given size."""
     im = image.imread(infile)
+    if im.ndim == 2:
+        im = np.stack([im, im, im], axis=-1)
     rows, cols = im.shape[:2]
-    size = min(rows, cols)
-    if size == cols:
-        xslice = slice(0, size)
-        ymin = min(max(0, int(cy * rows - size // 2)), rows - size)
-        yslice = slice(ymin, ymin + size)
-    else:
-        yslice = slice(0, size)
-        xmin = min(max(0, int(cx * cols - size // 2)), cols - size)
-        xslice = slice(xmin, xmin + size)
-    thumb = im[yslice, xslice]
+    size = max(rows, cols)
+    # Pad the short side with white, so no title or axis label of the figure is cut off.
+    white = 1.0 if np.issubdtype(im.dtype, np.floating) else 255
+    thumb = np.full((size, size, im.shape[2]), white, dtype=im.dtype)
+    top, left = (size - rows) // 2, (size - cols) // 2
+    thumb[top : top + rows, left : left + cols] = im
     thumb[:border, :, :3] = thumb[-border:, :, :3] = 0
     thumb[:, :border, :3] = thumb[:, -border:, :3] = 0
 

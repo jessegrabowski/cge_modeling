@@ -1,7 +1,7 @@
 import warnings
 
 from collections.abc import Hashable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from numbers import Real
 
 import cvxpy as cp
@@ -16,6 +16,7 @@ import xarray as xr
 from narwhals.typing import IntoDataFrame
 from pytensor.graph.rewriting.utils import rewrite_graph
 from pytensor.xtensor.type import XTensorVariable
+from scipy.linalg import null_space
 from scipy.optimize import root
 from scipy.sparse import coo_array, csr_array
 from scipy.sparse.csgraph import connected_components
@@ -25,7 +26,12 @@ ROW = "row"
 COLUMN = "col"
 
 DUAL_SOLVER = "dual"
+ACCOUNTING_IDENTITY = "accounting identity"
 DUAL_TOLERANCE = 1e-12
+
+# A cell within this fraction of its prior magnitude, or an inequality slack within this fraction of the absolute
+# terms of its inequality, counts as at its bound.
+BOUND_TOLERANCE = 1e-6
 
 Cell = tuple[Hashable, Hashable]
 
@@ -119,6 +125,12 @@ class SAMExpression:
                     f"Expressions with dims {self.dims} and {other.dims} would broadcast into an outer product. "
                     f"Rename a dim first, for example sam.sum({row_dim!r}).rename({{{column_dim!r}: {row_dim!r}}})"
                 )
+            for dim in set(self.dims) & set(other.dims):
+                if not self.labels[dim].equals(other.labels[dim]):
+                    raise ValueError(
+                        f"Expressions combine position by position, but their accounts on dim {dim!r} differ: "
+                        f"{list(self.labels[dim])} and {list(other.labels[dim])}"
+                    )
             return other.tensor
 
         if isinstance(other, Real):
@@ -181,15 +193,71 @@ class Constraint:
     A linear constraint ``residual == 0`` or ``residual <= 0`` on the cells of a :class:`SymbolicSAM`.
 
     A residual with dims is one constraint per position. Positions where the residual's constant part is NaN, as from a
-    Series with missing values, are dropped.
+    Series with missing values, are dropped. An equality with a ``penalty`` is a measurement with error, which adds the
+    penalty of its residual to the objective in place of holding exactly.
     """
 
     is_equality: bool
     residual: SAMExpression
+    penalty: "Penalty | None" = None
 
     @property
     def sam(self) -> "SymbolicSAM":
         return self.residual.sam
+
+    def normal(self, sigma: "ScaleData") -> "Constraint":
+        r"""
+        Return this equality as a measurement with normal error, adding
+        :math:`\frac{1}{2} \sum_m (r_m / \sigma_m)^2` to the objective for residuals :math:`r_m`.
+
+        Parameters
+        ----------
+        sigma : float, pandas.Series, pandas.DataFrame or xarray.DataArray
+            Positive standard deviation of the error, in the prior's units. Labeled data aligns with the constraint's
+            positions, like the right-hand side of a comparison.
+        """
+        return self._with_penalty(NormalPenalty(sigma))
+
+    def laplace(self, scale: "ScaleData") -> "Constraint":
+        r"""
+        Return this equality as a measurement with Laplace error, adding :math:`\sum_m |r_m| / b_m` to the objective
+        for residuals :math:`r_m`.
+
+        Parameters
+        ----------
+        scale : float, pandas.Series, pandas.DataFrame or xarray.DataArray
+            Positive scale :math:`b` of the error, in the prior's units. Labeled data aligns with the constraint's
+            positions, like the right-hand side of a comparison.
+        """
+        return self._with_penalty(LaplacePenalty(scale))
+
+    def huber(self, sigma: "ScaleData", threshold: float) -> "Constraint":
+        r"""
+        Return this equality as a measurement with Huber error, which is normal near zero and Laplace in the tails.
+
+        Each standardized residual :math:`u_m = r_m / \sigma_m` adds :math:`\frac{1}{2} u_m^2` to the objective when
+        :math:`|u_m| \le k`, and :math:`k |u_m| - \frac{1}{2} k^2` beyond it.
+
+        Parameters
+        ----------
+        sigma : float, pandas.Series, pandas.DataFrame or xarray.DataArray
+            Positive scale of the error, in the prior's units. Labeled data aligns with the constraint's positions,
+            like the right-hand side of a comparison.
+        threshold : float
+            Positive :math:`k`, the standardized residual where the penalty turns from quadratic to linear.
+        """
+        if not threshold > 0.0:
+            raise ValueError(f"The Huber threshold must be positive, not {threshold}")
+        return self._with_penalty(HuberPenalty(sigma, float(threshold)))
+
+    def _with_penalty(self, penalty: "Penalty") -> "Constraint":
+        if not self.is_equality:
+            raise ValueError(
+                "Only an equality can be a measurement with error. Inequalities always hold exactly"
+            )
+        if self.penalty is not None:
+            raise ValueError("This constraint already has an error distribution")
+        return replace(self, penalty=penalty)
 
     def __bool__(self):
         raise TypeError(
@@ -215,10 +283,9 @@ class SAMEstimate:
     Attributes
     ----------
     sam : pandas.DataFrame, xarray.DataArray or native frame
-        The estimated SAM, in the prior's type and layout. Its nonzero cells are NaN when the solver returns no
-        solution.
+        The estimated SAM, in the prior's type and layout.
     objective : float
-        The objective value at the estimate, in the prior's units.
+        The objective value at the estimate, including the penalties of measurements with error.
     status : str
         The solver status, in cvxpy's vocabulary.
     """
@@ -226,6 +293,227 @@ class SAMEstimate:
     sam: IntoDataFrame | xr.DataArray
     objective: float
     status: str
+    _symbolic_sam: "SymbolicSAM" = field(repr=False, compare=False)
+    _objective: "Objective" = field(repr=False, compare=False)
+    _constraints: dict[str, Constraint] = field(repr=False, compare=False)
+    _cells: np.ndarray = field(repr=False, compare=False)
+
+    def covariance(self) -> pd.DataFrame:
+        """
+        Return the covariance of the estimated cells under a :class:`LeastSquares` objective.
+
+        The objective makes the cells independent and normal around the prior with standard deviation ``sigma``.
+        Measurements made with :meth:`Constraint.normal` are normal observations of linear expressions, and every other
+        equality, including the accounting identity, holds exactly. The covariance is that of the cells given all of
+        them, as the constraints stood when :meth:`SymbolicSAM.fit` ran. It ignores the sign bounds and inequalities,
+        which truncate that normal distribution, so it is the covariance of the estimate only when every bound is many
+        standard deviations from it.
+
+        Returns
+        -------
+        covariance : pandas.DataFrame
+            Covariance of the prior's nonzero cells, in the prior's units squared, indexed on both axes by the row and
+            column account of each cell.
+
+        Raises
+        ------
+        ValueError
+            If the objective is not :class:`LeastSquares`, a measurement error is not normal, a cell sits at zero, or
+            an inequality binds.
+        """
+        return _least_squares_covariance(
+            self._symbolic_sam, self._objective, self._constraints, self._cells
+        )
+
+
+CellData = Real | np.ndarray | pd.DataFrame | xr.DataArray
+ScaleData = Real | pd.Series | pd.DataFrame | xr.DataArray
+
+
+class Penalty:
+    """The negative log density of a measurement error, applied to residuals divided by their scale."""
+
+    scale: ScaleData
+
+    def expression(self, standardized_residuals: cp.Expression) -> cp.Expression:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True, eq=False)
+class NormalPenalty(Penalty):
+    scale: ScaleData
+
+    def expression(self, standardized_residuals: cp.Expression) -> cp.Expression:
+        return 0.5 * cp.sum_squares(standardized_residuals)
+
+
+@dataclass(frozen=True, eq=False)
+class LaplacePenalty(Penalty):
+    scale: ScaleData
+
+    def expression(self, standardized_residuals: cp.Expression) -> cp.Expression:
+        return cp.norm1(standardized_residuals)
+
+
+@dataclass(frozen=True, eq=False)
+class HuberPenalty(Penalty):
+    scale: ScaleData
+    threshold: float
+
+    def expression(self, standardized_residuals: cp.Expression) -> cp.Expression:
+        # cvxpy's huber is u^2 inside the threshold and 2 k |u| - k^2 outside, twice the Huber loss.
+        return 0.5 * cp.sum(cp.huber(standardized_residuals, self.threshold))
+
+
+class Objective:
+    """
+    A distance of the cells from the prior, which :meth:`SymbolicSAM.fit` minimizes.
+
+    Every objective is the negative log density of a prior on the cells, up to a constant, so it adds to the penalties
+    of measurements with error.
+    """
+
+    def expression(
+        self, sam: "SymbolicSAM", magnitudes: cp.Expression, scale: float
+    ) -> cp.Expression:
+        """Return the objective divided by :meth:`unit`, for cell magnitudes divided by ``scale``."""
+        raise NotImplementedError
+
+    def unit(self, scale: float) -> float:
+        """Return the factor that converts :meth:`expression` to the objective."""
+        raise NotImplementedError
+
+
+class Divergence(Objective):
+    r"""
+    An objective that grows in proportion to the cells, divided by a dispersion :math:`\phi` in the prior's units.
+
+    To second order the divergence is :math:`\frac{1}{2} \sum_k (x_k - z_k)^2 / |z_k|`, so dividing it by
+    :math:`\phi` makes it the negative log density of cells with variance :math:`\phi |z_k|`, which rescales with the
+    prior's units. Without measurements with error, :math:`\phi` scales the whole objective and leaves the estimate
+    unchanged.
+    """
+
+    dispersion: float | None
+
+    def __post_init__(self):
+        if self.dispersion is not None and not (
+            np.isfinite(self.dispersion) and self.dispersion > 0.0
+        ):
+            raise ValueError(f"The dispersion must be positive and finite, not {self.dispersion}")
+
+    def unit(self, scale: float) -> float:
+        return scale / (1.0 if self.dispersion is None else self.dispersion)
+
+
+@dataclass(frozen=True, eq=False)
+class KL(Divergence):
+    r"""
+    Weighted generalized KL divergence of the cell magnitudes from the prior magnitudes, divided by the dispersion,
+
+    .. math::
+
+        \frac{1}{\phi} \sum_k w_k \left( |x_k| \log \frac{|x_k|}{|z_k|} - |x_k| + |z_k| \right).
+
+    Parameters
+    ----------
+    weights : float, numpy.ndarray, pandas.DataFrame or xarray.DataArray, optional
+        Positive weight of each cell, as a number or laid out like the prior. A larger weight holds a cell closer to
+        its prior value. Default is None, which weights every cell by one.
+    dispersion : float, optional
+        Positive :math:`\phi`, in the prior's units, which sets how the objective trades off against measurements with
+        error. Default is None, which uses 1.0 and warns when a measurement with error is present.
+    """
+
+    weights: CellData | None = None
+    dispersion: float | None = None
+
+    def expression(
+        self, sam: "SymbolicSAM", magnitudes: cp.Expression, scale: float
+    ) -> cp.Expression:
+        divergence = cp.kl_div(magnitudes, np.abs(sam.prior_values) / scale)
+        if self.weights is None:
+            return cp.sum(divergence)
+        return cp.sum(cp.multiply(_cell_values(sam, self.weights, "weights"), divergence))
+
+
+@dataclass(frozen=True, eq=False)
+class LeastSquares(Objective):
+    r"""
+    Weighted least squares distance of the cells from the prior, the negative log density of independent normal cells,
+
+    .. math::
+
+        \frac{1}{2} \sum_k \left( \frac{x_k - z_k}{\sigma_k} \right)^2.
+
+    Parameters
+    ----------
+    sigma : float, numpy.ndarray, pandas.DataFrame or xarray.DataArray, optional
+        Positive standard error of each cell, in the prior's units, as a number or laid out like the prior. A smaller
+        sigma holds a cell closer to its prior value. Default is None, which uses the magnitude of each prior cell.
+    """
+
+    sigma: CellData | None = None
+
+    def expression(
+        self, sam: "SymbolicSAM", magnitudes: cp.Expression, scale: float
+    ) -> cp.Expression:
+        prior_magnitudes = np.abs(sam.prior_values)
+        sigma = prior_magnitudes if self.sigma is None else _cell_values(sam, self.sigma, "sigma")
+        return 0.5 * cp.sum_squares((magnitudes - prior_magnitudes / scale) / (sigma / scale))
+
+    def unit(self, scale: float) -> float:
+        return 1.0
+
+
+@dataclass(frozen=True, eq=False)
+class ReverseKL(Divergence):
+    r"""
+    Generalized KL divergence of the prior magnitudes from the cell magnitudes, divided by the dispersion,
+
+    .. math::
+
+        \frac{1}{\phi} \sum_k |z_k| \log \frac{|z_k|}{|x_k|} - |z_k| + |x_k|.
+
+    Parameters
+    ----------
+    dispersion : float, optional
+        Positive :math:`\phi`, in the prior's units, which sets how the objective trades off against measurements with
+        error. Default is None, which uses 1.0 and warns when a measurement with error is present.
+    """
+
+    dispersion: float | None = None
+
+    def expression(
+        self, sam: "SymbolicSAM", magnitudes: cp.Expression, scale: float
+    ) -> cp.Expression:
+        return cp.sum(cp.kl_div(np.abs(sam.prior_values) / scale, magnitudes))
+
+
+@dataclass(frozen=True, eq=False)
+class Pearson(Divergence):
+    r"""
+    Pearson chi-squared distance of the cells from the prior, divided by the dispersion, which equals :class:`KL` to
+    second order,
+
+    .. math::
+
+        \frac{1}{2 \phi} \sum_k \frac{(x_k - z_k)^2}{|z_k|}.
+
+    Parameters
+    ----------
+    dispersion : float, optional
+        Positive :math:`\phi`, in the prior's units, which sets how the objective trades off against measurements with
+        error. Default is None, which uses 1.0 and warns when a measurement with error is present.
+    """
+
+    dispersion: float | None = None
+
+    def expression(
+        self, sam: "SymbolicSAM", magnitudes: cp.Expression, scale: float
+    ) -> cp.Expression:
+        prior_magnitudes = np.abs(sam.prior_values) / scale
+        return 0.5 * cp.sum_squares((magnitudes - prior_magnitudes) / np.sqrt(prior_magnitudes))
 
 
 class SymbolicSAM:
@@ -275,6 +563,8 @@ class SymbolicSAM:
         self.prior_values = values[self.rows, self.columns]
         self.signs = np.sign(self.prior_values)
         self.constraints: dict[str, Constraint] = {}
+        # The solvers work in cells divided by this total, so every SAM is solved at the same scale.
+        self._total_magnitude = np.abs(self.prior_values).sum()
 
         self.cells = pt.vector("cells", shape=(self.n_cells,))
         dense = pt.set_subtensor(pt.zeros(prior_frame.shape)[self.rows, self.columns], self.cells)
@@ -329,30 +619,37 @@ class SymbolicSAM:
                 raise TypeError(f"Constraint {name!r} must compare expressions of this SymbolicSAM")
             if name in self.constraints:
                 raise ValueError(f"A constraint named {name!r} already exists")
+            if name == ACCOUNTING_IDENTITY:
+                raise ValueError(
+                    f"The name {ACCOUNTING_IDENTITY!r} is reserved for the identity that fit always imposes"
+                )
             self.constraints[name] = constraint
 
-    def fit(self, solver: str | None = None, **solver_kwargs) -> SAMEstimate:
+    def fit(
+        self, objective: Objective | None = None, solver: str | None = None, **solver_kwargs
+    ) -> SAMEstimate:
         r"""
-        Estimate the balanced SAM closest to the prior in sign-preserving KL divergence, subject to the constraints.
+        Estimate the balanced SAM closest to the prior, subject to the constraints.
 
-        Every account's row sum equals its column sum, in addition to :attr:`constraints`. The objective is the
-        generalized KL divergence of the cell magnitudes from the prior magnitudes,
+        Every account's row sum equals its column sum, in addition to :attr:`constraints`. Every cell keeps the sign of
+        its prior value, so cells that are zero in the prior stay zero. Each objective is zero exactly when the estimate
+        equals the prior. A constraint made a measurement with error by :meth:`Constraint.normal`,
+        :meth:`Constraint.laplace` or :meth:`Constraint.huber` adds its penalty to the objective, and does not hold
+        exactly.
 
-        .. math::
-
-            \sum_k |x_k| \log \frac{|x_k|}{|z_k|} - |x_k| + |z_k|,
-
-        which is zero exactly when the estimate equals the prior.
-
-        Under the accounting identity alone, the estimate scales each positive cell :math:`(i, j)` by :math:`d_j / d_i`
-        and each negative cell by :math:`d_i / d_j`. The ``"dual"`` solver finds the account scales :math:`d` with
-        :func:`scipy.optimize.root`, and every other solver solves the full problem in cvxpy.
+        Under the accounting identity alone, the unweighted :class:`KL` estimate scales each positive cell
+        :math:`(i, j)` by :math:`d_j / d_i` and each negative cell by :math:`d_i / d_j`. The ``"dual"`` solver finds the
+        account scales :math:`d` with :func:`scipy.optimize.root`, and every other solver solves the full problem in
+        cvxpy.
 
         Parameters
         ----------
+        objective : Objective, optional
+            The distance from the prior to minimize: :class:`KL`, :class:`LeastSquares`, :class:`ReverseKL` or
+            :class:`Pearson`. Default is None, which uses the unweighted :class:`KL`.
         solver : str, optional
-            ``"dual"``, for a SAM with no constraints, or the name of a cvxpy solver. Default is None, which picks
-            ``"dual"`` for a SAM with no constraints and CLARABEL otherwise.
+            ``"dual"``, for the unweighted :class:`KL` objective on a SAM with no constraints, or the name of a cvxpy
+            solver. Default is None, which picks ``"dual"`` where it applies and CLARABEL otherwise.
         **solver_kwargs
             Passed to :func:`scipy.optimize.root` for the ``"dual"`` solver, which uses ``method="lm"`` unless one is
             given, and to ``cvxpy.Problem.solve`` otherwise. CLARABEL's tolerances apply after every cell is divided by
@@ -363,6 +660,18 @@ class SymbolicSAM:
         -------
         estimate : SAMEstimate
             The estimated SAM, the objective value, and the solver status.
+
+        Raises
+        ------
+        ValueError
+            If balancing would set cells to zero, a constraint involves no nonzero cell where it cannot hold, or the
+            solver finds the problem infeasible or unbounded.
+
+        Warns
+        -----
+        UserWarning
+            If the solve is not optimal, or a :class:`Divergence` objective without a ``dispersion`` meets a
+            measurement with error.
         """
         forced_to_zero = cells_forced_to_zero(self)
         if forced_to_zero:
@@ -371,22 +680,28 @@ class SymbolicSAM:
                 f"{forced_to_zero}. Remove them from the prior or add the missing flows."
             )
 
+        if objective is None:
+            objective = KL()
+        _warn_if_unit_dependent(objective, self.constraints)
+
+        dual_applies = (
+            isinstance(objective, KL) and objective.weights is None and not self.constraints
+        )
         if solver is None:
-            solver = cp.CLARABEL if self.constraints else DUAL_SOLVER
+            solver = DUAL_SOLVER if dual_applies else cp.CLARABEL
 
         if solver == DUAL_SOLVER:
-            if self.constraints:
+            if not dual_applies:
                 raise ValueError(
-                    f"The {DUAL_SOLVER!r} solver covers only the accounting identity. Use a cvxpy solver for a SAM "
-                    f"with constraints"
+                    f"The {DUAL_SOLVER!r} solver covers only the unweighted KL objective under the accounting "
+                    f"identity. Use a cvxpy solver for a SAM with constraints or another objective"
                 )
-            return _fit_dual(self, **solver_kwargs)
+            return _fit_dual(self, objective, **solver_kwargs)
 
-        row_dim, column_dim = self.dims
-        balance = self.sum(column_dim) == self.sum(row_dim).rename({column_dim: row_dim})
-        linear = linear_constraints(self, [balance, *self.constraints.values()])
+        constraints = dict(self.constraints)
+        linear = linear_constraints(self, _hard_constraints(self, constraints))
 
-        scale = np.abs(self.prior_values).sum()
+        scale = self._total_magnitude
         magnitudes = cp.Variable(self.n_cells, nonneg=True)
         cells = cp.multiply(self.signs, magnitudes)
 
@@ -396,24 +711,112 @@ class SymbolicSAM:
                 linear.inequality_operator @ cells <= linear.inequality_values / scale
             )
 
-        objective = cp.sum(cp.kl_div(magnitudes, np.abs(self.prior_values) / scale))
-        problem = cp.Problem(cp.Minimize(objective), problem_constraints)
+        unit = objective.unit(scale)
+        problem = cp.Problem(
+            cp.Minimize(self._scaled_objective(objective, magnitudes, scale, constraints)),
+            problem_constraints,
+        )
         problem.solve(solver=solver, **solver_kwargs)
 
+        if problem.status in cp.settings.INF_OR_UNB or magnitudes.value is None:
+            raise ValueError(
+                f"The SAM estimate has no solution: solver status is {problem.status!r}. The constraints contradict "
+                f"each other or the accounting identity"
+            )
         if problem.status != cp.OPTIMAL:
             warnings.warn(
                 f"The SAM estimate did not solve to optimality: solver status is {problem.status!r}",
                 stacklevel=2,
             )
 
-        solved_magnitudes = (
-            np.full(self.n_cells, np.nan) if magnitudes.value is None else magnitudes.value
-        )
+        cell_values = self.signs * magnitudes.value * scale
         return SAMEstimate(
-            sam=self.like_prior(self.signs * solved_magnitudes * scale),
-            objective=float(problem.value) * scale,
+            sam=self.like_prior(cell_values),
+            objective=float(problem.value) * unit,
             status=problem.status,
+            _symbolic_sam=self,
+            _objective=objective,
+            _constraints=constraints,
+            _cells=cell_values,
         )
+
+    def objective_value(
+        self, candidate: IntoDataFrame | xr.DataArray, objective: Objective | None = None
+    ) -> float:
+        """
+        Return the objective at ``candidate``, including the penalties of measurements with error.
+
+        This is the quantity :meth:`fit` minimizes, under the measurements in :attr:`constraints` as they stand now. It
+        equals :attr:`SAMEstimate.objective` at an estimate fitted under the same constraints. Hard constraints,
+        including the accounting identity, are not checked, so ``candidate`` need not satisfy them.
+
+        Parameters
+        ----------
+        candidate : pandas.DataFrame, xarray.DataArray or eager narwhals-compatible frame
+            A SAM in the prior's type and layout, with the prior's account labels in the prior's order. Every cell
+            that is zero in the prior is zero, and every other cell has the sign of its prior value or is zero.
+        objective : Objective, optional
+            The objective to evaluate, as passed to :meth:`fit`. Default is None, which uses the unweighted
+            :class:`KL`.
+
+        Returns
+        -------
+        value : float
+            The objective at ``candidate``.
+
+        Raises
+        ------
+        ValueError
+            If ``candidate`` has different account labels from the prior, a cell that is not finite, a nonzero cell
+            where the prior is zero, or a cell with the opposite sign of its prior value.
+        """
+        if objective is None:
+            objective = KL()
+        _warn_if_unit_dependent(objective, self.constraints)
+
+        frame, _, _ = _prior_frame_and_dims(candidate, self._index_column)
+        if not (frame.index.equals(self.prior.index) and frame.columns.equals(self.prior.columns)):
+            raise ValueError(
+                "The candidate must have the prior's account labels in the prior's order"
+            )
+
+        values = frame.to_numpy(dtype=float)
+        if not np.isfinite(values).all():
+            raise ValueError("The candidate must be finite")
+
+        outside_prior = np.ones(values.shape, dtype=bool)
+        outside_prior[self.rows, self.columns] = False
+        if (values[outside_prior] != 0.0).any():
+            raise ValueError("The candidate has nonzero cells where the prior is zero")
+
+        cell_values = values[self.rows, self.columns]
+        if (cell_values * self.signs < 0.0).any():
+            raise ValueError("The candidate has cells with the opposite sign of their prior value")
+
+        scale = self._total_magnitude
+        magnitudes = cp.Constant(np.abs(cell_values) / scale)
+        scaled_value = self._scaled_objective(objective, magnitudes, scale, self.constraints).value
+        return float(scaled_value) * objective.unit(scale)
+
+    def _scaled_objective(
+        self,
+        objective: Objective,
+        magnitudes: cp.Expression,
+        scale: float,
+        constraints: dict[str, Constraint],
+    ) -> cp.Expression:
+        """Return the objective plus the penalties of the measurements among ``constraints``, in the units of
+        :meth:`Objective.expression`."""
+        cells = cp.multiply(self.signs, magnitudes)
+        unit = objective.unit(scale)
+        terms = [objective.expression(self, magnitudes, scale)]
+        for constraint in constraints.values():
+            if constraint.penalty is None:
+                continue
+            operator, values, error_scales = _measurement_rows(self, constraint)
+            standardized_residuals = (operator @ cells - values / scale) / (error_scales / scale)
+            terms.append(constraint.penalty.expression(standardized_residuals) / unit)
+        return cp.sum(cp.hstack(terms))
 
     def like_prior(self, cell_values: np.ndarray) -> IntoDataFrame | xr.DataArray:
         """Return a SAM in the prior's type and layout, with ``cell_values`` in the prior's nonzero cells."""
@@ -437,16 +840,48 @@ class SymbolicSAM:
         return nw.from_dict(columns, backend=native.implementation).to_native()
 
 
-def linear_constraints(sam: SymbolicSAM, constraints: list[Constraint]) -> LinearConstraints:
+def linear_constraints(
+    sam: SymbolicSAM, constraints: list[Constraint] | dict[str, Constraint]
+) -> LinearConstraints:
     """
     Return the coefficients of ``constraints`` over the cells of ``sam``.
 
     Each position of a constraint's residual is one row. The coefficients are the Jacobian of the residual with respect
     to the cells, and the values are minus its constant part.
+
+    Parameters
+    ----------
+    sam : SymbolicSAM
+        The SAM whose cells the constraints restrict.
+    constraints : list of Constraint or dict of str to Constraint
+        The constraints, named by their keys when given as a dict, or by their position in a list.
+
+    Returns
+    -------
+    linear : LinearConstraints
+        The equality rows, then the inequality rows, in the order of ``constraints``.
+
+    Raises
+    ------
+    ValueError
+        If a constraint involves no nonzero cell of the prior at a position where its value cannot hold.
     """
-    equalities = [constraint.residual for constraint in constraints if constraint.is_equality]
-    inequalities = [constraint.residual for constraint in constraints if not constraint.is_equality]
-    return LinearConstraints(*_linear_rows(sam, equalities), *_linear_rows(sam, inequalities))
+    named = (
+        constraints
+        if isinstance(constraints, dict)
+        else {
+            f"constraints[{position}]": constraint
+            for position, constraint in enumerate(constraints)
+        }
+    )
+    equalities = {name: constraint for name, constraint in named.items() if constraint.is_equality}
+    inequalities = {
+        name: constraint for name, constraint in named.items() if not constraint.is_equality
+    }
+    return LinearConstraints(
+        *_linear_rows(sam, equalities, is_equality=True),
+        *_linear_rows(sam, inequalities, is_equality=False),
+    )
 
 
 def cells_forced_to_zero(sam: SymbolicSAM) -> list[Cell]:
@@ -516,7 +951,7 @@ def _prior_frame_and_dims(
     return prior_frame, row_dim, column_dim
 
 
-def _fit_dual(sam: SymbolicSAM, **root_kwargs) -> SAMEstimate:
+def _fit_dual(sam: SymbolicSAM, objective: Objective, **root_kwargs) -> SAMEstimate:
     """
     Balance ``sam`` under the accounting identity alone by solving for log account scales.
 
@@ -526,9 +961,8 @@ def _fit_dual(sam: SymbolicSAM, **root_kwargs) -> SAMEstimate:
     one log scale in each group of connected accounts removes the Laplacian's null space. The solve is optimal when
     every account balances to ``DUAL_TOLERANCE`` of its turnover.
     """
-    prior_magnitudes = np.abs(sam.prior_values)
-    scale = prior_magnitudes.sum()
-    weights = prior_magnitudes / scale
+    scale = sam._total_magnitude
+    weights = np.abs(sam.prior_values) / scale
 
     cell_index = np.arange(sam.n_cells)
     incidence = csr_array(
@@ -582,9 +1016,109 @@ def _fit_dual(sam: SymbolicSAM, **root_kwargs) -> SAMEstimate:
 
     return SAMEstimate(
         sam=sam.like_prior(sam.signs * balanced * scale),
-        objective=float(kl_div(balanced, weights).sum()) * scale,
+        objective=float(kl_div(balanced, weights).sum()) * objective.unit(scale),
         status=status,
+        _symbolic_sam=sam,
+        _objective=objective,
+        _constraints={},
+        _cells=sam.signs * balanced * scale,
     )
+
+
+def _warn_if_unit_dependent(objective: Objective, constraints: dict[str, Constraint]) -> None:
+    """Warn when a measurement with error makes the estimate depend on a dispersion left at its default."""
+    if not isinstance(objective, Divergence) or objective.dispersion is not None:
+        return
+    measurements = [
+        name for name, constraint in constraints.items() if constraint.penalty is not None
+    ]
+    if measurements:
+        warnings.warn(
+            f"{type(objective).__name__} is in the prior's units, while the measurements with error {measurements} "
+            f"are not, so the estimate depends on the units of the prior. Pass dispersion, in the prior's units, to "
+            f"fix the trade-off. Using dispersion=1.0",
+            stacklevel=3,
+        )
+
+
+def _least_squares_covariance(
+    sam: SymbolicSAM,
+    objective: Objective,
+    constraints: dict[str, Constraint],
+    cells: np.ndarray,
+) -> pd.DataFrame:
+    if not isinstance(objective, LeastSquares):
+        raise ValueError(
+            f"A covariance is defined only for the LeastSquares objective, the negative log density of normal cells. "
+            f"This estimate used {type(objective).__name__}"
+        )
+    measurements = [
+        constraint for constraint in constraints.values() if constraint.penalty is not None
+    ]
+    if not all(isinstance(constraint.penalty, NormalPenalty) for constraint in measurements):
+        raise ValueError("A covariance is defined only when every measurement error is normal")
+
+    if (np.abs(cells) <= BOUND_TOLERANCE * np.abs(sam.prior_values)).any():
+        raise ValueError(
+            "A cell sits at zero, where its sign bound binds and the cells are no longer normal around the estimate"
+        )
+
+    linear = linear_constraints(sam, _hard_constraints(sam, constraints))
+    slack = linear.inequality_values - linear.inequality_operator @ cells
+    inequality_size = abs(linear.inequality_operator) @ np.abs(cells) + np.abs(
+        linear.inequality_values
+    )
+    if (slack <= BOUND_TOLERANCE * inequality_size).any():
+        raise ValueError(
+            "An inequality binds, so the cells are no longer normal around the estimate"
+        )
+
+    sigma = (
+        np.abs(sam.prior_values)
+        if objective.sigma is None
+        else _cell_values(sam, objective.sigma, "sigma")
+    )
+    precision = np.diag(1.0 / sigma**2)
+    for measurement in measurements:
+        operator, _, error_scales = _measurement_rows(sam, measurement)
+        loadings = operator.toarray() / error_scales[:, None]
+        precision += loadings.T @ loadings
+
+    free_directions = null_space(linear.equality_operator.toarray())
+    covariance = free_directions @ np.linalg.solve(
+        free_directions.T @ precision @ free_directions, free_directions.T
+    )
+
+    labels = pd.MultiIndex.from_arrays(
+        [list(sam.prior.index[sam.rows]), list(sam.prior.columns[sam.columns])],
+        names=list(sam.dims),
+    )
+    return pd.DataFrame(covariance, index=labels, columns=labels)
+
+
+def _cell_values(sam: SymbolicSAM, data: CellData, name: str) -> np.ndarray:
+    """Return ``data`` at the prior's nonzero cells. A DataFrame or DataArray aligns by label, and an array must match
+    the prior's shape and order."""
+    labeled = data.transpose(*sam.dims).to_pandas() if isinstance(data, xr.DataArray) else data
+
+    if isinstance(labeled, Real):
+        values = np.full(sam.prior.shape, float(labeled))
+    elif isinstance(labeled, pd.DataFrame):
+        values = labeled.reindex(index=sam.prior.index, columns=sam.prior.columns).to_numpy(
+            dtype=float
+        )
+    else:
+        values = np.asarray(labeled, dtype=float)
+
+    if values.shape != sam.prior.shape:
+        raise ValueError(
+            f"{name} has shape {values.shape}, but the prior has shape {sam.prior.shape}"
+        )
+
+    cell_values = values[sam.rows, sam.columns]
+    if not (np.isfinite(cell_values).all() and (cell_values > 0.0).all()):
+        raise ValueError(f"{name} must be positive and finite on every nonzero cell of the prior")
+    return cell_values
 
 
 def _scalar(value, operation: str) -> float:
@@ -608,11 +1142,81 @@ def _label_positions(index: pd.Index, labels) -> int | np.ndarray:
     return int(positions) if np.ndim(positions) == 0 else positions
 
 
-def _linear_rows(sam: SymbolicSAM, residuals: list[SAMExpression]) -> tuple[csr_array, np.ndarray]:
-    if not residuals:
+def _hard_constraints(
+    sam: SymbolicSAM, constraints: dict[str, Constraint]
+) -> dict[str, Constraint]:
+    """Return the accounting identity and the constraints that hold exactly."""
+    row_dim, column_dim = sam.dims
+    balance = sam.sum(column_dim) == sam.sum(row_dim).rename({column_dim: row_dim})
+    exact = {
+        name: constraint for name, constraint in constraints.items() if constraint.penalty is None
+    }
+    return {ACCOUNTING_IDENTITY: balance, **exact}
+
+
+def _linear_rows(
+    sam: SymbolicSAM, constraints: dict[str, Constraint], is_equality: bool
+) -> tuple[csr_array, np.ndarray]:
+    if not constraints:
         return csr_array((0, sam.n_cells)), np.zeros(0)
 
-    stacked = pt.concatenate(
+    residuals = [constraint.residual for constraint in constraints.values()]
+    constant, operator, imposed = _affine_parts(sam, residuals)
+    values = -constant[imposed]
+
+    # A row with no cells is 0 == value or 0 <= value, which holds or fails regardless of the cells.
+    empty = np.diff(operator.indptr) == 0
+    unsatisfiable = empty & (values != 0.0 if is_equality else values < 0.0)
+    if unsatisfiable.any():
+        positions_per_constraint = [_n_positions(residual) for residual in residuals]
+        owners = np.repeat(np.arange(len(constraints)), positions_per_constraint)[imposed]
+        name = list(constraints)[owners[unsatisfiable][0]]
+        raise ValueError(
+            f"Constraint {name!r} involves no nonzero cell of the prior at a position where it cannot hold. Cells "
+            f"that are zero in the prior stay zero"
+        )
+
+    return operator, values
+
+
+def _measurement_rows(
+    sam: SymbolicSAM, constraint: Constraint
+) -> tuple[csr_array, np.ndarray, np.ndarray]:
+    """Return the rows, values and error scales of a measurement with error, without its NaN positions."""
+    residual = constraint.residual
+    constant, operator, imposed = _affine_parts(sam, [residual])
+
+    # Adding the scale to a zero multiple of the residual aligns it with the residual's positions by label.
+    error_scales = _constant_part(sam, [residual * 0.0 + constraint.penalty.scale])[imposed]
+    if not (np.isfinite(error_scales).all() and (error_scales > 0.0).all()):
+        raise ValueError(
+            "The scale of a measurement error must be positive and finite at every position the measurement imposes"
+        )
+
+    return operator, -constant[imposed], error_scales
+
+
+def _affine_parts(
+    sam: SymbolicSAM, residuals: list[SAMExpression]
+) -> tuple[np.ndarray, csr_array, np.ndarray]:
+    """
+    Return the constant part of the stacked ``residuals``, which are affine in the cells, the Jacobian at the positions
+    where that constant is not NaN, and the indices of those positions.
+    """
+    stacked = _stacked(residuals)
+    constant = _evaluate(sam, stacked)
+    imposed = np.flatnonzero(~np.isnan(constant))
+
+    jacobian = pytensor.gradient.jacobian(stacked[imposed], sam.cells, vectorize=True)
+    return constant, csr_array(_evaluate(sam, jacobian)), imposed
+
+
+def _constant_part(sam: SymbolicSAM, residuals: list[SAMExpression]) -> np.ndarray:
+    return _evaluate(sam, _stacked(residuals))
+
+
+def _stacked(residuals: list[SAMExpression]) -> pt.TensorVariable:
+    return pt.concatenate(
         [
             pt.as_tensor_variable(
                 rewrite_graph(residual.tensor.values.ravel(), include=("lower_xtensor",))
@@ -620,10 +1224,13 @@ def _linear_rows(sam: SymbolicSAM, residuals: list[SAMExpression]) -> tuple[csr_
             for residual in residuals
         ]
     )
-    jacobian = pytensor.gradient.jacobian(stacked, sam.cells, vectorize=True)
-    evaluate = pytensor.function([sam.cells], [stacked, jacobian], on_unused_input="ignore")
 
-    constant, operator = evaluate(np.zeros(sam.n_cells))
-    imposed = ~np.isnan(constant)
 
-    return csr_array(operator[imposed]), -constant[imposed]
+def _evaluate(sam: SymbolicSAM, output: pt.TensorVariable) -> np.ndarray:
+    """Evaluate ``output`` with every cell at zero."""
+    evaluate = pytensor.function([sam.cells], output, on_unused_input="ignore")
+    return evaluate(np.zeros(sam.n_cells))
+
+
+def _n_positions(residual: SAMExpression) -> int:
+    return int(np.prod([len(residual.labels[dim]) for dim in residual.dims]))
