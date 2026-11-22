@@ -6,7 +6,7 @@ from cge_modeling.model import Equation, Parameter, Variable
 from cge_modeling.compile.pytensor_tools import prod_to_no_zero_prod
 from cge_modeling.plotting import plot_bar, plot_areas, plot_lines
 from cge_modeling.tools.output_tools import display_info_as_table
-from cge_modeling.tools.sam_estimation import SymbolicSAM
+from cge_modeling.tools.sam_estimation import KL, LeastSquares, Pearson, ReverseKL, SymbolicSAM
 
 from importlib.metadata import PackageNotFoundError, version
 

@@ -7,7 +7,15 @@ import polars as pl
 import pytest
 import xarray as xr
 
-from cge_modeling.tools.sam_estimation import SymbolicSAM, cells_forced_to_zero, linear_constraints
+from cge_modeling.tools.sam_estimation import (
+    KL,
+    LeastSquares,
+    Pearson,
+    ReverseKL,
+    SymbolicSAM,
+    cells_forced_to_zero,
+    linear_constraints,
+)
 
 UNBALANCED_SAM = Path(__file__).parents[1] / "data" / "unbalanced_sam.csv"
 
@@ -451,12 +459,18 @@ def test_default_solver():
     pd.testing.assert_frame_equal(constrained.fit().sam, constrained.fit(solver=cp.CLARABEL).sam)
 
 
-def test_dual_rejects_constraints():
+@pytest.mark.parametrize(
+    "constrained, objective",
+    [(True, None), (False, KL(weights=2.0)), (False, LeastSquares())],
+    ids=["constraints", "weighted KL", "least squares"],
+)
+def test_dual_rejects_other_problems(constrained, objective):
     sam = SymbolicSAM(pd.DataFrame([[0.0, 1.0], [1.0, 0.0]]))
-    sam.subject_to(cap=sam.sel(row=0).sum() <= 2.0)
+    if constrained:
+        sam.subject_to(cap=sam.sel(row=0).sum() <= 2.0)
 
-    with pytest.raises(ValueError, match="only the accounting identity"):
-        sam.fit(solver="dual")
+    with pytest.raises(ValueError, match="only the unweighted KL objective"):
+        sam.fit(objective=objective, solver="dual")
 
 
 def test_dual_solver_kwargs():
@@ -537,3 +551,300 @@ def test_gras_published_example():
         [-2.425, 0.0, 1.425, 0.0],
     ]
     np.testing.assert_allclose(estimate.loc[rows, columns], published, atol=5e-4)
+
+
+@pytest.mark.parametrize(
+    "objective",
+    [KL(weights=2.0), LeastSquares(), LeastSquares(sigma=0.5), ReverseKL(), Pearson()],
+    ids=["weighted KL", "least squares", "least squares sigma", "reverse KL", "Pearson"],
+)
+def test_objective_fixed_point(objective):
+    prior = pd.DataFrame([[0.0, 3.0, 0.0], [2.0, 0.0, 0.0], [1.0, -1.0, 0.0]])
+
+    estimate = SymbolicSAM(prior).fit(objective=objective)
+
+    np.testing.assert_allclose(estimate.sam, prior, rtol=SOLVER_RTOL)
+    assert estimate.objective == pytest.approx(0.0, abs=1e-6)
+
+
+def test_least_squares_closed_form():
+    # With equality constraints C x = c alone and no cell pushed to zero, weighted least squares has the closed form
+    # z - V C' (C V C')^+ (C z - c) with V = diag(sigma^2) (Stone, Champernowne and Meade 1942).
+    sam = SymbolicSAM(load_unbalanced_sam())
+    prior_cells = sam.prior_values
+    sigma = np.abs(prior_cells) * np.linspace(0.5, 2.0, sam.n_cells)
+
+    balance = sam.sum("col") == sam.sum("row").rename({"col": "row"})
+    linear = linear_constraints(sam, [balance])
+    operator = linear.equality_operator.toarray()
+    variance = np.diag(sigma**2)
+    gain = variance @ operator.T @ np.linalg.pinv(operator @ variance @ operator.T)
+    closed_form = prior_cells - gain @ (operator @ prior_cells - linear.equality_values)
+    assert (np.sign(closed_form) == np.sign(prior_cells)).all()
+
+    sigma_grid = np.ones(sam.prior.shape)
+    sigma_grid[sam.rows, sam.columns] = sigma
+    estimate = sam.fit(objective=LeastSquares(sigma=sigma_grid), **TIGHT_CLARABEL)
+    estimate_cells = estimate.sam.to_numpy()[sam.rows, sam.columns]
+
+    np.testing.assert_allclose(estimate_cells, closed_form, rtol=1e-8)
+    assert estimate.objective == pytest.approx(
+        0.5 * np.sum(((closed_form - prior_cells) / sigma) ** 2), rel=1e-8
+    )
+
+
+@pytest.mark.parametrize(
+    "objective_for",
+    [lambda weight: KL(weights=1.0 / weight), lambda weight: LeastSquares(sigma=weight)],
+    ids=["KL weights", "least squares sigma"],
+)
+def test_reliable_cell_moves_less(objective_for):
+    prior = load_unbalanced_sam()
+    sam = SymbolicSAM(prior)
+    rest_of_world = ("Other", "Rest of World")
+    cell = (rest_of_world, ("Commodity", "Agriculture"))
+
+    # Labels in reverse order check that a DataFrame aligns by label.
+    loose = pd.DataFrame(1.0, index=prior.index[::-1], columns=prior.columns[::-1])
+    tight = loose.copy()
+    tight.loc[cell] = 1e-3
+    relative_change = {
+        name: abs(
+            sam.fit(objective=objective_for(weight), **TIGHT_CLARABEL).sam.loc[cell]
+            / prior.loc[cell]
+            - 1.0
+        )
+        for name, weight in {"loose": loose, "tight": tight}.items()
+    }
+
+    assert relative_change["tight"] < 1e-2 * relative_change["loose"]
+
+
+def test_objectives_agree_near_balance():
+    # KL, reverse KL and Pearson are all proportional to sum (x - z)^2 / |z| to second order, so near balance their
+    # estimates differ by a fraction of the adjustment of order the perturbation, here about 3e-4. Least squares with
+    # sigma = |z| weights the cells differently and differs by about 0.4 of the adjustment.
+    balanced = SymbolicSAM(load_unbalanced_sam()).fit().sam
+    perturbation = np.random.default_rng(0).uniform(-1e-3, 1e-3, size=balanced.shape)
+    sam = SymbolicSAM(balanced * (1.0 + perturbation))
+    tolerances = {"tol_gap_abs": 1e-11, "tol_gap_rel": 1e-11, "tol_feas": 1e-11}
+
+    kl_estimate = sam.fit().sam.to_numpy()
+    adjustment = np.abs(kl_estimate - sam.prior.to_numpy()).max()
+
+    for objective in [ReverseKL(), Pearson()]:
+        estimate = sam.fit(objective=objective, **tolerances).sam.to_numpy()
+        assert np.abs(estimate - kl_estimate).max() < 1e-2 * adjustment
+
+
+@pytest.mark.parametrize(
+    "weights, message",
+    [(np.ones((2, 3)), "has shape"), (0.0, "positive and finite"), (np.nan, "positive and finite")],
+    ids=["wrong shape", "zero", "nan"],
+)
+def test_invalid_weights_raise(weights, message):
+    sam = SymbolicSAM(pd.DataFrame([[0.0, 1.0], [1.0, 0.0]]))
+
+    with pytest.raises(ValueError, match=message):
+        sam.fit(objective=KL(weights=weights))
+
+
+def test_normal_measurement_closed_form():
+    # A normal prior on the cells, the exact identity C x = c, and a normal measurement h' x = y with standard deviation
+    # r give the estimate solving [[V^-1 + h h' / r^2, C'], [C, 0]] [x; lambda] = [V^-1 z + h y / r^2; c].
+    sam = SymbolicSAM(load_unbalanced_sam())
+    prior_cells = sam.prior_values
+    sigma = np.abs(prior_cells)
+    household_income, error = 9893.0, 50.0
+
+    measurement = sam.sel(row=("Institution", "Household")).sum() == household_income
+    sam.subject_to(household_income=measurement.normal(sigma=error))
+    estimate = sam.fit(objective=LeastSquares(), **TIGHT_CLARABEL)
+
+    balance = sam.sum("col") == sam.sum("row").rename({"col": "row"})
+    linear = linear_constraints(sam, [balance])
+    identity = linear.equality_operator.toarray()
+    loading = linear_constraints(sam, [measurement]).equality_operator.toarray()[0]
+    precision = np.diag(1.0 / sigma**2) + np.outer(loading, loading) / error**2
+    system = np.block([[precision, identity.T], [identity, np.zeros((identity.shape[0],) * 2)]])
+    right_side = np.concatenate(
+        [prior_cells / sigma**2 + loading * household_income / error**2, linear.equality_values]
+    )
+    closed_form = np.linalg.lstsq(system, right_side, rcond=None)[0][: sam.n_cells]
+
+    estimate_cells = estimate.sam.to_numpy()[sam.rows, sam.columns]
+    expected_objective = (
+        0.5 * np.sum(((closed_form - prior_cells) / sigma) ** 2)
+        + 0.5 * ((loading @ closed_form - household_income) / error) ** 2
+    )
+    np.testing.assert_allclose(estimate_cells, closed_form, rtol=1e-7)
+    assert estimate.objective == pytest.approx(expected_objective, rel=1e-7)
+
+
+@pytest.mark.parametrize(
+    "with_error",
+    [
+        lambda measurement, error: measurement.normal(sigma=error),
+        lambda measurement, error: measurement.laplace(scale=error),
+        lambda measurement, error: measurement.huber(sigma=error, threshold=1.0),
+    ],
+    ids=["normal", "laplace", "huber"],
+)
+def test_measurement_limits(with_error):
+    # A precise measurement acts like the exact constraint, a vague one like no constraint, and one in between lands
+    # between the two.
+    prior = load_unbalanced_sam()
+    household = ("Institution", "Household")
+
+    def fit_household_income(error):
+        sam = SymbolicSAM(prior)
+        sam.subject_to(household_income=with_error(sam.sel(row=household).sum() == 9893.0, error))
+        return sam.fit(objective=Pearson(), **TIGHT_CLARABEL).sam.loc[household].sum()
+
+    unconstrained_income = (
+        SymbolicSAM(prior).fit(objective=Pearson(), **TIGHT_CLARABEL).sam.loc[household].sum()
+    )
+
+    assert fit_household_income(1e-3) == pytest.approx(9893.0, abs=1e-2)
+    assert fit_household_income(1e9) == pytest.approx(unconstrained_income, rel=1e-4)
+    assert 9893.0 < fit_household_income(100.0) < unconstrained_income or (
+        unconstrained_income < fit_household_income(100.0) < 9893.0
+    )
+
+
+def test_huber_between_normal_and_laplace():
+    # With a threshold far beyond every residual, Huber is the normal penalty. With a threshold k far below them, it is
+    # k |r| / sigma up to a constant, the Laplace penalty with scale sigma / k.
+    prior = load_unbalanced_sam()
+    household = ("Institution", "Household")
+
+    def fit_with(with_error):
+        sam = SymbolicSAM(prior)
+        sam.subject_to(household_income=with_error(sam.sel(row=household).sum() == 9893.0))
+        return sam.fit(objective=Pearson(), **TIGHT_CLARABEL).sam
+
+    np.testing.assert_allclose(
+        fit_with(lambda measurement: measurement.huber(sigma=100.0, threshold=1e6)),
+        fit_with(lambda measurement: measurement.normal(sigma=100.0)),
+        rtol=1e-6,
+    )
+    np.testing.assert_allclose(
+        fit_with(lambda measurement: measurement.huber(sigma=100.0, threshold=1e-3)),
+        fit_with(lambda measurement: measurement.laplace(scale=1e5)),
+        rtol=1e-6,
+    )
+
+
+def test_measurement_scale_aligns_by_label():
+    prior = load_unbalanced_sam()
+    agriculture, industry, service = (
+        ("Activity", name) for name in ["Agriculture", "Industry", "Service"]
+    )
+    totals = pd.Series(
+        [5500.0, 9800.0, np.nan], index=pd.MultiIndex.from_tuples([agriculture, industry, service])
+    )
+    errors = pd.Series([200.0, 50.0], index=pd.MultiIndex.from_tuples([industry, agriculture]))
+
+    together = SymbolicSAM(prior)
+    together.subject_to(output=(together.sum("col") == totals).normal(sigma=errors))
+    separate = SymbolicSAM(prior)
+    separate.subject_to(
+        agriculture=(separate.sel(row=agriculture).sum() == 5500.0).normal(sigma=50.0),
+        industry=(separate.sel(row=industry).sum() == 9800.0).normal(sigma=200.0),
+    )
+
+    np.testing.assert_allclose(
+        together.fit(objective=Pearson(), **TIGHT_CLARABEL).sam,
+        separate.fit(objective=Pearson(), **TIGHT_CLARABEL).sam,
+        rtol=1e-6,
+    )
+
+
+@pytest.mark.parametrize(
+    "build, message",
+    [
+        (lambda sam: (sam.sel(row=0).sum() <= 2.0).normal(sigma=1.0), "Only an equality"),
+        (
+            lambda sam: (sam.sel(row=0).sum() == 2.0).normal(sigma=1.0).laplace(scale=1.0),
+            "already has",
+        ),
+        (
+            lambda sam: (sam.sel(row=0).sum() == 2.0).huber(sigma=1.0, threshold=0.0),
+            "threshold must be positive",
+        ),
+    ],
+    ids=["inequality", "two penalties", "huber threshold"],
+)
+def test_invalid_measurement_raises(build, message):
+    sam = SymbolicSAM(pd.DataFrame([[0.0, 1.0], [1.0, 0.0]]))
+
+    with pytest.raises(ValueError, match=message):
+        build(sam)
+
+
+def test_nonpositive_measurement_scale_raises():
+    sam = SymbolicSAM(pd.DataFrame([[0.0, 1.0], [1.0, 0.0]]))
+    sam.subject_to(income=(sam.sel(row=0).sum() == 2.0).normal(sigma=0.0))
+
+    with pytest.raises(ValueError, match="positive and finite"):
+        sam.fit()
+
+
+@pytest.mark.parametrize("measured", [False, True], ids=["identity only", "normal measurement"])
+def test_least_squares_covariance(measured):
+    # Normal cells x ~ N(z, V) observed through y = h' x + e with e ~ N(0, r^2) have covariance
+    # V1 = V - V h (h' V h + r^2)^-1 h' V, and conditioning on the identity C x = c gives
+    # S = V1 - V1 C' (C V1 C')^+ C V1 (Stone, Champernowne and Meade 1942, for the identity alone).
+    sam = SymbolicSAM(load_unbalanced_sam())
+    variance = np.diag(np.abs(sam.prior_values) ** 2)
+    household_income = sam.sel(row=("Institution", "Household")).sum() == 9893.0
+    if measured:
+        sam.subject_to(household_income=household_income.normal(sigma=50.0))
+    estimate = sam.fit(objective=LeastSquares(), **TIGHT_CLARABEL)
+
+    if measured:
+        loading = linear_constraints(sam, [household_income]).equality_operator.toarray()[0]
+        gain = variance @ loading / (loading @ variance @ loading + 50.0**2)
+        variance = variance - np.outer(gain, loading @ variance)
+    balance = sam.sum("col") == sam.sum("row").rename({"col": "row"})
+    identity = linear_constraints(sam, [balance]).equality_operator.toarray()
+    expected = (
+        variance
+        - variance
+        @ identity.T
+        @ np.linalg.pinv(identity @ variance @ identity.T)
+        @ identity
+        @ variance
+    )
+
+    covariance = estimate.covariance()
+
+    np.testing.assert_allclose(
+        covariance.to_numpy(), expected, rtol=1e-6, atol=1e-6 * expected.max()
+    )
+    assert covariance.index[0] == (sam.prior.index[sam.rows[0]], sam.prior.columns[sam.columns[0]])
+
+
+@pytest.mark.parametrize(
+    "objective, constraint, message",
+    [
+        (KL(), None, "only for the LeastSquares objective"),
+        (
+            LeastSquares(),
+            lambda sam: (sam.sel(row=0).sum() == 4.0).laplace(scale=1.0),
+            "every measurement error is normal",
+        ),
+        (LeastSquares(), lambda sam: sam.sel(row=0, col=1) <= 2.0, "An inequality binds"),
+        (LeastSquares(), lambda sam: sam.sel(row=0, col=1) == 0.0, "A cell sits at zero"),
+    ],
+    ids=["KL", "laplace measurement", "binding inequality", "cell at zero"],
+)
+def test_covariance_raises(objective, constraint, message):
+    # The prior is balanced, so the cap of 2 on its cell of 3 binds and the fixed zero holds exactly.
+    sam = SymbolicSAM(pd.DataFrame([[0.0, 3.0, 1.0], [2.0, 0.0, 1.0], [2.0, 1.0, 0.0]]))
+    if constraint is not None:
+        sam.subject_to(data=constraint(sam))
+    estimate = sam.fit(objective=objective, solver=cp.CLARABEL)
+
+    with pytest.raises(ValueError, match=message):
+        estimate.covariance()
