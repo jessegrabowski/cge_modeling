@@ -512,6 +512,8 @@ class SymbolicSAM:
         self.prior_values = values[self.rows, self.columns]
         self.signs = np.sign(self.prior_values)
         self.constraints: dict[str, Constraint] = {}
+        # The solvers work in cells divided by this total, so every SAM is solved at the same scale.
+        self._total_magnitude = np.abs(self.prior_values).sum()
 
         self.cells = pt.vector("cells", shape=(self.n_cells,))
         dense = pt.set_subtensor(pt.zeros(prior_frame.shape)[self.rows, self.columns], self.cells)
@@ -633,12 +635,9 @@ class SymbolicSAM:
         hard = [
             constraint for constraint in self.constraints.values() if constraint.penalty is None
         ]
-        soft = [
-            constraint for constraint in self.constraints.values() if constraint.penalty is not None
-        ]
         linear = linear_constraints(self, [balance, *hard])
 
-        scale = np.abs(self.prior_values).sum()
+        scale = self._total_magnitude
         magnitudes = cp.Variable(self.n_cells, nonneg=True)
         cells = cp.multiply(self.signs, magnitudes)
 
@@ -649,13 +648,10 @@ class SymbolicSAM:
             )
 
         unit = objective.unit(scale)
-        terms = [objective.expression(self, magnitudes, scale)]
-        for constraint in soft:
-            operator, values, error_scales = _measurement_rows(self, constraint)
-            standardized_residuals = (operator @ cells - values / scale) / (error_scales / scale)
-            terms.append(constraint.penalty.expression(standardized_residuals) / unit)
-
-        problem = cp.Problem(cp.Minimize(cp.sum(cp.hstack(terms))), problem_constraints)
+        problem = cp.Problem(
+            cp.Minimize(self._scaled_objective(objective, magnitudes, scale)),
+            problem_constraints,
+        )
         problem.solve(solver=solver, **solver_kwargs)
 
         if problem.status != cp.OPTIMAL:
@@ -676,6 +672,77 @@ class SymbolicSAM:
             _constraints=tuple(self.constraints.values()),
             _cells=self.signs * solved_magnitudes,
         )
+
+    def objective_value(
+        self, candidate: IntoDataFrame | xr.DataArray, objective: Objective | None = None
+    ) -> float:
+        """
+        Return the objective at ``candidate``, including the penalties of measurements with error, in the prior's units.
+
+        This is the quantity :meth:`fit` minimizes, so it equals :attr:`SAMEstimate.objective` at the estimate. Hard
+        constraints, including the accounting identity, are not checked, so ``candidate`` need not satisfy them.
+
+        Parameters
+        ----------
+        candidate : pandas.DataFrame, xarray.DataArray or eager narwhals-compatible frame
+            A SAM in the prior's type and layout, with the prior's account labels in the prior's order. Every cell
+            that is zero in the prior is zero, and every other cell has the sign of its prior value or is zero.
+        objective : Objective, optional
+            The objective to evaluate, as passed to :meth:`fit`. Default is None, which uses the unweighted
+            :class:`KL`.
+
+        Returns
+        -------
+        value : float
+            The objective at ``candidate``.
+
+        Raises
+        ------
+        ValueError
+            If ``candidate`` has different account labels from the prior, a cell that is not finite, a nonzero cell
+            where the prior is zero, or a cell with the opposite sign of its prior value.
+        """
+        if objective is None:
+            objective = KL()
+
+        frame, _, _ = _prior_frame_and_dims(candidate, self._index_column)
+        if not (frame.index.equals(self.prior.index) and frame.columns.equals(self.prior.columns)):
+            raise ValueError(
+                "The candidate must have the prior's account labels in the prior's order"
+            )
+
+        values = frame.to_numpy(dtype=float)
+        if not np.isfinite(values).all():
+            raise ValueError("The candidate must be finite")
+
+        outside_prior = np.ones(values.shape, dtype=bool)
+        outside_prior[self.rows, self.columns] = False
+        if (values[outside_prior] != 0.0).any():
+            raise ValueError("The candidate has nonzero cells where the prior is zero")
+
+        cell_values = values[self.rows, self.columns]
+        if (cell_values * self.signs < 0.0).any():
+            raise ValueError("The candidate has cells with the opposite sign of their prior value")
+
+        scale = self._total_magnitude
+        magnitudes = cp.Constant(np.abs(cell_values) / scale)
+        scaled_value = self._scaled_objective(objective, magnitudes, scale).value
+        return float(scaled_value) * objective.unit(scale)
+
+    def _scaled_objective(
+        self, objective: Objective, magnitudes: cp.Expression, scale: float
+    ) -> cp.Expression:
+        """Return the objective plus measurement penalties in the units of :meth:`Objective.expression`."""
+        cells = cp.multiply(self.signs, magnitudes)
+        unit = objective.unit(scale)
+        terms = [objective.expression(self, magnitudes, scale)]
+        for constraint in self.constraints.values():
+            if constraint.penalty is None:
+                continue
+            operator, values, error_scales = _measurement_rows(self, constraint)
+            standardized_residuals = (operator @ cells - values / scale) / (error_scales / scale)
+            terms.append(constraint.penalty.expression(standardized_residuals) / unit)
+        return cp.sum(cp.hstack(terms))
 
     def like_prior(self, cell_values: np.ndarray) -> IntoDataFrame | xr.DataArray:
         """Return a SAM in the prior's type and layout, with ``cell_values`` in the prior's nonzero cells."""
@@ -788,9 +855,8 @@ def _fit_dual(sam: SymbolicSAM, **root_kwargs) -> SAMEstimate:
     one log scale in each group of connected accounts removes the Laplacian's null space. The solve is optimal when
     every account balances to ``DUAL_TOLERANCE`` of its turnover.
     """
-    prior_magnitudes = np.abs(sam.prior_values)
-    scale = prior_magnitudes.sum()
-    weights = prior_magnitudes / scale
+    scale = sam._total_magnitude
+    weights = np.abs(sam.prior_values) / scale
 
     cell_index = np.arange(sam.n_cells)
     incidence = csr_array(
@@ -870,7 +936,7 @@ def _least_squares_covariance(
     if np.isnan(cells).any():
         raise ValueError("The solve returned no solution, so there is no covariance")
 
-    bound = BOUND_TOLERANCE * np.abs(sam.prior_values).sum()
+    bound = BOUND_TOLERANCE * sam._total_magnitude
     if (np.abs(cells) <= bound).any():
         raise ValueError(
             "A cell sits at zero, where its sign bound binds and the cells are no longer normal around the estimate"

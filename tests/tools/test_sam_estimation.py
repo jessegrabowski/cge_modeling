@@ -848,3 +848,126 @@ def test_covariance_raises(objective, constraint, message):
 
     with pytest.raises(ValueError, match=message):
         estimate.covariance()
+
+
+@pytest.mark.parametrize(
+    "objective, with_error",
+    [
+        (KL(), None),
+        (LeastSquares(), lambda measurement: measurement.normal(sigma=50.0)),
+        (Pearson(), lambda measurement: measurement.laplace(scale=50.0)),
+        (ReverseKL(), lambda measurement: measurement.huber(sigma=50.0, threshold=1.0)),
+    ],
+    ids=["KL", "least squares, normal", "Pearson, laplace", "reverse KL, huber"],
+)
+def test_objective_value_at_estimate(objective, with_error):
+    sam = SymbolicSAM(load_unbalanced_sam())
+    if with_error is not None:
+        sam.subject_to(
+            household_income=with_error(sam.sel(row=("Institution", "Household")).sum() == 9893.0)
+        )
+    estimate = sam.fit(objective=objective)
+
+    assert sam.objective_value(estimate.sam, objective=objective) == pytest.approx(
+        estimate.objective, rel=1e-6
+    )
+
+
+def test_objective_value_at_prior():
+    # Every objective is zero at the prior, so what remains is the measurement penalty alone.
+    prior = load_unbalanced_sam()
+    household = ("Institution", "Household")
+    sam = SymbolicSAM(prior)
+    sam.subject_to(household_income=(sam.sel(row=household).sum() == 9893.0).normal(sigma=50.0))
+
+    expected = 0.5 * ((prior.loc[household].sum() - 9893.0) / 50.0) ** 2
+
+    assert sam.objective_value(prior, objective=LeastSquares()) == pytest.approx(
+        expected, rel=1e-12
+    )
+
+
+@pytest.mark.parametrize(
+    "as_prior, index_column",
+    [
+        (lambda frame: frame, None),
+        (
+            lambda frame: xr.DataArray(
+                frame.to_numpy(),
+                dims=["row", "col"],
+                coords={"row": frame.index, "col": frame.columns},
+            ),
+            None,
+        ),
+        (
+            lambda frame: pl.DataFrame(
+                {"account": list(frame.index), **{name: frame[name].to_numpy() for name in frame}}
+            ),
+            "account",
+        ),
+    ],
+    ids=["pandas", "xarray", "polars"],
+)
+def test_objective_value_takes_prior_type(as_prior, index_column):
+    frame = pd.DataFrame([[0.0, 2.0], [1.0, 0.0]], index=["a", "b"], columns=["a", "b"])
+    sam = SymbolicSAM(as_prior(frame), index_column=index_column)
+    candidate = sam.like_prior(sam.prior_values * 1.5)
+
+    expected = np.sum(3.0 * np.log(1.5) - 3.0 + 2.0) + np.sum(1.5 * np.log(1.5) - 1.5 + 1.0)
+
+    assert sam.objective_value(candidate) == pytest.approx(expected, rel=1e-12)
+
+
+@pytest.mark.parametrize(
+    "candidate, message",
+    [
+        (
+            pd.DataFrame([[0.0, 1.0], [1.0, 0.0]], index=["b", "a"], columns=["b", "a"]),
+            "account labels",
+        ),
+        (
+            pd.DataFrame([[1.0, 1.0], [1.0, 0.0]], index=["a", "b"], columns=["a", "b"]),
+            "where the prior is zero",
+        ),
+        (
+            pd.DataFrame([[0.0, -1.0], [1.0, 0.0]], index=["a", "b"], columns=["a", "b"]),
+            "opposite sign",
+        ),
+        (
+            pd.DataFrame([[np.nan, 1.0], [1.0, 0.0]], index=["a", "b"], columns=["a", "b"]),
+            "must be finite",
+        ),
+        (
+            pd.DataFrame([[0.0, np.nan], [1.0, 0.0]], index=["a", "b"], columns=["a", "b"]),
+            "must be finite",
+        ),
+    ],
+    ids=["labels", "new cell", "sign", "NaN in a zero cell", "NaN in a prior cell"],
+)
+def test_objective_value_rejects_candidate(candidate, message):
+    sam = SymbolicSAM(pd.DataFrame([[0.0, 2.0], [1.0, 0.0]], index=["a", "b"], columns=["a", "b"]))
+
+    with pytest.raises(ValueError, match=message):
+        sam.objective_value(candidate)
+
+
+@pytest.mark.parametrize(
+    "objective, formula",
+    [
+        (KL(), lambda x, z: np.sum(x * np.log(x / z) - x + z)),
+        (ReverseKL(), lambda x, z: np.sum(z * np.log(z / x) - z + x)),
+        (Pearson(), lambda x, z: 0.5 * np.sum((x - z) ** 2 / z)),
+        (LeastSquares(sigma=25.0), lambda x, z: 0.5 * np.sum(((x - z) / 25.0) ** 2)),
+    ],
+    ids=["KL", "reverse KL", "Pearson", "least squares"],
+)
+def test_objective_value_matches_formula(objective, formula):
+    # Away from the prior, where every objective is nonzero, checked against each formula on the cell magnitudes.
+    prior = load_unbalanced_sam()
+    sam = SymbolicSAM(prior)
+    candidate = prior * 1.1
+
+    prior_magnitudes = np.abs(sam.prior_values)
+    expected = formula(1.1 * prior_magnitudes, prior_magnitudes)
+
+    assert sam.objective_value(candidate, objective=objective) == pytest.approx(expected, rel=1e-10)
