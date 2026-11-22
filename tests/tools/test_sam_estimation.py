@@ -877,6 +877,20 @@ def test_least_squares_covariance(measured):
     assert covariance.index[0] == (sam.prior.index[sam.rows[0]], sam.prior.columns[sam.columns[0]])
 
 
+def test_covariance_with_small_cells():
+    # Cells of 5 next to cells of 1e7 are far from zero relative to their own size. The identity makes each cell equal
+    # its mirror, so a pair of independent normal cells with standard deviation sigma becomes one value with variance
+    # sigma^2 / 2, shared by both cells of the pair. The cells are (0, 1), (0, 2), (1, 0) and (2, 0).
+    prior = pd.DataFrame([[0.0, 1e7, 5.0], [1e7, 0.0, 0.0], [5.0, 0.0, 0.0]])
+    estimate = SymbolicSAM(prior).fit(objective=LeastSquares(), **TIGHT_CLARABEL)
+
+    expected = np.zeros((4, 4))
+    expected[np.ix_([0, 2], [0, 2])] = 1e7**2 / 2.0
+    expected[np.ix_([1, 3], [1, 3])] = 5.0**2 / 2.0
+
+    np.testing.assert_allclose(estimate.covariance().to_numpy(), expected, rtol=1e-6, atol=1e-2)
+
+
 @pytest.mark.parametrize(
     "objective, constraint, message",
     [

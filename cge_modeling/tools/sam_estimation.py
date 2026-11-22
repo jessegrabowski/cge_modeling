@@ -29,7 +29,8 @@ DUAL_SOLVER = "dual"
 ACCOUNTING_IDENTITY = "accounting identity"
 DUAL_TOLERANCE = 1e-12
 
-# A cell or inequality slack within this fraction of the total absolute cell value counts as at its bound.
+# A cell within this fraction of its prior magnitude, or an inequality slack within this fraction of the absolute
+# terms of its inequality, counts as at its bound.
 BOUND_TOLERANCE = 1e-6
 
 Cell = tuple[Hashable, Hashable]
@@ -304,8 +305,9 @@ class SAMEstimate:
         The objective makes the cells independent and normal around the prior with standard deviation ``sigma``.
         Measurements made with :meth:`Constraint.normal` are normal observations of linear expressions, and every other
         equality, including the accounting identity, holds exactly. The covariance is that of the cells given all of
-        them, as the constraints stood when :meth:`SymbolicSAM.fit` ran. It is exact when no cell sits at zero and no
-        inequality binds, because the estimate is then the mean of that normal distribution.
+        them, as the constraints stood when :meth:`SymbolicSAM.fit` ran. It ignores the sign bounds and inequalities,
+        which truncate that normal distribution, so it is the covariance of the estimate only when every bound is many
+        standard deviations from it.
 
         Returns
         -------
@@ -989,14 +991,17 @@ def _least_squares_covariance(
     if not all(isinstance(constraint.penalty, NormalPenalty) for constraint in measurements):
         raise ValueError("A covariance is defined only when every measurement error is normal")
 
-    bound = BOUND_TOLERANCE * sam._total_magnitude
-    if (np.abs(cells) <= bound).any():
+    if (np.abs(cells) <= BOUND_TOLERANCE * np.abs(sam.prior_values)).any():
         raise ValueError(
             "A cell sits at zero, where its sign bound binds and the cells are no longer normal around the estimate"
         )
 
     linear = linear_constraints(sam, _hard_constraints(sam, constraints))
-    if (linear.inequality_values - linear.inequality_operator @ cells <= bound).any():
+    slack = linear.inequality_values - linear.inequality_operator @ cells
+    inequality_size = abs(linear.inequality_operator) @ np.abs(cells) + np.abs(
+        linear.inequality_values
+    )
+    if (slack <= BOUND_TOLERANCE * inequality_size).any():
         raise ValueError(
             "An inequality binds, so the cells are no longer normal around the estimate"
         )
