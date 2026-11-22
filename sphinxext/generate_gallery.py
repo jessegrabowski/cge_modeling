@@ -51,6 +51,9 @@ ITEM_TEMPLATE = """
 
 folder_title_map = {"getting_started": "Getting Started", "rebalance": "Balancing SAMs"}
 
+# Notebooks listed here open their section in the given order. The rest of the section follows alphabetically.
+leading_notebooks = {"rebalance": ["introduction_to_sam_rebalance"]}
+
 # Cell tag that picks the cell whose first image becomes the notebook's gallery thumbnail.
 THUMBNAIL_TAG = "gallery-thumbnail"
 
@@ -185,6 +188,16 @@ def main(app):
         os.chdir(working_dir)
 
 
+def section_order(folder):
+    leading = leading_notebooks.get(folder, [])
+
+    def key(nb_path):
+        position = leading.index(nb_path.stem) if nb_path.stem in leading else len(leading)
+        return position, nb_path.stem
+
+    return key
+
+
 def write_gallery():
     """Write examples/gallery.rst and the thumbnails, relative to the Sphinx source directory."""
     toc_entries = []
@@ -200,7 +213,7 @@ def write_gallery():
         thumbnail_dir = Path("_thumbnails") / folder
         thumbnail_dir.mkdir(parents=True, exist_ok=True)
 
-        for nb_path in sorted(Path("examples", folder).glob("*.ipynb")):
+        for nb_path in sorted(Path("examples", folder).glob("*.ipynb"), key=section_order(folder)):
             if not is_tracked_by_git(nb_path):
                 logger.info(
                     f"Skipping {nb_path.name}, not tracked by git",
