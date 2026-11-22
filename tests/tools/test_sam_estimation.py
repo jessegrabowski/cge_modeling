@@ -509,6 +509,23 @@ def test_dual_rejects_other_problems(constrained, objective):
         sam.fit(objective=objective, solver="dual")
 
 
+def test_dual_with_disconnected_accounts_and_diagonal():
+    # Accounts a and b trade only with each other, as do c and d, and a also pays itself.
+    prior = pd.DataFrame(
+        [[1.0, 2.0, 0.0, 0.0], [3.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 4.0], [0.0, 0.0, 1.0, 0.0]],
+        index=list("abcd"),
+        columns=list("abcd"),
+    )
+    sam = SymbolicSAM(prior)
+
+    dual = sam.fit(solver="dual")
+    clarabel = sam.fit(solver=cp.CLARABEL, **TIGHT_CLARABEL)
+
+    assert dual.status == "optimal"
+    assert dual.sam.loc["a", "a"] == pytest.approx(1.0, rel=1e-12)
+    np.testing.assert_allclose(dual.sam, clarabel.sam, rtol=1e-6, atol=1e-9)
+
+
 def test_dual_solver_kwargs():
     sam = SymbolicSAM(load_unbalanced_sam())
 
@@ -658,8 +675,7 @@ def test_reliable_cell_moves_less(objective_for):
 
 def test_objectives_agree_near_balance():
     # KL, reverse KL and Pearson are all proportional to sum (x - z)^2 / |z| to second order, so near balance their
-    # estimates differ by a fraction of the adjustment of order the perturbation, here about 3e-4. Least squares with
-    # sigma = |z| weights the cells differently and differs by about 0.4 of the adjustment.
+    # estimates differ by a fraction of the adjustment of order the perturbation, here about 3e-4.
     balanced = SymbolicSAM(load_unbalanced_sam()).fit().sam
     perturbation = np.random.default_rng(0).uniform(-1e-3, 1e-3, size=balanced.shape)
     sam = SymbolicSAM(balanced * (1.0 + perturbation))
@@ -761,9 +777,7 @@ def test_measurement_limits(with_error):
 
     assert fit_household_income(1e-3) == pytest.approx(9893.0, abs=1e-2)
     assert fit_household_income(1e9) == pytest.approx(unconstrained_income, rel=1e-4)
-    assert 9893.0 < fit_household_income(100.0) < unconstrained_income or (
-        unconstrained_income < fit_household_income(100.0) < 9893.0
-    )
+    assert unconstrained_income < fit_household_income(100.0) < 9893.0
 
 
 def test_huber_between_normal_and_laplace():
