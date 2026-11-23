@@ -1083,6 +1083,68 @@ def test_covariance_with_small_cells():
     np.testing.assert_allclose(estimate.covariance().to_numpy(), expected, rtol=1e-6, atol=1e-2)
 
 
+def test_covariance_of_disconnected_accounts():
+    # Accounts a and b trade only with each other, as do c and d, so each pair of mirrored cells is one value with
+    # variance sigma^2 / 2 and the two groups are independent. The cells are (a, b), (b, a), (c, d) and (d, c).
+    prior = pd.DataFrame(
+        [[0.0, 4.0, 0.0, 0.0], [4.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 6.0], [0.0, 0.0, 6.0, 0.0]],
+        index=list("abcd"),
+        columns=list("abcd"),
+    )
+    estimate = SymbolicSAM(prior).fit(objective=LeastSquares(), **TIGHT_CLARABEL)
+
+    expected = np.zeros((4, 4))
+    expected[np.ix_([0, 1], [0, 1])] = 4.0**2 / 2.0
+    expected[np.ix_([2, 3], [2, 3])] = 6.0**2 / 2.0
+
+    np.testing.assert_allclose(estimate.covariance().to_numpy(), expected, rtol=1e-6, atol=1e-6)
+
+
+def test_covariance_without_equalities():
+    # Diagonal cells enter no account's imbalance, so nothing conditions them and each keeps its prior variance.
+    prior = pd.DataFrame(np.diag([2.0, 3.0]), index=["a", "b"], columns=["a", "b"])
+    estimate = SymbolicSAM(prior).fit(objective=LeastSquares(), solver=cp.CLARABEL)
+
+    np.testing.assert_allclose(estimate.covariance().to_numpy(), np.diag([4.0, 9.0]), rtol=1e-6)
+
+
+def test_covariance_of_selected_cells():
+    sam = SymbolicSAM(load_unbalanced_sam())
+    household = ("Institution", "Household")
+    sam.subject_to(household_income=(sam.sel(row=household).sum() == 9893.0).normal(sigma=50.0))
+    estimate = sam.fit(objective=LeastSquares(), **TIGHT_CLARABEL)
+    cells = [
+        (household, ("Factor", "Labor")),
+        (("Commodity", "Service"), household),
+        (household, ("Factor", "Unskilled Labor")),
+    ]
+
+    selected = estimate.covariance(cells=cells)
+    full = estimate.covariance()
+    positions = [list(full.index).index(cell) for cell in cells]
+
+    assert list(selected.index) == cells
+    np.testing.assert_allclose(
+        selected.to_numpy(), full.to_numpy()[np.ix_(positions, positions)], rtol=1e-12
+    )
+
+
+@pytest.mark.parametrize(
+    "cells, message",
+    [
+        ([("a", "z")], "labels not in the prior"),
+        ([("a", "a")], "zero in the prior"),
+    ],
+    ids=["unknown account", "zero cell"],
+)
+def test_covariance_rejects_cells(cells, message):
+    sam = SymbolicSAM(pd.DataFrame([[0.0, 2.0], [2.0, 0.0]], index=["a", "b"], columns=["a", "b"]))
+    estimate = sam.fit(objective=LeastSquares(), solver=cp.CLARABEL)
+
+    with pytest.raises(ValueError, match=message):
+        estimate.covariance(cells=cells)
+
+
 @pytest.mark.parametrize(
     "objective, constraint, message",
     [
@@ -1094,8 +1156,19 @@ def test_covariance_with_small_cells():
         ),
         (LeastSquares(), lambda sam: sam.sel(row=0, col=1) <= 2.0, "An inequality binds"),
         (LeastSquares(), lambda sam: sam.sel(row=0, col=1) == 0.0, "A cell sits at zero"),
+        (
+            LeastSquares(),
+            lambda sam: sam.sum("col") == sam.sum("row").rename({"col": "row"}),
+            "linearly dependent",
+        ),
     ],
-    ids=["KL", "laplace measurement", "binding inequality", "cell at zero"],
+    ids=[
+        "KL",
+        "laplace measurement",
+        "binding inequality",
+        "cell at zero",
+        "identity imposed twice",
+    ],
 )
 def test_covariance_raises(objective, constraint, message):
     # The prior is balanced, so the cap of 2 on its cell of 3 binds and the fixed zero holds exactly.
