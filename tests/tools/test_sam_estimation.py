@@ -606,11 +606,53 @@ def test_dual_with_disconnected_accounts_and_diagonal():
     np.testing.assert_allclose(dual.sam, clarabel.sam, rtol=1e-6, atol=1e-9)
 
 
-def test_dual_solver_kwargs():
+def test_dual_balances_an_account_with_tiny_flows():
+    # Account a trades a millionth of what the others do. Every account must still balance to the dual tolerance of
+    # its own turnover, including a.
+    values = np.random.default_rng(1).uniform(100.0, 200.0, size=(4, 4))
+    np.fill_diagonal(values, 0.0)
+    values[0, :] *= 1e-6
+    values[:, 0] *= 1e-6
+    prior = pd.DataFrame(values, index=list("abcd"), columns=list("abcd"))
+
+    estimate = SymbolicSAM(prior).fit(solver="dual")
+    balanced = estimate.sam.to_numpy()
+    relative_imbalance = np.abs(balanced.sum(axis=1) - balanced.sum(axis=0)) / (
+        balanced.sum(axis=1) + balanced.sum(axis=0)
+    )
+
+    assert estimate.status == "optimal"
+    assert relative_imbalance.max() < 1e-12
+
+
+def test_dual_tol_reaches_the_solver():
     sam = SymbolicSAM(load_unbalanced_sam())
 
     with pytest.warns(UserWarning, match="optimal_inaccurate"):
-        estimate = sam.fit(solver="dual", options={"maxiter": 1})
+        loose = sam.fit(solver="dual", tol=1e-3)
+
+    assert loose.status == "optimal_inaccurate"
+    assert sam.fit(solver="dual").status == "optimal"
+
+
+def test_dual_with_no_account_to_scale(caplog):
+    # Only diagonal cells, so no account's scale changes anything and the solver has nothing to do.
+    prior = pd.DataFrame(np.diag([2.0, 3.0]), index=["a", "b"], columns=["a", "b"])
+
+    estimate = SymbolicSAM(prior).fit(solver="dual")
+
+    assert estimate.status == "optimal"
+    np.testing.assert_array_equal(estimate.sam, prior)
+    assert caplog.records == []
+
+
+def test_dual_solver_kwargs():
+    sam = SymbolicSAM(load_unbalanced_sam())
+
+    with pytest.warns(
+        UserWarning, match="dual solver reported: Did not converge after 1 iterations"
+    ):
+        estimate = sam.fit(solver="dual", maxiter=1)
 
     assert estimate.status == "optimal_inaccurate"
 

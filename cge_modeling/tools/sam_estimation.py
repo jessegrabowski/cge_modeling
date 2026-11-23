@@ -12,10 +12,11 @@ import xarray as xr
 
 from narwhals.typing import IntoDataFrame
 from scipy.linalg import null_space
-from scipy.optimize import root
-from scipy.sparse import coo_array, csr_array, vstack
+from scipy.sparse import coo_array, csr_array, diags_array, vstack
 from scipy.sparse.csgraph import connected_components
 from scipy.special import kl_div
+
+from cge_modeling.solvers.sparse_root import newton_armijo, sparse_root
 
 ROW = "row"
 COLUMN = "col"
@@ -698,8 +699,8 @@ class SymbolicSAM:
 
         Under the accounting identity alone, the unweighted :class:`KL` estimate scales each positive cell
         :math:`(i, j)` by :math:`d_j / d_i` and each negative cell by :math:`d_i / d_j`. The ``"dual"`` solver finds the
-        account scales :math:`d` with :func:`scipy.optimize.root`, and every other solver solves the full problem in
-        cvxpy.
+        account scales :math:`d` with :func:`~cge_modeling.solvers.sparse_root.sparse_root`, and every other solver
+        solves the full problem in cvxpy.
 
         Parameters
         ----------
@@ -710,8 +711,9 @@ class SymbolicSAM:
             ``"dual"``, for the unweighted :class:`KL` objective on a SAM with no constraints, or the name of a cvxpy
             solver. Default is None, which picks ``"dual"`` where it applies and CLARABEL otherwise.
         **solver_kwargs
-            Passed to :func:`scipy.optimize.root` for the ``"dual"`` solver, which uses ``method="lm"`` unless one is
-            given, and to ``cvxpy.Problem.solve`` otherwise. CLARABEL's tolerances apply after every cell is divided by
+            Passed to :func:`~cge_modeling.solvers.sparse_root.sparse_root` for the ``"dual"`` solver, which uses
+            :func:`~cge_modeling.solvers.sparse_root.newton_armijo` unless a ``solver`` is given, and to
+            ``cvxpy.Problem.solve`` otherwise. CLARABEL's tolerances apply after every cell is divided by
             the total of the absolute cell values, so its error in each cell is roughly absolute. Tighter
             ``tol_gap_abs``, ``tol_gap_rel`` and ``tol_feas`` reduce it.
 
@@ -1010,7 +1012,7 @@ def _prior_frame_and_dims(
     return prior_frame, row_dim, column_dim
 
 
-def _fit_dual(sam: SymbolicSAM, objective: Objective, **root_kwargs) -> SAMEstimate:
+def _fit_dual(sam: SymbolicSAM, objective: Objective, **sparse_root_kwargs) -> SAMEstimate:
     """
     Balance ``sam`` under the accounting identity alone by solving for log account scales.
 
@@ -1036,30 +1038,52 @@ def _fit_dual(sam: SymbolicSAM, objective: Objective, **root_kwargs) -> SAMEstim
         (np.ones(sam.n_cells), (sam.rows, sam.columns)), shape=(sam.n_accounts, sam.n_accounts)
     )
     _, group = connected_components(graph, directed=False)
-    _, first_in_group = np.unique(group, return_index=True)
-    free = np.asarray(abs(incidence).sum(axis=0)).ravel() > 0
-    free[first_in_group] = False
+
+    # The fixed account's imbalance is minus the sum of the others', so fixing the account with the largest turnover in
+    # each group keeps that sum small relative to its turnover.
+    prior_turnover = abs(incidence).T @ weights
+    by_group_then_turnover = np.lexsort((-prior_turnover, group))
+    _, first_in_order = np.unique(group[by_group_then_turnover], return_index=True)
+    free = prior_turnover > 0
+    free[by_group_then_turnover[first_in_order]] = False
+    free_accounts = np.flatnonzero(free)
 
     def log_scales(free_log_scales):
         scales = np.zeros(sam.n_accounts)
-        scales[free] = free_log_scales
+        scales[free_accounts] = free_log_scales
         return scales
 
     def magnitudes(free_log_scales):
         return weights * np.exp(incidence @ log_scales(free_log_scales))
 
-    def jacobian(free_log_scales):
-        laplacian = incidence.T @ incidence.multiply(magnitudes(free_log_scales)[:, None])
-        return laplacian.toarray()[np.ix_(free, free)]
+    # Dividing each free account's spending minus income by its prior turnover makes the residual tolerance relative.
+    row_scales = diags_array(1.0 / prior_turnover[free_accounts])
 
-    result = root(
-        lambda free_log_scales: (incidence.T @ magnitudes(free_log_scales))[free],
-        x0=np.zeros(free.sum()),
-        jac=jacobian,
-        **{"method": "lm", **root_kwargs},
-    )
+    def gradient_and_laplacian(free_log_scales):
+        current = magnitudes(free_log_scales)
+        laplacian = (incidence.T @ incidence.multiply(current[:, None])).tocsr()
+        gradient = (incidence.T @ current)[free_accounts]
+        jacobian = row_scales @ laplacian[free_accounts][:, free_accounts]
+        return row_scales @ gradient, jacobian.tocsc()
 
-    balanced = magnitudes(result.x)
+    # A caller's tol sets both tolerances in sparse_root, so the defaults give way to it.
+    defaults = {"solver": newton_armijo(), "progressbar": False}
+    if "tol" not in sparse_root_kwargs:
+        defaults |= {"f_tol": DUAL_TOLERANCE / 10.0, "x_tol": np.finfo(float).eps}
+
+    if free_accounts.size == 0:
+        free_log_scales = np.zeros(0)
+        solver_message = "No account has a log scale to solve for"
+    else:
+        result = sparse_root(
+            gradient_and_laplacian,
+            np.zeros(free_accounts.size),
+            **{**defaults, **sparse_root_kwargs},
+        )
+        free_log_scales = result.x
+        solver_message = result.message
+
+    balanced = magnitudes(free_log_scales)
     imbalance = np.abs(incidence.T @ balanced)
     turnover = abs(incidence).T @ balanced
     relative_imbalance = np.divide(
@@ -1069,7 +1093,8 @@ def _fit_dual(sam: SymbolicSAM, objective: Objective, **root_kwargs) -> SAMEstim
 
     if status != cp.OPTIMAL:
         warnings.warn(
-            f"The SAM estimate did not solve to optimality: solver status is {status!r}",
+            f"The SAM estimate did not solve to optimality: solver status is {status!r}. The dual solver reported: "
+            f"{solver_message}",
             stacklevel=3,
         )
 
