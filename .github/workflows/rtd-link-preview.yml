@@ -7,10 +7,12 @@ on:
       - synchronize
       - reopened
     # Only fire when something that could change the rendered docs is touched. cge_modeling is here
-    # because autodoc reads it.
+    # because autodoc reads it, and notebooks because docs/source/examples links to it, which path
+    # filters do not follow.
     paths:
       - "docs/**"
       - "cge_modeling/**"
+      - "notebooks/**"
       - ".readthedocs.yaml"
       - "pyproject.toml"
       - "pixi.lock"
