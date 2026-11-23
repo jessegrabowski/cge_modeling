@@ -8,17 +8,12 @@ import cvxpy as cp
 import narwhals as nw
 import numpy as np
 import pandas as pd
-import pytensor
-import pytensor.tensor as pt
-import pytensor.xtensor as px
 import xarray as xr
 
 from narwhals.typing import IntoDataFrame
-from pytensor.graph.rewriting.utils import rewrite_graph
-from pytensor.xtensor.type import XTensorVariable
 from scipy.linalg import null_space
 from scipy.optimize import root
-from scipy.sparse import coo_array, csr_array
+from scipy.sparse import coo_array, csr_array, vstack
 from scipy.sparse.csgraph import connected_components
 from scipy.special import kl_div
 
@@ -48,6 +43,17 @@ class SAMExpression:
     dim and its columns on the column dim, and an ``xarray.DataArray`` matches by dim name over the expression's dims or
     a subset of them. A DataArray has to sit to the right of the expression, because xarray's operators do not defer to
     other types.
+
+    Parameters
+    ----------
+    sam : SymbolicSAM
+        The SAM whose cells the expression is linear in.
+    labels : dict of str to pandas.Index
+        The account labels of each dim, in dim order.
+    operator : scipy.sparse.csr_array
+        Coefficients on the cells, one row per position of the grid of ``labels`` in row-major order.
+    constant : numpy.ndarray
+        The constant part, shaped like the grid of ``labels``.
     """
 
     # Make numpy and pandas return NotImplemented from their operators, so that ``series <= expr`` and
@@ -55,49 +61,80 @@ class SAMExpression:
     __array_ufunc__ = None
     __pandas_priority__ = 5000
 
-    def __init__(self, sam: "SymbolicSAM", tensor: XTensorVariable, labels: dict[str, pd.Index]):
+    def __init__(
+        self,
+        sam: "SymbolicSAM",
+        labels: dict[str, pd.Index],
+        operator: csr_array,
+        constant: np.ndarray,
+    ):
         self.sam = sam
-        self.tensor = tensor
         self.labels = labels
+        self.operator = operator
+        self.constant = constant
 
     @property
     def dims(self) -> tuple[str, ...]:
-        return self.tensor.type.dims
+        return tuple(self.labels)
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return tuple(len(index) for index in self.labels.values())
 
     def sum(self, dim: str | None = None) -> "SAMExpression":
         """Sum over ``dim``, or over every dim when ``dim`` is None."""
+        if dim is not None and dim not in self.dims:
+            raise ValueError(f"Cannot sum over {dim!r}. The expression's dims are {self.dims}")
+        if not self.dims:
+            return self
         summed_dims = self.dims if dim is None else (dim,)
-        labels = {name: index for name, index in self.labels.items() if name not in summed_dims}
-        return SAMExpression(self.sam, self.tensor.sum(dim), labels)
+        kept_dims = [name for name in self.dims if name not in summed_dims]
+        labels = {name: self.labels[name] for name in kept_dims}
+
+        # Each position of the grid adds into the position of the summed grid that shares its other coordinates.
+        coordinates = np.indices(self.shape).reshape(len(self.shape), -1)
+        summed_shape = tuple(len(index) for index in labels.values())
+        summed_position = _flat_positions(
+            [coordinates[self.dims.index(name)] for name in kept_dims],
+            summed_shape,
+            count=self.constant.size,
+        )
+        grouping = csr_array(
+            (np.ones(summed_position.size), (summed_position, np.arange(summed_position.size))),
+            shape=(int(np.prod(summed_shape)), summed_position.size),
+        )
+        constant = self.constant.sum(axis=tuple(self.dims.index(name) for name in summed_dims))
+        return SAMExpression(self.sam, labels, csr_array(grouping @ self.operator), constant)
 
     def rename(self, mapping: dict[str, str]) -> "SAMExpression":
         """Rename dims, for example ``{"col": "row"}`` to compare column sums with row sums account by account."""
         labels = {mapping.get(name, name): index for name, index in self.labels.items()}
-        return SAMExpression(self.sam, self.tensor.rename(mapping), labels)
+        return SAMExpression(self.sam, labels, self.operator, self.constant)
 
     def __add__(self, other) -> "SAMExpression":
-        return SAMExpression(self.sam, self.tensor + self._operand(other), self.labels)
+        return _add(*_aligned(self, self._operand(other)))
 
     def __radd__(self, other) -> "SAMExpression":
         return self + other
 
     def __sub__(self, other) -> "SAMExpression":
-        return SAMExpression(self.sam, self.tensor - self._operand(other), self.labels)
+        return _add(*_aligned(self, -self._operand(other)))
 
     def __rsub__(self, other) -> "SAMExpression":
         return -self + other
 
     def __neg__(self) -> "SAMExpression":
-        return SAMExpression(self.sam, -self.tensor, self.labels)
+        return self * -1.0
 
     def __mul__(self, other) -> "SAMExpression":
-        return SAMExpression(self.sam, self.tensor * _scalar(other, "multiply"), self.labels)
+        factor = _scalar(other, "multiply")
+        return SAMExpression(self.sam, self.labels, self.operator * factor, self.constant * factor)
 
     def __rmul__(self, other) -> "SAMExpression":
         return self * other
 
     def __truediv__(self, other) -> "SAMExpression":
-        return SAMExpression(self.sam, self.tensor / _scalar(other, "divide"), self.labels)
+        return self * (1.0 / _scalar(other, "divide"))
 
     def __eq__(self, other) -> "Constraint":  # type: ignore[override]
         return Constraint(is_equality=True, residual=self - other)
@@ -114,27 +151,15 @@ class SAMExpression:
     def __gt__(self, other):
         raise TypeError("Strict inequalities cannot be imposed. Use <= or >=")
 
-    def _operand(self, other) -> XTensorVariable:
-        """Return ``other`` as an xtensor that adds to this expression position by position."""
+    def _operand(self, other) -> "SAMExpression":
+        """Return ``other`` as an expression, with data aligned to this expression's labels."""
         if isinstance(other, SAMExpression):
             if other.sam is not self.sam:
                 raise ValueError("Expressions from different SymbolicSAMs cannot be combined")
-            if other.dims and self.dims and set(other.dims) != set(self.dims):
-                row_dim, column_dim = self.sam.dims
-                raise ValueError(
-                    f"Expressions with dims {self.dims} and {other.dims} would broadcast into an outer product. "
-                    f"Rename a dim first, for example sam.sum({row_dim!r}).rename({{{column_dim!r}: {row_dim!r}}})"
-                )
-            for dim in set(self.dims) & set(other.dims):
-                if not self.labels[dim].equals(other.labels[dim]):
-                    raise ValueError(
-                        f"Expressions combine position by position, but their accounts on dim {dim!r} differ: "
-                        f"{list(self.labels[dim])} and {list(other.labels[dim])}"
-                    )
-            return other.tensor
+            return other
 
         if isinstance(other, Real):
-            return px.as_xtensor(np.asarray(float(other)), dims=())
+            return _constant_expression(self.sam, {}, np.asarray(float(other)))
 
         if isinstance(other, pd.Series):
             if len(self.dims) != 1:
@@ -159,7 +184,7 @@ class SAMExpression:
                     f"outer product"
                 )
             if other.ndim == 0:
-                return px.as_xtensor(np.asarray(float(other)), dims=())
+                return self._operand(float(other))
             values = other.to_series() if other.ndim == 1 else other.to_pandas()
             return self._labeled_operand(values, dims=tuple(map(str, other.dims)))
 
@@ -172,8 +197,9 @@ class SAMExpression:
 
     def _labeled_operand(
         self, values: pd.Series | pd.DataFrame, dims: tuple[str, ...]
-    ) -> XTensorVariable:
-        """Align ``values`` to this expression's labels, with the index on ``dims[0]`` and any columns on ``dims[1]``."""
+    ) -> "SAMExpression":
+        """Return ``values`` as a constant expression aligned to this expression's labels, with the index on
+        ``dims[0]`` and any columns on ``dims[1]``. Labels it does not give are NaN."""
         axes = [values.index] if isinstance(values, pd.Series) else [values.index, values.columns]
         for dim, labels in zip(dims, axes, strict=True):
             unknown_labels = labels.difference(self.labels[dim])
@@ -184,7 +210,8 @@ class SAMExpression:
             aligned = values.reindex(self.labels[dims[0]])
         else:
             aligned = values.reindex(index=self.labels[dims[0]], columns=self.labels[dims[1]])
-        return px.as_xtensor(aligned.to_numpy(dtype=float), dims=dims)
+        labels = {dim: self.labels[dim] for dim in dims}
+        return _constant_expression(self.sam, labels, aligned.to_numpy(dtype=float))
 
 
 @dataclass(frozen=True, eq=False)
@@ -566,12 +593,16 @@ class SymbolicSAM:
         # The solvers work in cells divided by this total, so every SAM is solved at the same scale.
         self._total_magnitude = np.abs(self.prior_values).sum()
 
-        self.cells = pt.vector("cells", shape=(self.n_cells,))
-        dense = pt.set_subtensor(pt.zeros(prior_frame.shape)[self.rows, self.columns], self.cells)
+        # The grid position of each cell carries a coefficient of one on that cell.
+        cell_positions = self.rows * self.n_accounts + self.columns
         self._matrix = SAMExpression(
             self,
-            px.as_xtensor(dense, dims=self.dims),
             {row_dim: prior_frame.index, column_dim: prior_frame.columns},
+            operator=csr_array(
+                (np.ones(self.n_cells), (cell_positions, np.arange(self.n_cells))),
+                shape=(self.n_accounts**2, self.n_cells),
+            ),
+            constant=np.zeros(prior_frame.shape),
         )
 
     @property
@@ -594,19 +625,30 @@ class SymbolicSAM:
         if unknown_dims:
             raise ValueError(f"Unknown dims {sorted(unknown_dims)}. The SAM's dims are {self.dims}")
 
-        indexers = {}
-        labels = dict(self._matrix.labels)
-        for dim, selection in selections.items():
-            if selection is None:
-                continue
-            positions = _label_positions(labels[dim], selection)
-            indexers[dim] = positions
-            if np.ndim(positions) == 0:
-                del labels[dim]
-            else:
-                labels[dim] = labels[dim][positions]
+        matrix = self._matrix
+        positions = [
+            _label_positions(matrix.labels[dim], selections[dim])
+            if selections.get(dim) is not None
+            else np.arange(len(matrix.labels[dim]))
+            for dim in matrix.dims
+        ]
+        grid = np.ix_(*[np.atleast_1d(dim_positions) for dim_positions in positions])
+        rows = np.arange(np.prod(matrix.shape)).reshape(matrix.shape)[grid]
 
-        return SAMExpression(self, self._matrix.tensor.isel(indexers), labels)
+        # A single account drops its dim, as in xarray.
+        kept = [np.ndim(dim_positions) > 0 for dim_positions in positions]
+        kept_shape = tuple(length for length, keep in zip(rows.shape, kept, strict=True) if keep)
+        labels = {
+            dim: matrix.labels[dim][dim_positions]
+            for dim, dim_positions, keep in zip(matrix.dims, positions, kept, strict=True)
+            if keep
+        }
+        return SAMExpression(
+            self,
+            labels,
+            operator=csr_array(matrix.operator[rows.ravel()]),
+            constant=matrix.constant[grid].reshape(kept_shape),
+        )
 
     def sum(self, dim: str | None = None) -> SAMExpression:
         """Sum the whole SAM over ``dim``: the column dim gives row sums and the row dim gives column sums."""
@@ -1157,26 +1199,32 @@ def _hard_constraints(
 def _linear_rows(
     sam: SymbolicSAM, constraints: dict[str, Constraint], is_equality: bool
 ) -> tuple[csr_array, np.ndarray]:
-    if not constraints:
-        return csr_array((0, sam.n_cells)), np.zeros(0)
+    operators = [csr_array((0, sam.n_cells))]
+    values = [np.zeros(0)]
+    for name, constraint in constraints.items():
+        residual = constraint.residual
+        constant = residual.constant.ravel()
+        imposed = ~np.isnan(constant)
+        operator = csr_array(residual.operator[imposed])
+        value = -constant[imposed]
 
-    residuals = [constraint.residual for constraint in constraints.values()]
-    constant, operator, imposed = _affine_parts(sam, residuals)
-    values = -constant[imposed]
+        # A row with no cells is 0 == value or 0 <= value, which holds or fails regardless of the cells.
+        empty = np.diff(operator.indptr) == 0
+        if _cannot_hold(value[empty], is_equality).any():
+            raise ValueError(
+                f"Constraint {name!r} involves no nonzero cell of the prior at a position where it cannot hold. Cells "
+                f"that are zero in the prior stay zero"
+            )
 
-    # A row with no cells is 0 == value or 0 <= value, which holds or fails regardless of the cells.
-    empty = np.diff(operator.indptr) == 0
-    unsatisfiable = empty & (values != 0.0 if is_equality else values < 0.0)
-    if unsatisfiable.any():
-        positions_per_constraint = [_n_positions(residual) for residual in residuals]
-        owners = np.repeat(np.arange(len(constraints)), positions_per_constraint)[imposed]
-        name = list(constraints)[owners[unsatisfiable][0]]
-        raise ValueError(
-            f"Constraint {name!r} involves no nonzero cell of the prior at a position where it cannot hold. Cells "
-            f"that are zero in the prior stay zero"
-        )
+        operators.append(operator)
+        values.append(value)
 
-    return operator, values
+    return csr_array(vstack(operators, format="csr")), np.concatenate(values)
+
+
+def _cannot_hold(values: np.ndarray, is_equality: bool) -> np.ndarray:
+    """Return where ``0 == value``, or ``0 <= value`` for an inequality, fails."""
+    return values != 0.0 if is_equality else values < 0.0
 
 
 def _measurement_rows(
@@ -1184,53 +1232,86 @@ def _measurement_rows(
 ) -> tuple[csr_array, np.ndarray, np.ndarray]:
     """Return the rows, values and error scales of a measurement with error, without its NaN positions."""
     residual = constraint.residual
-    constant, operator, imposed = _affine_parts(sam, [residual])
+    constant = residual.constant.ravel()
+    imposed = ~np.isnan(constant)
 
     # Adding the scale to a zero multiple of the residual aligns it with the residual's positions by label.
-    error_scales = _constant_part(sam, [residual * 0.0 + constraint.penalty.scale])[imposed]
+    error_scale = residual * 0.0 + constraint.penalty.scale
+    error_scales = error_scale.constant.ravel()[imposed]
     if not (np.isfinite(error_scales).all() and (error_scales > 0.0).all()):
         raise ValueError(
             "The scale of a measurement error must be positive and finite at every position the measurement imposes"
         )
 
-    return operator, -constant[imposed], error_scales
+    return csr_array(residual.operator[imposed]), -constant[imposed], error_scales
 
 
-def _affine_parts(
-    sam: SymbolicSAM, residuals: list[SAMExpression]
-) -> tuple[np.ndarray, csr_array, np.ndarray]:
-    """
-    Return the constant part of the stacked ``residuals``, which are affine in the cells, the Jacobian at the positions
-    where that constant is not NaN, and the indices of those positions.
-    """
-    stacked = _stacked(residuals)
-    constant = _evaluate(sam, stacked)
-    imposed = np.flatnonzero(~np.isnan(constant))
-
-    jacobian = pytensor.gradient.jacobian(stacked[imposed], sam.cells, vectorize=True)
-    return constant, csr_array(_evaluate(sam, jacobian)), imposed
+def _flat_positions(
+    coordinates: list[np.ndarray], shape: tuple[int, ...], count: int
+) -> np.ndarray:
+    """Return the row-major position in a grid of ``shape`` of each of ``count`` coordinate tuples."""
+    if not shape:
+        return np.zeros(count, dtype=np.int64)
+    return np.ravel_multi_index(coordinates, shape)
 
 
-def _constant_part(sam: SymbolicSAM, residuals: list[SAMExpression]) -> np.ndarray:
-    return _evaluate(sam, _stacked(residuals))
+def _constant_expression(
+    sam: SymbolicSAM, labels: dict[str, pd.Index], constant: np.ndarray
+) -> SAMExpression:
+    return SAMExpression(sam, labels, csr_array((constant.size, sam.n_cells)), constant)
 
 
-def _stacked(residuals: list[SAMExpression]) -> pt.TensorVariable:
-    return pt.concatenate(
-        [
-            pt.as_tensor_variable(
-                rewrite_graph(residual.tensor.values.ravel(), include=("lower_xtensor",))
+def _aligned(left: SAMExpression, right: SAMExpression) -> tuple[SAMExpression, SAMExpression]:
+    """Return ``left`` and ``right`` on the same labels, broadcasting the one over fewer dims."""
+    for dim in set(left.dims) & set(right.dims):
+        if not left.labels[dim].equals(right.labels[dim]):
+            raise ValueError(
+                f"Expressions combine position by position, but their accounts on dim {dim!r} differ: "
+                f"{list(left.labels[dim])} and {list(right.labels[dim])}"
             )
-            for residual in residuals
-        ]
+
+    if set(right.dims) <= set(left.dims):
+        return left, _broadcast(right, left.labels)
+    if set(left.dims) <= set(right.dims):
+        return _broadcast(left, right.labels), right
+
+    row_dim, column_dim = left.sam.dims
+    raise ValueError(
+        f"Expressions with dims {left.dims} and {right.dims} would broadcast into an outer product. Rename a dim "
+        f"first, for example sam.sum({row_dim!r}).rename({{{column_dim!r}: {row_dim!r}}})"
     )
 
 
-def _evaluate(sam: SymbolicSAM, output: pt.TensorVariable) -> np.ndarray:
-    """Evaluate ``output`` with every cell at zero."""
-    evaluate = pytensor.function([sam.cells], output, on_unused_input="ignore")
-    return evaluate(np.zeros(sam.n_cells))
+def _broadcast(expression: SAMExpression, labels: dict[str, pd.Index]) -> SAMExpression:
+    """Return ``expression`` on ``labels``, whose dims include its own, repeating it over the dims it lacks."""
+    if expression.dims == tuple(labels):
+        return expression
+
+    # Order the expression's axes as in ``labels``, then give each missing dim an axis of length one to broadcast.
+    target_order = [dim for dim in labels if dim in expression.dims]
+    axes = [expression.dims.index(dim) for dim in target_order]
+    expanded_shape = tuple(
+        len(index) if dim in expression.dims else 1 for dim, index in labels.items()
+    )
+    shape = tuple(len(index) for index in labels.values())
+
+    def expanded(values: np.ndarray) -> np.ndarray:
+        return np.broadcast_to(values.transpose(axes).reshape(expanded_shape), shape)
+
+    rows = expanded(np.arange(expression.constant.size).reshape(expression.shape)).ravel()
+    return SAMExpression(
+        expression.sam,
+        labels,
+        csr_array(expression.operator[rows]),
+        expanded(expression.constant).copy(),
+    )
 
 
-def _n_positions(residual: SAMExpression) -> int:
-    return int(np.prod([len(residual.labels[dim]) for dim in residual.dims]))
+def _add(left: SAMExpression, right: SAMExpression) -> SAMExpression:
+    """Return the sum of two expressions on the same labels."""
+    return SAMExpression(
+        left.sam,
+        left.labels,
+        csr_array(left.operator + right.operator),
+        left.constant + right.constant,
+    )

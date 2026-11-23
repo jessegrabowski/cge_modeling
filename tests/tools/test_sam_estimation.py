@@ -57,6 +57,48 @@ def test_constraint_rows():
     np.testing.assert_allclose(linear.inequality_values, [4.0, -1.0])
 
 
+def test_sum_of_single_cell_is_the_cell():
+    sam = SymbolicSAM(pd.DataFrame([[0.0, 2.0], [3.0, 0.0]], index=["a", "b"], columns=["a", "b"]))
+    cell = sam.sel(row="a", col="b")
+
+    summed = linear_constraints(sam, [cell.sum() == 5.0, cell.sum().sum() == 5.0])
+    direct = linear_constraints(sam, [cell == 5.0])
+
+    np.testing.assert_array_equal(
+        summed.equality_operator.toarray(), np.tile(direct.equality_operator.toarray(), (2, 1))
+    )
+    np.testing.assert_array_equal(summed.equality_values, [5.0, 5.0])
+
+
+def test_expression_broadcasts_over_missing_dim():
+    prior = pd.DataFrame(
+        [[0.0, 5.0, 2.0], [1.0, 0.0, 3.0], [4.0, 6.0, 0.0]], index=list("abc"), columns=list("abc")
+    )
+    sam = SymbolicSAM(prior)
+
+    # Every account's income equals the income of a, which repeats over the row dim.
+    linear = linear_constraints(sam, [sam.sum("col") == sam.sel(row="a").sum()])
+
+    np.testing.assert_allclose(
+        linear.equality_operator @ sam.prior_values, [0.0, 4.0 - 7.0, 10.0 - 7.0]
+    )
+    np.testing.assert_allclose(linear.equality_values, [0.0, 0.0, 0.0])
+
+
+def test_transposed_expressions_align_by_dim_name():
+    prior = pd.DataFrame(
+        [[0.0, 5.0, 2.0], [1.0, 0.0, 3.0], [4.0, 6.0, 0.0]], index=list("abc"), columns=list("abc")
+    )
+    sam = SymbolicSAM(prior)
+
+    # Swapping the dim names makes position (i, j) of the right side the cell (j, i).
+    linear = linear_constraints(sam, [sam.sel() == sam.sel().rename({"row": "col", "col": "row"})])
+
+    np.testing.assert_allclose(
+        linear.equality_operator @ sam.prior_values, (prior - prior.T).to_numpy().ravel()
+    )
+
+
 def test_series_constraint_rows():
     prior = pd.DataFrame(
         [[0.0, 5.0, 2.0], [1.0, 0.0, 3.0], [4.0, 6.0, 0.0]], index=list("abc"), columns=list("abc")
@@ -311,6 +353,7 @@ def test_invalid_prior_raises(build, message):
             r"not in dim 'row': \[5\]",
         ),
         (lambda sam: np.ones(2) + sam.sel(row=0), TypeError, "unlabeled array"),
+        (lambda sam: sam.sel(row=0).sum("row"), ValueError, "Cannot sum over 'row'"),
         (lambda sam: sam.sum("col") == pd.DataFrame(np.ones((2, 2))), ValueError, "index is 'row'"),
         (
             lambda sam: sam.sel() == pd.DataFrame(np.ones((2, 2)), columns=[0, 7]),
@@ -343,6 +386,7 @@ def test_invalid_prior_raises(build, message):
         "constraint_as_condition",
         "unknown_series_label",
         "array_operand",
+        "sum_over_missing_dim",
         "dataframe_against_one_dim",
         "unknown_dataframe_column_label",
         "dataarray_with_extra_dim",
