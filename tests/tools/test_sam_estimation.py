@@ -85,6 +85,34 @@ def test_expression_broadcasts_over_missing_dim():
     np.testing.assert_allclose(linear.equality_values, [0.0, 0.0, 0.0])
 
 
+def test_expression_on_the_left_broadcasts():
+    prior = pd.DataFrame(
+        [[0.0, 5.0, 2.0], [1.0, 0.0, 3.0], [4.0, 6.0, 0.0]], index=list("abc"), columns=list("abc")
+    )
+    sam = SymbolicSAM(prior)
+
+    linear = linear_constraints(sam, [sam.sel(row="a").sum() == sam.sum("col")])
+
+    np.testing.assert_allclose(
+        linear.equality_operator @ sam.prior_values, [0.0, 7.0 - 4.0, 7.0 - 10.0]
+    )
+
+
+def test_identity_operator_is_sparse():
+    # Each off-diagonal cell enters its row account's income and its column account's spending, and a diagonal cell
+    # cancels out.
+    prior = pd.DataFrame(
+        [[1.0, 5.0, 2.0], [1.0, 0.0, 3.0], [4.0, 6.0, 0.0]], index=list("abc"), columns=list("abc")
+    )
+    sam = SymbolicSAM(prior)
+
+    balance = sam.sum("col") == sam.sum("row").rename({"col": "row"})
+    operator = linear_constraints(sam, [balance]).equality_operator
+
+    assert operator.shape == (3, sam.n_cells)
+    assert operator.nnz == 2 * (sam.n_cells - 1)
+
+
 def test_transposed_expressions_align_by_dim_name():
     prior = pd.DataFrame(
         [[0.0, 5.0, 2.0], [1.0, 0.0, 3.0], [4.0, 6.0, 0.0]], index=list("abc"), columns=list("abc")
@@ -354,6 +382,12 @@ def test_invalid_prior_raises(build, message):
         ),
         (lambda sam: np.ones(2) + sam.sel(row=0), TypeError, "unlabeled array"),
         (lambda sam: sam.sel(row=0).sum("row"), ValueError, "Cannot sum over 'row'"),
+        (
+            lambda sam: sam.sel().rename({"account": "row"}),
+            ValueError,
+            r"Cannot rename \['account'\]",
+        ),
+        (lambda sam: sam.sel().rename({"row": "col"}), ValueError, "repeated dims"),
         (lambda sam: sam.sum("col") == pd.DataFrame(np.ones((2, 2))), ValueError, "index is 'row'"),
         (
             lambda sam: sam.sel() == pd.DataFrame(np.ones((2, 2)), columns=[0, 7]),
@@ -387,6 +421,8 @@ def test_invalid_prior_raises(build, message):
         "unknown_series_label",
         "array_operand",
         "sum_over_missing_dim",
+        "rename_unknown_dim",
+        "rename_onto_existing_dim",
         "dataframe_against_one_dim",
         "unknown_dataframe_column_label",
         "dataarray_with_extra_dim",

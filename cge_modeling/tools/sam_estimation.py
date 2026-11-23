@@ -73,6 +73,13 @@ class SAMExpression:
         self.operator = operator
         self.constant = constant
 
+        grid_size = int(np.prod(self.shape))
+        if constant.shape != self.shape or operator.shape != (grid_size, sam.n_cells):
+            raise ValueError(
+                f"An expression over shape {self.shape} needs a constant of that shape and an operator of shape "
+                f"{(grid_size, sam.n_cells)}, not {constant.shape} and {operator.shape}"
+            )
+
     @property
     def dims(self) -> tuple[str, ...]:
         return tuple(self.labels)
@@ -108,7 +115,17 @@ class SAMExpression:
 
     def rename(self, mapping: dict[str, str]) -> "SAMExpression":
         """Rename dims, for example ``{"col": "row"}`` to compare column sums with row sums account by account."""
-        labels = {mapping.get(name, name): index for name, index in self.labels.items()}
+        unknown_dims = set(mapping) - set(self.dims)
+        if unknown_dims:
+            raise ValueError(
+                f"Cannot rename {sorted(unknown_dims)}. The expression's dims are {self.dims}"
+            )
+        renamed_dims = [mapping.get(name, name) for name in self.dims]
+        if len(set(renamed_dims)) != len(renamed_dims):
+            raise ValueError(
+                f"Renaming dims {self.dims} with {mapping} gives repeated dims {tuple(renamed_dims)}"
+            )
+        labels = dict(zip(renamed_dims, self.labels.values(), strict=True))
         return SAMExpression(self.sam, labels, self.operator, self.constant)
 
     def __add__(self, other) -> "SAMExpression":
