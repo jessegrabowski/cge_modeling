@@ -698,6 +698,37 @@ def test_inequality_binding():
     np.testing.assert_allclose(loose, unconstrained, rtol=SOLVER_RTOL, atol=1e-6)
 
 
+@pytest.mark.parametrize(
+    "lower_factor, upper_factor, bound_factor",
+    [(1.05, 1.10, 1.05), (0.90, 0.95, 0.95)],
+    ids=["binds below", "binds above"],
+)
+def test_range_binds_at_the_active_side(lower_factor, upper_factor, bound_factor):
+    prior = load_unbalanced_sam()
+    unconstrained_income = SymbolicSAM(prior).fit().sam.loc["Factor"].to_numpy().sum()
+    sam = SymbolicSAM(prior)
+    factor_income = sam.sel(row="Factor").sum()
+    sam.subject_to(
+        at_least=factor_income >= lower_factor * unconstrained_income,
+        at_most=factor_income <= upper_factor * unconstrained_income,
+    )
+
+    estimate = sam.fit().sam
+
+    assert estimate.loc["Factor"].to_numpy().sum() == pytest.approx(
+        bound_factor * unconstrained_income, rel=1e-7
+    )
+
+
+def test_inequality_conflicting_with_identity_raises():
+    # The identity makes a's income equal its spending, so income of at least 5 and spending of at most 3 conflict.
+    sam = SymbolicSAM(pd.DataFrame([[0.0, 2.0], [1.0, 0.0]], index=["a", "b"], columns=["a", "b"]))
+    sam.subject_to(income=sam.sel(row="a").sum() >= 5.0, spending=sam.sel(col="a").sum() <= 3.0)
+
+    with pytest.raises(ValueError, match="no solution: solver status is 'infeasible'"):
+        sam.fit()
+
+
 def test_gras_published_example():
     # Temurshoev, Miller and Bouwmeester (2013), Tables 1 to 3: a 3 x 4 block updated to known row
     # and column totals. The block sits in a square SAM with a closing account, Totals, that is
