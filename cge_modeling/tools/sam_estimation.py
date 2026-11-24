@@ -1060,6 +1060,9 @@ def _fit_dual(sam: SymbolicSAM, objective: Objective, **sparse_root_kwargs) -> S
             np.zeros(free_accounts.size),
             **{**defaults, **sparse_root_kwargs},
         )
+        # sparse_root returns a failed result in place of an exception raised during the solve, naming it in the message.
+        if result.message.startswith("Optimizer raised"):
+            raise RuntimeError(f"The dual solver failed. {result.message}")
         free_log_scales = result.x
         solver_message = result.message
 

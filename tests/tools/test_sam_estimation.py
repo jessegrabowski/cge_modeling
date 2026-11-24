@@ -646,6 +646,17 @@ def test_dual_with_no_account_to_scale(caplog):
     assert caplog.records == []
 
 
+def test_dual_raises_when_its_solver_raises(monkeypatch):
+    # sparse_root turns an exception inside the solve into a failed result, which fit must not report as an estimate.
+    monkeypatch.setattr("cge_modeling.tools.sam_estimation.newton_armijo", lambda: object())
+    sam = SymbolicSAM(load_unbalanced_sam())
+
+    with pytest.raises(
+        RuntimeError, match=r"The dual solver failed\. Optimizer raised AttributeError"
+    ):
+        sam.fit(solver="dual")
+
+
 def test_dual_solver_kwargs():
     sam = SymbolicSAM(load_unbalanced_sam())
 
