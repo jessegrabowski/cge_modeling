@@ -368,13 +368,6 @@ class SAMEstimate:
         covariance : pandas.DataFrame
             Covariance of the requested cells, in the prior's units squared, indexed on both axes by the row and column
             account of each cell.
-
-        Raises
-        ------
-        ValueError
-            If the objective is not :class:`LeastSquares`, a measurement error is not normal, a cell sits at zero, an
-            inequality binds, the exact constraints are redundant with each other, or a requested cell is zero in the
-            prior.
         """
         return _least_squares_covariance(
             self._symbolic_sam, self._objective, self._constraints, self._cells, requested=cells
@@ -731,18 +724,6 @@ class SymbolicSAM:
         -------
         estimate : SAMEstimate
             The estimated SAM, the objective value, and the solver status.
-
-        Raises
-        ------
-        ValueError
-            If balancing would set cells to zero, a constraint involves no nonzero cell where it cannot hold, or the
-            solver finds the problem infeasible or unbounded.
-
-        Warns
-        -----
-        UserWarning
-            If the solve is not optimal, or a :class:`Divergence` objective without a ``dispersion`` meets a
-            measurement with error.
         """
         forced_to_zero = cells_forced_to_zero(self)
         if forced_to_zero:
@@ -834,12 +815,6 @@ class SymbolicSAM:
         -------
         value : float
             The objective at ``candidate``.
-
-        Raises
-        ------
-        ValueError
-            If ``candidate`` has different account labels from the prior, a cell that is not finite, a nonzero cell
-            where the prior is zero, or a cell with the opposite sign of its prior value.
         """
         if objective is None:
             objective = KL()
@@ -931,11 +906,6 @@ def linear_constraints(
     -------
     linear : LinearConstraints
         The equality rows, then the inequality rows, in the order of ``constraints``.
-
-    Raises
-    ------
-    ValueError
-        If a constraint involves no nonzero cell of the prior at a position where its value cannot hold.
     """
     named = (
         constraints
