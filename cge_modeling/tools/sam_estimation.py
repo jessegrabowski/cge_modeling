@@ -46,6 +46,9 @@ class SAMExpression:
     a subset of them. A DataArray has to sit to the right of the expression, because xarray's operators do not defer to
     other types.
 
+    Two expressions combine by dim name in the same way. One over a subset of the other's dims repeats over the dims it
+    lacks, so ``sam.sel() == sam.sum("col")`` makes every cell equal its row account's total.
+
     Parameters
     ----------
     sam : SymbolicSAM

@@ -98,6 +98,21 @@ def test_expression_on_the_left_broadcasts():
     )
 
 
+def test_expression_broadcasts_a_row_total_over_the_grid():
+    prior = pd.DataFrame(
+        [[0.0, 5.0, 2.0], [1.0, 0.0, 3.0], [4.0, 6.0, 0.0]], index=list("abc"), columns=list("abc")
+    )
+    sam = SymbolicSAM(prior)
+
+    # Every cell minus the total of its row, in row-major order over the grid.
+    linear = linear_constraints(sam, [sam.sel() == sam.sum("col")])
+
+    np.testing.assert_allclose(
+        linear.equality_operator @ sam.prior_values,
+        [-7.0, -2.0, -5.0, -3.0, -4.0, -1.0, -6.0, -4.0, -10.0],
+    )
+
+
 def test_identity_operator_is_sparse():
     # Each off-diagonal cell enters its row account's income and its column account's spending, and a diagonal cell
     # cancels out.
