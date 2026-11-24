@@ -1187,6 +1187,31 @@ def test_covariance_of_selected_cells():
 
 
 @pytest.mark.parametrize(
+    "prior, household_income",
+    [
+        (load_unbalanced_sam(), None),
+        (load_unbalanced_sam(), lambda income: income.normal(sigma=50.0)),
+        # Household cells also enter the exact total, so they enter three constraint rows.
+        (load_unbalanced_sam(), lambda income: income),
+        (pd.DataFrame(np.diag([2.0, 3.0]), index=["a", "b"], columns=["a", "b"]), None),
+    ],
+    ids=["identity only", "normal measurement", "exact total", "no equalities"],
+)
+def test_variance_is_the_covariance_diagonal(prior, household_income):
+    sam = SymbolicSAM(prior)
+    if household_income is not None:
+        income = sam.sel(row=("Institution", "Household")).sum() == 9893.0
+        sam.subject_to(household_income=household_income(income))
+    estimate = sam.fit(objective=LeastSquares(), **TIGHT_CLARABEL)
+
+    variance = estimate.variance()
+    covariance = estimate.covariance()
+
+    assert list(variance.index) == list(covariance.index)
+    np.testing.assert_allclose(variance.to_numpy(), np.diag(covariance.to_numpy()), rtol=1e-9)
+
+
+@pytest.mark.parametrize(
     "cells, message",
     [
         ([("a", "z")], "labels not in the prior"),
@@ -1213,21 +1238,16 @@ def test_covariance_rejects_cells(cells, message):
         ),
         (LeastSquares(), lambda sam: sam.sel(row=0, col=1) <= 2.0, "An inequality binds"),
         (LeastSquares(), lambda sam: sam.sel(row=0, col=1) == 0.0, "A cell sits at zero"),
-        (
-            LeastSquares(),
-            lambda sam: sam.sum("col") == sam.sum("row").rename({"col": "row"}),
-            "linearly dependent",
-        ),
     ],
     ids=[
         "KL",
         "laplace measurement",
         "binding inequality",
         "cell at zero",
-        "identity imposed twice",
     ],
 )
-def test_covariance_raises(objective, constraint, message):
+@pytest.mark.parametrize("method", ["covariance", "variance"])
+def test_covariance_and_variance_raise(objective, constraint, message, method):
     # The prior is balanced, so the cap of 2 on its cell of 3 binds and the fixed zero holds exactly.
     sam = SymbolicSAM(pd.DataFrame([[0.0, 3.0, 1.0], [2.0, 0.0, 1.0], [2.0, 1.0, 0.0]]))
     if constraint is not None:
@@ -1235,7 +1255,109 @@ def test_covariance_raises(objective, constraint, message):
     estimate = sam.fit(objective=objective, solver=cp.CLARABEL)
 
     with pytest.raises(ValueError, match=message):
-        estimate.covariance()
+        getattr(estimate, method)()
+
+
+@pytest.mark.parametrize(
+    "implied",
+    [
+        lambda sam, totals: sam.sum("col") == sam.sum("row").rename({"col": "row"}),
+        lambda sam, totals: sam.sel(row=0).sum() == sam.sel(col=0).sum(),
+        lambda sam, totals: sam.sel(row=[1, 2]).sum() == sam.sel(col=[1, 2]).sum(),
+        lambda sam, totals: sam.sum("row") == totals.rename_axis("col"),
+    ],
+    ids=[
+        "identity imposed twice",
+        "one account's balance",
+        "two accounts' combined balance",
+        "column totals",
+    ],
+)
+def test_implied_constraints_leave_the_covariance_unchanged(implied):
+    # Under the identity, known row totals imply the same column totals, and every balance is already imposed, so adding
+    # any of these constraints conditions on nothing new.
+    prior = pd.DataFrame(
+        [
+            [0.0, 1.0, 2.0, 3.0, 4.0],
+            [5.0, 0.0, 6.0, 7.0, 8.0],
+            [9.0, 1.0, 0.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0, 0.0, 7.0],
+            [8.0, 9.0, 1.0, 2.0, 0.0],
+        ]
+    )
+    totals = (prior.sum(axis=1) + prior.sum(axis=0)) / 2.0
+
+    def estimate(with_implied):
+        sam = SymbolicSAM(prior)
+        sam.subject_to(row_totals=sam.sum("col") == totals)
+        if with_implied:
+            sam.subject_to(implied=implied(sam, totals))
+        return sam.fit(objective=LeastSquares(), **TIGHT_CLARABEL)
+
+    reduced, full = estimate(with_implied=False), estimate(with_implied=True)
+
+    np.testing.assert_allclose(full.covariance(), reduced.covariance(), rtol=1e-9, atol=1e-9)
+    np.testing.assert_allclose(full.variance(), reduced.variance(), rtol=1e-9, atol=1e-9)
+
+
+def test_variance_of_a_determined_cell_is_zero():
+    # The Labor row has a single cell, so an exact Labor income fixes it.
+    sam = SymbolicSAM(load_unbalanced_sam())
+    labor = ("Factor", "Labor")
+    sam.subject_to(labor=sam.sel(row=labor).sum() == float(sam.prior.loc[labor].sum()))
+    variance = sam.fit(objective=LeastSquares(), **TIGHT_CLARABEL).variance()
+
+    assert variance[(labor, ("Activity", "Agriculture"))] == pytest.approx(0.0, abs=1e-6)
+    assert (variance >= 0.0).all()
+
+
+def test_covariance_matches_a_dense_reference_on_a_random_sam():
+    # A known total on account 0 is exact and the totals of accounts 1 to 10 are noisy measurements, so a cell in one of
+    # those rows enters three conditioning rows. The reference conditions on the measurements, then on the exact rows through a
+    # pseudoinverse that absorbs the identity's dependent rows.
+    rng = np.random.default_rng(0)
+    n_accounts = 150
+    values = np.where(
+        rng.uniform(size=(n_accounts, n_accounts)) < 0.05,
+        rng.uniform(1.0, 100.0, (n_accounts, n_accounts)),
+        0.0,
+    )
+    np.fill_diagonal(values, 0.0)
+    values[np.arange(n_accounts), (np.arange(n_accounts) + 1) % n_accounts] = rng.uniform(
+        1.0, 100.0, n_accounts
+    )
+    # A prior near balance keeps every estimated cell away from zero, where the covariance is undefined.
+    balanced = SymbolicSAM(pd.DataFrame(values)).fit(solver="dual").sam
+    prior = balanced * (1.0 + rng.uniform(-0.01, 0.01, size=balanced.shape))
+    sam = SymbolicSAM(prior)
+    known = sam.sel(row=0).sum() == float(prior.loc[0].sum())
+    measured = sam.sel(row=list(range(1, 11))).sum("col") == prior.loc[1:10].sum(axis=1)
+    sam.subject_to(known=known, measured=measured.normal(sigma=5.0))
+    estimate = sam.fit(objective=LeastSquares(), **TIGHT_CLARABEL)
+
+    variance = np.diag(np.abs(sam.prior_values) ** 2)
+    loading = linear_constraints(sam, [measured]).equality_operator.toarray() / 5.0
+    variance = variance - variance @ loading.T @ np.linalg.solve(
+        loading @ variance @ loading.T + np.eye(10), loading @ variance
+    )
+    balance = sam.sum("col") == sam.sum("row").rename({"col": "row"})
+    exact = linear_constraints(sam, [balance, known]).equality_operator.toarray()
+    expected = (
+        variance
+        - variance @ exact.T @ np.linalg.pinv(exact @ variance @ exact.T) @ exact @ variance
+    )
+
+    np.testing.assert_allclose(
+        estimate.variance().to_numpy(), np.diag(expected), rtol=1e-6, atol=1e-6
+    )
+    selected = np.flatnonzero(np.isin(sam.rows, [0, 1, 2]))
+    cells = [(sam.prior.index[sam.rows[i]], sam.prior.columns[sam.columns[i]]) for i in selected]
+    np.testing.assert_allclose(
+        estimate.covariance(cells=cells).to_numpy(),
+        expected[np.ix_(selected, selected)],
+        rtol=1e-6,
+        atol=1e-6,
+    )
 
 
 @pytest.mark.parametrize(

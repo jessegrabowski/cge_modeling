@@ -2,7 +2,7 @@ import warnings
 
 from collections.abc import Hashable
 from dataclasses import dataclass, field, replace
-from functools import partial
+from functools import cached_property, partial
 from numbers import Real
 
 import cvxpy as cp
@@ -12,9 +12,10 @@ import pandas as pd
 import xarray as xr
 
 from narwhals.typing import IntoDataFrame
-from scipy.sparse import coo_array, csc_array, csr_array, diags_array, vstack
+from scipy.linalg import cho_factor, cho_solve
+from scipy.linalg.lapack import dpstrf
+from scipy.sparse import coo_array, csr_array, diags_array, vstack
 from scipy.sparse.csgraph import connected_components
-from scipy.sparse.linalg import splu
 from scipy.special import kl_div
 
 from cge_modeling.solvers.sparse_root import newton_armijo, sparse_root
@@ -358,7 +359,8 @@ class SAMEstimate:
         which truncate that normal distribution, so it is the covariance of the estimate only when every bound is many
         standard deviations from it.
 
-        Each requested cell costs one sparse solve, so a large SAM asks for the cells it needs.
+        The cost grows with the square of the number of requested cells, so a large SAM asks for the cells it needs,
+        or for every cell's variance alone through :meth:`variance`.
 
         Parameters
         ----------
@@ -372,8 +374,35 @@ class SAMEstimate:
             Covariance of the requested cells, in the prior's units squared, indexed on both axes by the row and column
             account of each cell.
         """
-        return _least_squares_covariance(
-            self._symbolic_sam, self._objective, self._constraints, self._cells, requested=cells
+        selected = _cell_indices(self._symbolic_sam, cells)
+        labels = _cell_labels(self._symbolic_sam, selected)
+        return pd.DataFrame(self._conditioned.covariance(selected), index=labels, columns=labels)
+
+    def variance(self) -> pd.Series:
+        """
+        Return the variance of every estimated cell under a :class:`LeastSquares` objective.
+
+        The variances are the diagonal of :meth:`covariance` without forming the matrix. They cost one dense Cholesky
+        factorization and inverse of a square matrix with a row for each independent exact constraint and measurement
+        row, about one per account, however many cells the SAM has.
+
+        Returns
+        -------
+        variance : pandas.Series
+            Variance of each nonzero cell of the prior, in the prior's units squared, indexed by the row and column
+            account of each cell.
+        """
+        every_cell = np.arange(self._symbolic_sam.n_cells)
+        return pd.Series(
+            self._conditioned.variance(),
+            index=_cell_labels(self._symbolic_sam, every_cell),
+            name="variance",
+        )
+
+    @cached_property
+    def _conditioned(self) -> "_ConditionedNormal":
+        return _least_squares_conditioning(
+            self._symbolic_sam, self._objective, self._constraints, self._cells
         )
 
 
@@ -1111,13 +1140,12 @@ def _warn_if_unit_dependent(objective: Objective, constraints: dict[str, Constra
         )
 
 
-def _least_squares_covariance(
+def _least_squares_conditioning(
     sam: SymbolicSAM,
     objective: Objective,
     constraints: dict[str, Constraint],
     estimate_cells: np.ndarray,
-    requested: list[Cell] | None,
-) -> pd.DataFrame:
+) -> "_ConditionedNormal":
     if not isinstance(objective, LeastSquares):
         raise ValueError(
             f"A covariance is defined only for the LeastSquares objective, the negative log density of normal cells. "
@@ -1134,14 +1162,7 @@ def _least_squares_covariance(
             "A cell sits at zero, where its sign bound binds and the cells are no longer normal around the estimate"
         )
 
-    exact = linear_constraints(
-        sam,
-        {
-            name: constraint
-            for name, constraint in constraints.items()
-            if constraint.penalty is None
-        },
-    )
+    exact = linear_constraints(sam, _hard_constraints(sam, constraints))
     slack = exact.inequality_values - exact.inequality_operator @ estimate_cells
     inequality_size = abs(exact.inequality_operator) @ np.abs(estimate_cells) + np.abs(
         exact.inequality_values
@@ -1167,79 +1188,95 @@ def _least_squares_covariance(
         )
     )
 
-    # The identity's rows sum to zero within each group of connected accounts, so one row per group is dropped to keep
-    # the conditioning nonsingular.
-    equalities = csr_array(vstack([_independent_identity_rows(sam), exact.equality_operator]))
-    equalities = equalities[np.diff(equalities.indptr) > 0]
+    equalities = exact.equality_operator[np.diff(exact.equality_operator.indptr) > 0]
+    independent = _independent_rows(equalities, variance)
+    return _ConditionedNormal(
+        prior_variance=variance,
+        rows=csr_array(vstack([independent, loadings])),
+        noise=np.r_[np.zeros(independent.shape[0]), np.ones(loadings.shape[0])],
+    )
 
-    selected = _cell_indices(sam, requested)
-    covariance = _conditional_covariance(variance, loadings, equalities, selected)
 
-    labels = pd.MultiIndex.from_arrays(
-        [list(sam.prior.index[sam.rows[selected]]), list(sam.prior.columns[sam.columns[selected]])],
+def _independent_rows(rows: csr_array, prior_variance: np.ndarray) -> csr_array:
+    """Return ``rows`` without the rows that the others imply, judged on their covariance under the prior."""
+    # The identity's rows sum to zero within each group of connected accounts, and exact constraints may repeat what the
+    # identity and each other imply. Implied rows of a consistent system add nothing to the conditioning, so a pivoted
+    # Cholesky factorization of their unit-diagonal covariance keeps the rows of its numerical rank.
+    covariance = (rows @ diags_array(prior_variance) @ rows.T).toarray()
+    scale = 1.0 / np.sqrt(np.diag(covariance))
+    covariance *= scale[:, None]
+    covariance *= scale[None, :]
+    _, pivots, rank, _ = dpstrf(covariance, overwrite_a=True)
+    return csr_array(rows[np.sort(pivots[:rank] - 1)])
+
+
+@dataclass(frozen=True, eq=False)
+class _ConditionedNormal:
+    """
+    Normal cells with ``prior_variance``, observed through independent ``rows`` with normal errors of variance
+    ``noise``, where a variance of zero makes the observation exact.
+    """
+
+    prior_variance: np.ndarray
+    rows: csr_array
+    noise: np.ndarray
+
+    @cached_property
+    def conditioning_factor(self) -> tuple[np.ndarray, bool]:
+        # Conditioning x ~ N(z, D) on A x + e with e ~ N(0, N) gives S = D - D A' K^-1 A D with K = A D A' + N, which
+        # is positive definite for independent rows. K has about one row per account, and its Cholesky factor fills to
+        # most of a dense matrix on SAMs, so it is factored densely.
+        conditioning = (self.rows @ diags_array(self.prior_variance) @ self.rows.T).toarray()
+        conditioning[np.diag_indices_from(conditioning)] += self.noise
+        return cho_factor(conditioning, overwrite_a=True)
+
+    def covariance(self, selected: np.ndarray) -> np.ndarray:
+        """Return the covariance of the cells at positions ``selected``."""
+        prior = np.diag(self.prior_variance[selected])
+        if self.rows.shape[0] == 0:
+            return prior
+
+        loadings = (self.rows[:, selected] @ diags_array(self.prior_variance[selected])).toarray()
+        return prior - loadings.T @ cho_solve(self.conditioning_factor, loadings)
+
+    def variance(self) -> np.ndarray:
+        """Return the variance of every cell, from a dense inverse of K."""
+        if self.rows.shape[0] == 0:
+            return self.prior_variance.copy()
+
+        inverse = cho_solve(self.conditioning_factor, np.eye(self.rows.shape[0]), overwrite_b=True)
+        # Cell i has variance d_i - d_i^2 a_i' K^-1 a_i, which reads K^-1 only at the pairs of rows the cell enters. A
+        # cell the exact rows determine has variance zero, which the subtraction leaves a roundoff error to either side.
+        explained = self.prior_variance**2 * _quadratic_forms(csr_array(self.rows.T), inverse)
+        return np.maximum(self.prior_variance - explained, 0.0)
+
+
+def _quadratic_forms(rows: csr_array, matrix: np.ndarray) -> np.ndarray:
+    """Return r_i' M r_i for each sparse row r_i of ``rows``, reading ``matrix`` only at pairs of a row's nonzeros."""
+    counts = np.diff(rows.indptr)
+    pair_counts = counts**2
+    row_of_pair = np.repeat(np.arange(rows.shape[0]), pair_counts)
+    pair_starts = np.cumsum(pair_counts) - pair_counts
+    offset = np.arange(pair_counts.sum()) - np.repeat(pair_starts, pair_counts)
+    row_counts = counts[row_of_pair]
+    row_starts = rows.indptr[row_of_pair]
+    first = row_starts + offset // row_counts
+    second = row_starts + offset % row_counts
+    products = (
+        rows.data[first] * rows.data[second] * matrix[rows.indices[first], rows.indices[second]]
+    )
+    return np.bincount(row_of_pair, weights=products, minlength=rows.shape[0])
+
+
+def _cell_labels(sam: SymbolicSAM, positions: np.ndarray) -> pd.MultiIndex:
+    """Return the row and column account labels of the cells at ``positions``."""
+    return pd.MultiIndex.from_arrays(
+        [
+            list(sam.prior.index[sam.rows[positions]]),
+            list(sam.prior.columns[sam.columns[positions]]),
+        ],
         names=list(sam.dims),
     )
-    return pd.DataFrame(covariance, index=labels, columns=labels)
-
-
-def _conditional_covariance(
-    variance: np.ndarray, loadings: csr_array, equalities: csr_array, selected: np.ndarray
-) -> np.ndarray:
-    """
-    Return the covariance of the ``selected`` cells, for normal cells with prior ``variance``, observed through the
-    measurement ``loadings`` scaled to unit error, and conditioned on ``equalities`` holding exactly.
-    """
-    # The cells' precision is P = D^-1 + L' L, with D the prior variances and L the measurements' loadings, so its
-    # inverse is V = D - D L' (I + L D L')^-1 L D. There are few measurements, so I + L D L' is small and dense.
-    variance_loadings = (loadings @ diags_array(variance)).T.toarray()
-    measurement_system = np.eye(loadings.shape[0]) + loadings @ variance_loadings
-
-    def apply_variance(matrix: np.ndarray) -> np.ndarray:
-        return variance[:, None] * matrix - variance_loadings @ np.linalg.solve(
-            measurement_system, variance_loadings.T @ matrix
-        )
-
-    selected_columns = np.zeros((variance.size, selected.size))
-    selected_columns[selected, np.arange(selected.size)] = 1.0
-    unconditioned = apply_variance(selected_columns)
-    if equalities.shape[0] == 0:
-        return unconditioned[selected]
-
-    # Conditioning on C x = c gives S = V - V C' (C V C')^-1 C V, where C V C' = C D C' - U (I + L D L')^-1 U' with
-    # U = C D L', a sparse matrix minus a low-rank one, so one sparse factorization of C D C' serves every cell.
-    try:
-        factorization = splu(csc_array(equalities @ diags_array(variance) @ equalities.T))
-    except RuntimeError as error:
-        raise ValueError(
-            "The exact constraints are linearly dependent, so the covariance is not unique. Remove a constraint that "
-            "the accounting identity and the others already imply"
-        ) from error
-    low_rank = equalities @ variance_loadings
-    solved_low_rank = factorization.solve(low_rank) if low_rank.shape[1] else low_rank
-    capacitance = measurement_system - low_rank.T @ solved_low_rank
-
-    def solve_conditioning(matrix: np.ndarray) -> np.ndarray:
-        solved = factorization.solve(matrix)
-        return solved + solved_low_rank @ np.linalg.solve(capacitance, low_rank.T @ solved)
-
-    multipliers = solve_conditioning(equalities @ unconditioned)
-    return (unconditioned - apply_variance(equalities.T @ multipliers))[selected]
-
-
-def _independent_identity_rows(sam: SymbolicSAM) -> csr_array:
-    """Return the accounting identity's rows without the first account of each group of connected accounts."""
-    row_dim, column_dim = sam.dims
-    balance = sam.sum(column_dim) == sam.sum(row_dim).rename({column_dim: row_dim})
-    rows = linear_constraints(sam, [balance]).equality_operator
-
-    graph = coo_array(
-        (np.ones(sam.n_cells), (sam.rows, sam.columns)), shape=(sam.n_accounts, sam.n_accounts)
-    )
-    _, group = connected_components(graph, directed=False)
-    _, first_in_group = np.unique(group, return_index=True)
-    kept = np.ones(sam.n_accounts, dtype=bool)
-    kept[first_in_group] = False
-    return csr_array(rows[kept])
 
 
 def _cell_indices(sam: SymbolicSAM, cells: list[Cell] | None) -> np.ndarray:
