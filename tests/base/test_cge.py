@@ -34,7 +34,7 @@ def numeric_jacobian(function, x, *args):
         )
         return values.reshape(values.shape[:1] + points.shape[1:])
 
-    return jacobian(evaluate_points, x, tolerances={"atol": 1e-8})
+    return jacobian(evaluate_points, x, tolerances={"atol": 1e-8, "rtol": 1e-6})
 
 
 @pytest.mark.parametrize(
