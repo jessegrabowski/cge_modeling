@@ -1,17 +1,12 @@
-import sys
-
+from collections.abc import Callable
 from typing import cast
 
 import numpy as np
 import pytensor
 
-from better_optimize.constants import CONSOLE_WIDTH
 from better_optimize.utilities import ToggleableProgress
 from pytensor import tensor as pt
 from pytensor.compile.builders import OpFromGraph
-from rich.console import Console
-from rich.progress import BarColumn, MofNCompleteColumn, TextColumn, TimeElapsedColumn
-from rich.table import Column
 
 from cge_modeling.base.cge import CGEModel
 from cge_modeling.base.utilities import infer_object_shape_from_coords
@@ -24,6 +19,10 @@ from cge_modeling.compile.pytensor_tools import (
 from cge_modeling.tools.utils import at_least_list
 
 
+def _no_statistics(x: np.ndarray, theta: np.ndarray) -> dict[str, float]:
+    return {}
+
+
 def pytensor_euler_function_with_python_loop(
     x: np.ndarray,
     theta: np.ndarray,
@@ -32,26 +31,23 @@ def pytensor_euler_function_with_python_loop(
     *,
     cge_model: CGEModel,
     f_step,
-    f_system=None,
-    f_grad=None,
+    progress: ToggleableProgress,
+    step_statistics: Callable[[np.ndarray, np.ndarray], dict[str, float]],
 ) -> list[np.ndarray]:
     trajectory = np.empty((n_steps, x.shape[0] + theta.shape[0]))
     theta_initial = theta
 
-    progress = euler_progress_bar(show_rmse=f_system is not None, show_grad_norm=f_grad is not None)
-    value_dict = get_step_statistics(x, theta, f_system, f_grad)
-    task = progress.add_task("Euler Approximation", total=n_steps, **value_dict)
+    if not progress.is_enabled:
+        step_statistics = _no_statistics
 
     with progress:
+        task = progress.add_task("Euler", total=n_steps, **step_statistics(x, theta))
         for t in range(n_steps):
             x, theta = f_step(x, theta, theta_initial, theta_final, n_steps)
             trajectory[t] = np.concatenate([x, theta])
+            progress.update(task, advance=1, **step_statistics(x, theta))
 
-            value_dict = get_step_statistics(x, theta, f_system, f_grad)
-            progress.update(task, advance=1, **value_dict)
-
-        value_dict = get_step_statistics(x, theta, f_system, f_grad)
-        progress.update(task, completed=n_steps, refresh=True, **value_dict)
+        progress.update(task, completed=n_steps, refresh=True)
 
     results = []
     cursor = 0
@@ -209,37 +205,6 @@ def symbolic_euler_approximation(
         final_result.append(x_with_initial)
 
     return theta_final, n_steps, final_result
-
-
-def euler_progress_bar(*, show_rmse: bool, show_grad_norm: bool) -> ToggleableProgress:
-    """Return a progress bar for the Euler approximation, with one headed column per step statistic."""
-    columns = [
-        BarColumn(bar_width=None, table_column=Column("Euler Approximation", ratio=1)),
-        TimeElapsedColumn(table_column=Column("Elapsed", ratio=1)),
-        MofNCompleteColumn(table_column=Column("Step")),
-    ]
-    if show_rmse:
-        columns.append(TextColumn("{task.fields[rmse]:0.8f}", table_column=Column("RMSE", ratio=1)))
-    if show_grad_norm:
-        columns.append(
-            TextColumn("{task.fields[grad_norm]:0.8f}", table_column=Column("||grad||", ratio=1))
-        )
-
-    return ToggleableProgress(
-        *columns, expand=False, console=Console(file=sys.stderr, width=CONSOLE_WIDTH)
-    )
-
-
-def get_step_statistics(x, theta, f_system=None, f_grad=None) -> dict[str, float]:
-    value_dict = {}
-    if f_system is not None:
-        errors = np.asarray(f_system(x, theta))
-        value_dict["rmse"] = float(np.sqrt(np.mean(errors**2)))
-    if f_grad is not None:
-        grad_norm = np.linalg.norm(f_grad(x, theta))
-        value_dict["grad_norm"] = grad_norm
-
-    return value_dict
 
 
 def _make_euler_matrices(

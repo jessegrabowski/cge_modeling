@@ -17,6 +17,7 @@ import xarray as xr
 
 from better_optimize import minimize, root
 from better_optimize.constants import minimize_method, root_method
+from better_optimize.utilities import ToggleableProgress
 from cloudpickle import cloudpickle
 from IPython.display import Latex
 from pytensor.compile.mode import Mode, get_mode
@@ -52,6 +53,11 @@ from cge_modeling.tools.output_tools import (
     display_latex_table,
     list_of_array_to_idata,
     optimizer_result_to_idata,
+)
+from cge_modeling.tools.progress import (
+    MINIMIZE_STATISTICS,
+    ROOT_STATISTICS,
+    simulation_progress,
 )
 
 _log = logging.getLogger(__name__)
@@ -599,9 +605,72 @@ class CGEModel:
             fitted_values=fitted_values,
         )
 
-    def _solve_with_euler_approximation(self, data, theta_final, n_steps):
+    def _step_statistics(
+        self, optimizer_mode: Literal["root", "minimize"]
+    ) -> Callable[[np.ndarray, np.ndarray], dict[str, float]]:
+        """Return a function that computes, at a model state, the statistics the given optimizer mode reports."""
+        if optimizer_mode == "minimize":
+            f_resid = self._compiled_function("f_resid")
+            f_grad = self._compiled_function("f_grad")
+
+            def minimize_statistics(x, theta):
+                return {
+                    "f_value": float(np.asarray(f_resid(x, theta))),
+                    "grad_norm": float(np.linalg.norm(f_grad(x, theta))),
+                }
+
+            return minimize_statistics
+
+        f_system = self._compiled_function("f_system")
+
+        def root_statistics(x, theta):
+            if self.f_sparse_system_and_jac is not None:
+                residuals, jacobian = self.f_sparse_system_and_jac(x, theta)
+            else:
+                residuals = np.asarray(f_system(x, theta))
+                jacobian = None if self.f_jac is None else np.asarray(self.f_jac(x, theta))
+
+            statistics = {"f_value": float(np.linalg.norm(residuals))}
+            if jacobian is not None:
+                statistics["grad_norm"] = float(np.linalg.norm(jacobian.T @ residuals))
+            return statistics
+
+        return root_statistics
+
+    def _statistic_headings(self, optimizer_mode: Literal["root", "minimize"]) -> dict[str, str]:
+        if optimizer_mode == "minimize":
+            return MINIMIZE_STATISTICS
+        has_jacobian = self.f_jac is not None or self.f_sparse_system_and_jac is not None
+        return ROOT_STATISTICS if has_jacobian else {"f_value": ROOT_STATISTICS["f_value"]}
+
+    def _solve_with_euler_approximation(
+        self,
+        data,
+        theta_final,
+        n_steps,
+        progressbar: bool | ToggleableProgress = True,
+        optimizer_mode: Literal["root", "minimize"] = "root",
+    ):
         x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
-        result = self._compiled_function("f_euler")(x0, theta0, theta_final, n_steps)
+        f_euler = self._compiled_function("f_euler")
+
+        # The scan Euler approximation is one compiled graph with no Python loop to report progress from.
+        if not isinstance(f_euler, ft.partial):
+            return list_of_array_to_idata(f_euler(x0, theta0, theta_final, n_steps), self)
+
+        progress = (
+            simulation_progress(self._statistic_headings(optimizer_mode), enabled=progressbar)
+            if isinstance(progressbar, bool)
+            else progressbar
+        )
+        result = f_euler(
+            x0,
+            theta0,
+            theta_final,
+            n_steps,
+            progress=progress,
+            step_statistics=self._step_statistics(optimizer_mode),
+        )
         return list_of_array_to_idata(result, self)
 
     def _solve_with_root(
@@ -609,7 +678,7 @@ class CGEModel:
         data,
         theta_final,
         use_jac=True,
-        progressbar=True,
+        progressbar: bool | ToggleableProgress = True,
         verbose: bool = True,
         equilibrium_tol: float = 1e-6,
         **optimizer_kwargs,
@@ -669,7 +738,7 @@ class CGEModel:
         use_jac: bool = True,
         use_hess: bool = False,
         use_hessp: bool = True,
-        progressbar: bool = True,
+        progressbar: bool | ToggleableProgress = True,
         verbose: bool = True,
         fixed_values: dict[str, np.ndarray] | None = None,
         equilibrium_tol: float = 1e-6,
@@ -1008,54 +1077,69 @@ class CGEModel:
 
         return_values = {}
 
-        if use_euler_approximation:
-            idata_euler = self._solve_with_euler_approximation(
-                x0_var_param, theta_simulation, n_steps=n_iter_euler
-            )
-            return_values["euler"] = idata_euler
-            final_step = idata_euler["variables"].sizes["step"] - 1
-            for group in ("variables", "parameters"):
-                idata_euler[group] = idata_euler[group].dataset.dropna(dim="step")
-            last_step = min(
-                idata_euler["variables"].coords["step"].max().item(),
-                idata_euler["parameters"].coords["step"].max().item(),
-            )
-            if last_step != final_step:
-                _log.warning(
-                    f"NaNs were encountered in the euler approximation. Backing up to step {last_step} "
-                    f"(the last non-NaN step) for the optimizer started point."
-                )
-
-            x0_var_param = datatree_to_value_dict(idata_euler.isel(step=last_step))
-
-        if use_optimizer:
-            if optimizer_mode == "root":
-                use_jac = optimizer_kwargs.pop("use_jac", True)
-                res = self._solve_with_root(
-                    x0_var_param, theta_simulation, use_jac=use_jac, **optimizer_kwargs
-                )
-            elif optimizer_mode == "minimize":
-                use_jac = optimizer_kwargs.pop("use_jac", True)
-                use_hess = optimizer_kwargs.pop("use_hess", True)
-                res = self._solve_with_minimize(
+        statistics_mode = optimizer_mode if use_optimizer else "root"
+        progress = simulation_progress(
+            self._statistic_headings(statistics_mode),
+            enabled=optimizer_kwargs.pop("progressbar", True),
+        )
+        with progress:
+            if use_euler_approximation:
+                idata_euler = self._solve_with_euler_approximation(
                     x0_var_param,
                     theta_simulation,
-                    use_jac=use_jac,
-                    use_hess=use_hess,
-                    **optimizer_kwargs,
+                    n_steps=n_iter_euler,
+                    progressbar=progress,
+                    optimizer_mode=statistics_mode,
                 )
-            else:
-                raise ValueError(f"Unknown optimizer mode {optimizer_mode}")
-
-            if not res.success:
-                warnings.warn(
-                    "Optimizer did not converge. Results do not represent a valid equlibriuim, and are "
-                    "returned for diagnostic purposes only"
+                return_values["euler"] = idata_euler
+                final_step = idata_euler["variables"].sizes["step"] - 1
+                for group in ("variables", "parameters"):
+                    idata_euler[group] = idata_euler[group].dataset.dropna(dim="step")
+                last_step = min(
+                    idata_euler["variables"].coords["step"].max().item(),
+                    idata_euler["parameters"].coords["step"].max().item(),
                 )
+                if last_step != final_step:
+                    _log.warning(
+                        f"NaNs were encountered in the euler approximation. Backing up to step {last_step} "
+                        f"(the last non-NaN step) for the optimizer started point."
+                    )
 
-            idata_optim = optimizer_result_to_idata(res, theta_simulation, initial_state, self)
-            return_values["optimizer"] = idata_optim
-            return_values["optim_res"] = res
+                x0_var_param = datatree_to_value_dict(idata_euler.isel(step=last_step))
+
+            if use_optimizer:
+                if optimizer_mode == "root":
+                    use_jac = optimizer_kwargs.pop("use_jac", True)
+                    res = self._solve_with_root(
+                        x0_var_param,
+                        theta_simulation,
+                        use_jac=use_jac,
+                        progressbar=progress,
+                        **optimizer_kwargs,
+                    )
+                elif optimizer_mode == "minimize":
+                    use_jac = optimizer_kwargs.pop("use_jac", True)
+                    use_hess = optimizer_kwargs.pop("use_hess", True)
+                    res = self._solve_with_minimize(
+                        x0_var_param,
+                        theta_simulation,
+                        use_jac=use_jac,
+                        use_hess=use_hess,
+                        progressbar=progress,
+                        **optimizer_kwargs,
+                    )
+                else:
+                    raise ValueError(f"Unknown optimizer mode {optimizer_mode}")
+
+                if not res.success:
+                    warnings.warn(
+                        "Optimizer did not converge. Results do not represent a valid equlibriuim, and are "
+                        "returned for diagnostic purposes only"
+                    )
+
+                idata_optim = optimizer_result_to_idata(res, theta_simulation, initial_state, self)
+                return_values["optimizer"] = idata_optim
+                return_values["optim_res"] = res
 
         if save_results:
             write_results(

@@ -3,7 +3,10 @@ import pytensor
 import pytensor.tensor as pt
 import pytest
 
-from cge_modeling.compile.euler import get_step_statistics, symbolic_euler_approximation
+from cge_modeling.base.utilities import variable_dict_to_flat_array
+from cge_modeling.compile.euler import symbolic_euler_approximation
+from cge_modeling.tools.progress import ROOT_STATISTICS, simulation_progress
+from tests.utilities.models import calibrate_model_1, load_model_1, model_1_data
 
 
 @pytest.mark.parametrize("use_rk4", [True, False])
@@ -84,14 +87,20 @@ def test_euler_approximation_2d():
     np.testing.assert_allclose(x[1][-1], analytic_solution[1], atol=1e-3)
 
 
-def test_step_statistics_report_rmse_and_gradient_norm():
-    x, theta = np.array([1.0, 2.0]), np.array([0.5])
+def test_python_loop_euler_skips_step_statistics_when_the_progress_table_is_off():
+    model = load_model_1(functions_to_compile=["euler"])
+    x, theta = variable_dict_to_flat_array(
+        calibrate_model_1(**model_1_data), model.variables, model.parameters
+    )
+    calls = []
 
-    statistics = get_step_statistics(
+    model.f_euler(
         x,
         theta,
-        f_system=lambda x, theta: np.array([3.0, -4.0, 0.0, 0.0]),
-        f_grad=lambda x, theta: np.array([3.0, 4.0]),
+        theta * 1.1,
+        5,
+        progress=simulation_progress(ROOT_STATISTICS, enabled=False),
+        step_statistics=lambda x, theta: calls.append(x) or {},
     )
 
-    assert statistics == pytest.approx({"rmse": 2.5, "grad_norm": 5.0})
+    assert calls == []
