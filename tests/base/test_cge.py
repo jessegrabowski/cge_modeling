@@ -52,7 +52,19 @@ def test_model_gradients(model_id, calibrate_model, data):
     system_jacobian = numeric_jacobian(mod.f_system, x, theta)
     gradient_jacobian = numeric_jacobian(mod.f_grad, x, theta)
 
-    assert system_jacobian.success.all() and gradient_jacobian.success.all()
+    for name, numeric, analytic in [
+        ("system", system_jacobian, np.asarray(mod.f_jac(x, theta))),
+        ("gradient", gradient_jacobian, np.asarray(mod.f_hess(x, theta))),
+    ]:
+        failed = ~numeric.success
+        assert not failed.any(), (
+            f"The {name} Jacobian did not converge at {failed.sum()} entries, "
+            f"indices {np.argwhere(failed)[:10].tolist()}, "
+            f"error estimates {numeric.error[failed][:10]}, "
+            f"numeric values {numeric.df[failed][:10]}, "
+            f"analytic values {analytic[failed][:10]}, "
+            f"status {numeric.status[failed][:10]}"
+        )
     np.testing.assert_allclose(mod.f_jac(x, theta), system_jacobian.df, rtol=1e-6, atol=1e-8)
     np.testing.assert_allclose(mod.f_hess(x, theta), gradient_jacobian.df, rtol=1e-6, atol=1e-8)
     np.testing.assert_allclose(
