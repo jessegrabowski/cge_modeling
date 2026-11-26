@@ -221,3 +221,4 @@ py313 = { features = ["dev", "py313"] }
 test = "python -m pytest -vv --cache-clear --cov=cge_modeling --cov-report=xml:coverage.xml --no-cov-on-fail --cov-report term --durations=50"
 lint = "pre-commit run --all-files"
 docs-build = { cmd = "python -m sphinx -W --keep-going -j auto -b html source build/html", cwd = "docs" }
+docs-serve = { cmd = "python -m http.server 8000 --bind 127.0.0.1 --directory build/html", cwd = "docs", depends-on = ["docs-build"] }
