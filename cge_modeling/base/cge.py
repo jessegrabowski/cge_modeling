@@ -5,6 +5,7 @@ import os.path
 import re
 import warnings
 
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
@@ -204,8 +205,8 @@ class CGEModel:
         """
         Return an uncompiled copy of the model, with its own variables, parameters and equations.
 
-        The copy's objects are retrieved by name, as ``copy["name"]``. Changes to the copy, such as new equations,
-        leave this model unchanged.
+        The copy's objects are retrieved by name, as ``copy["name"]``. Changes to the copy, such as new equations or
+        :meth:`reassign_roles`, leave this model unchanged.
         """
         clone = CGEModel(coords={dim: list(labels) for dim, labels in self.coords.items()})
 
@@ -231,6 +232,78 @@ class CGEModel:
 
         return clone
 
+    def reassign_roles(
+        self, *, to_parameters: str | Sequence[str], to_variables: str | Sequence[str]
+    ) -> "CGEModel":
+        """
+        Turn some variables into parameters and some parameters into variables, keeping the equations.
+
+        The compiled functions are discarded, so the model has to be compiled again before it is solved. The model
+        is unchanged if any name is invalid.
+
+        Parameters
+        ----------
+        to_parameters : str or sequence of str
+            Names of variables that become parameters.
+        to_variables : str or sequence of str
+            Names of parameters that become variables.
+
+        Returns
+        -------
+        model : CGEModel
+            This model, with the new roles.
+        """
+        to_parameters = list(ensure_input_is_sequence(to_parameters))
+        to_variables = list(ensure_input_is_sequence(to_variables))
+
+        name_counts = Counter(to_parameters + to_variables)
+        repeated = sorted(name for name, count in name_counts.items() if count > 1)
+        if repeated:
+            raise ValueError(
+                f"Each name can be reassigned once, and {repeated} appear more than once."
+            )
+        not_variables = [name for name in to_parameters if name not in self.variable_names]
+        if not_variables:
+            raise ValueError(
+                f"Only variables can become parameters, and {not_variables} are not variables of the model."
+            )
+        not_parameters = [name for name in to_variables if name not in self.parameter_names]
+        if not_parameters:
+            raise ValueError(
+                f"Only parameters can become variables, and {not_parameters} are not parameters of the model."
+            )
+        n_to_parameters = len(self._unpack_objects(self.get_variables(to_parameters)))
+        n_to_variables = len(self._unpack_objects(self.get_parameters(to_variables)))
+        if n_to_parameters != n_to_variables:
+            raise ValueError(
+                f"The model would not be square: {to_parameters} have {n_to_parameters} entries, but "
+                f"{to_variables} have {n_to_variables}."
+            )
+
+        for name in to_parameters:
+            self._move_object(name, kind="parameter")
+        for name in to_variables:
+            self._move_object(name, kind="variable")
+        self._clear_compiled_functions()
+
+        return self
+
+    def _move_object(self, name: str, kind: Literal["variable", "parameter"]) -> None:
+        source = "parameters" if kind == "variable" else "variables"
+        obj = getattr(self, f"_{source}").pop(name)
+        for unpacked in self._unpack_objects([obj]):
+            del getattr(self, f"_unpacked_{source}")[make_indexed_name(unpacked)]
+
+        object_class = Variable if kind == "variable" else Parameter
+        moved = object_class(
+            name=obj.name,
+            dims=obj.dims,
+            description=obj.description,
+            latex_name=obj.latex_name,
+            extend_subscript=obj.extend_subscript,
+        )
+        self._store_object(moved)
+
     def _store_object(self, obj: Variable | Parameter) -> None:
         group = "variables" if isinstance(obj, Variable) else "parameters"
         getattr(self, f"_{group}")[obj.name] = obj
@@ -240,6 +313,18 @@ class CGEModel:
                 for unpacked in self._unpack_objects([obj])
             }
         )
+
+    def _clear_compiled_functions(self) -> None:
+        self._compiled = []
+        self.mode = None
+        self.f_system = None
+        self.f_resid = None
+        self.f_grad = None
+        self.f_hess = None
+        self.f_hessp = None
+        self.f_jac = None
+        self.f_euler = None
+        self.f_sparse_system_and_jac = None
 
     def _register_model_object(
         self,
