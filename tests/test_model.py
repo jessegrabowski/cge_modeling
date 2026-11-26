@@ -1,3 +1,4 @@
+import copy
 import logging
 
 import numpy as np
@@ -234,6 +235,135 @@ def test_model_4_tariff_cut_reproduces_the_published_sales_tax_increase():
     assert result["optim_res"].success
     for name, value in published.items():
         np.testing.assert_allclose(float(root[name]), value, atol=0.005, err_msg=name)
+
+
+def residuals_at_random_point(model):
+    rng = np.random.default_rng(seed=0)
+    point = {
+        name: rng.uniform(0.5, 1.5) for name in sorted(model.variable_names + model.parameter_names)
+    }
+    residuals = {}
+    for equation in model.equations:
+        lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
+        residuals[equation.name] = lowered.eval(
+            {tensor: point[tensor.name] for tensor in explicit_graph_inputs([lowered])}
+        )
+    return residuals
+
+
+def test_copy_is_an_independent_uncompiled_model_with_the_same_equations():
+    model = build_model_4(closure="savings_driven")
+    expected = residuals_at_random_point(model)
+
+    for clone in [model.copy(), copy.copy(model), copy.deepcopy(model)]:
+        assert clone["Z"] is not model["Z"]
+        assert clone.variable_names == model.variable_names
+        assert clone.parameter_names == model.parameter_names
+        assert clone.f_system is None
+
+        actual = residuals_at_random_point(clone)
+        for name in model.equation_names:
+            np.testing.assert_allclose(actual[name], expected[name], err_msg=name)
+
+    with model.copy() as clone:
+        cm.Variable("extra")
+    assert "extra" not in model.variable_names
+
+
+def test_reassign_roles_matches_the_model_built_with_those_roles():
+    savings_driven = build_model_4(closure="savings_driven")
+    fixed_investment = build_model_4(closure="fixed_investment")
+
+    swapped = savings_driven.copy().reassign_roles(to_parameters=["Z"], to_variables=["ts"])
+
+    assert sorted(swapped.variable_names) == sorted(fixed_investment.variable_names)
+    assert sorted(swapped.parameter_names) == sorted(fixed_investment.parameter_names)
+    assert "Z" in savings_driven.variable_names
+
+    expected = residuals_at_random_point(fixed_investment)
+    actual = residuals_at_random_point(swapped)
+    for name in fixed_investment.equation_names:
+        np.testing.assert_allclose(actual[name], expected[name], err_msg=name)
+
+
+def test_reassign_roles_discards_the_compiled_functions():
+    with CGEModel() as model:
+        x = cm.Variable("x")
+        a = cm.Parameter("a")
+        cm.Equation("x equation", x, a)
+    model.compile(functions_to_compile="root")
+
+    model.reassign_roles(to_parameters=["x"], to_variables=["a"])
+
+    assert model.f_system is None
+    assert model.variable_names == ["a"]
+    assert model.parameter_names == ["x"]
+
+
+@pytest.mark.parametrize(
+    "to_parameters, to_variables, message",
+    [
+        (["ts"], [], r"Only variables can become parameters, and \['ts'\] are not variables"),
+        ([], ["Z"], r"Only parameters can become variables, and \['Z'\] are not parameters"),
+        (["Z"], [], r"would not be square: \['Z'\] have 1 entries, but \[\] have 0"),
+        (["Z", "Z"], ["ts", "tm"], r"reassigned once, and \['Z'\] appear more than once"),
+    ],
+    ids=["parameter_to_parameter", "variable_to_variable", "unequal_entries", "repeated_name"],
+)
+def test_reassign_roles_rejects_an_invalid_reassignment_and_leaves_the_model_unchanged(
+    to_parameters, to_variables, message
+):
+    model = build_model_4(closure="savings_driven")
+    variable_names = model.variable_names
+
+    with pytest.raises(ValueError, match=message):
+        model.reassign_roles(to_parameters=to_parameters, to_variables=to_variables)
+    assert model.variable_names == variable_names
+
+
+def test_reassign_roles_accepts_single_names():
+    model = build_model_4(closure="savings_driven")
+
+    model.reassign_roles(to_parameters="Z", to_variables="ts")
+
+    assert "ts" in model.variable_names
+    assert "Z" in model.parameter_names
+
+
+def test_reassigned_indexed_parameter_is_solved_for():
+    with CGEModel(coords={"i": ["a", "b"]}) as model:
+        C = cm.Variable("C", dims="i")
+        S = cm.Variable("S")
+        Y = cm.Parameter("Y")
+        s = cm.Parameter("s")
+        g = cm.Parameter("g", dims="i")
+        cm.Equation("Saving", S, s * Y)
+        cm.Equation("Consumption", C, g * (1 - s) * Y)
+    benchmark = {
+        "C": np.array([3.0, 6.0]),
+        "S": 1.0,
+        "Y": 10.0,
+        "s": 0.1,
+        "g": np.array([1 / 3, 2 / 3]),
+    }
+
+    model.reassign_roles(to_parameters="C", to_variables="g").compile()
+    result = model.simulate(
+        initial_state=benchmark, final_values={"C": np.array([4.5, 4.5])}, progressbar=False
+    )
+
+    assert result["optim_res"].success
+    np.testing.assert_allclose(result["optimizer"]["variables"]["g"].isel(step=-1), [0.5, 0.5])
+
+
+def test_reassign_roles_counts_the_entries_of_indexed_objects():
+    with CGEModel(coords={"i": ["a", "b"]}) as model:
+        S = cm.Variable("S")
+        g = cm.Parameter("g", dims="i")
+        cm.Equation("Saving", S, g.sum())
+
+    with pytest.raises(ValueError, match=r"\['S'\] have 1 entries, but \['g'\] have 2"):
+        model.reassign_roles(to_parameters="S", to_variables="g")
 
 
 def test_model_5_is_square_and_holds_at_the_calibrated_point():
