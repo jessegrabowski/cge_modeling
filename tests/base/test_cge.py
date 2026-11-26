@@ -550,6 +550,7 @@ def test_compile_logs_the_model_size_once(caplog):
     model = load_and_cache_model(model_id=1, functions_to_compile=None)
 
     with caplog.at_level(logging.INFO, logger="cge_modeling"):
+        caplog.clear()
         model.compile(functions_to_compile=None)
 
     size_messages = [r.message for r in caplog.records if "Compiling a model with" in r.message]
