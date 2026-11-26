@@ -550,6 +550,7 @@ def test_compile_logs_the_model_size_once(caplog):
     model = load_and_cache_model(model_id=1, functions_to_compile=None)
 
     with caplog.at_level(logging.INFO, logger="cge_modeling"):
+        caplog.clear()
         model.compile(functions_to_compile=None)
 
     size_messages = [r.message for r in caplog.records if "Compiling a model with" in r.message]
@@ -570,3 +571,62 @@ def test_simulate_compiles_only_the_functions_it_uses():
     assert model.f_jac is not None
     assert model.f_euler is None
     assert model.f_grad is None
+
+
+def test_root_step_statistics_report_the_residual_norm_and_the_merit_gradient():
+    model = load_and_cache_model(model_id=1, mode="FAST_RUN", functions_to_compile="all")
+    x, theta = variable_dict_to_flat_array(
+        calibrate_model_1(**model_1_data), model.variables, model.parameters
+    )
+    x = x * np.random.default_rng(0).uniform(0.9, 1.1, size=x.shape)
+    residuals = np.asarray(model.f_system(x, theta))
+    jacobian = np.asarray(model.f_jac(x, theta))
+
+    statistics = model._step_statistics("root")(x, theta)
+
+    np.testing.assert_allclose(statistics["f_value"], np.linalg.norm(residuals), rtol=1e-10)
+    np.testing.assert_allclose(
+        statistics["grad_norm"], np.linalg.norm(jacobian.T @ residuals), rtol=1e-10
+    )
+
+
+def test_root_step_statistics_from_a_sparse_jacobian_match_the_dense_ones():
+    dense = load_and_cache_model(model_id=1, mode="FAST_RUN", functions_to_compile="all")
+    sparse = build_model_1().compile(functions_to_compile=["root"], use_sparse_matrices=True)
+    x, theta = variable_dict_to_flat_array(
+        calibrate_model_1(**model_1_data), dense.variables, dense.parameters
+    )
+    x = x * np.random.default_rng(0).uniform(0.9, 1.1, size=x.shape)
+
+    dense_statistics = dense._step_statistics("root")(x, theta)
+    sparse_statistics = sparse._step_statistics("root")(x, theta)
+
+    assert sparse_statistics == pytest.approx(dense_statistics, rel=1e-10)
+
+
+def test_minimize_step_statistics_report_the_loss_and_its_gradient_norm():
+    model = load_and_cache_model(model_id=1, mode="FAST_RUN", functions_to_compile="all")
+    x, theta = variable_dict_to_flat_array(
+        calibrate_model_1(**model_1_data), model.variables, model.parameters
+    )
+    x = x * np.random.default_rng(0).uniform(0.9, 1.1, size=x.shape)
+    residuals = np.asarray(model.f_system(x, theta))
+
+    statistics = model._step_statistics("minimize")(x, theta)
+
+    np.testing.assert_allclose(statistics["f_value"], 0.5 * np.sum(residuals**2), rtol=1e-10)
+    np.testing.assert_allclose(
+        statistics["grad_norm"], np.linalg.norm(model.f_grad(x, theta)), rtol=1e-10
+    )
+
+
+def test_root_solve_with_a_bare_progressbar_draws_the_shared_progress_table(capsys):
+    model = load_and_cache_model(model_id=1, mode="FAST_RUN", functions_to_compile=("root",))
+    data = calibrate_model_1(**model_1_data)
+    _, theta = variable_dict_to_flat_array(data, model.variables, model.parameters)
+
+    model._solve_with_root(data, theta, progressbar=True, verbose=False)
+
+    output = capsys.readouterr().err
+    assert "Finding Roots" in output
+    assert "Step" in output

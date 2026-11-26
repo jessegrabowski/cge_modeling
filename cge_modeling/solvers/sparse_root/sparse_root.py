@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 
 from better_optimize.wrapper import ObjectiveWrapper, optimizer_early_stopping_wrapper
+from rich.progress import Progress
 from scipy.optimize import OptimizeResult
 
 from cge_modeling.solvers.sparse_root.base import (
@@ -19,6 +20,7 @@ from cge_modeling.solvers.sparse_root.base import (
     validate_fused_fun,
 )
 from cge_modeling.solvers.sparse_root.line_search import newton_armijo
+from cge_modeling.tools.progress import ROOT_STATISTICS, simulation_progress
 
 
 def sparse_root(
@@ -31,7 +33,7 @@ def sparse_root(
     f_tol: float | None = None,
     x_tol: float | None = None,
     maxiter: int | None = None,
-    progressbar: bool = True,
+    progressbar: bool | Progress = True,
 ) -> OptimizeResult:
     """Find a root of a nonlinear system whose Jacobian is sparse.
 
@@ -56,8 +58,9 @@ def sparse_root(
         Convergence tolerance on the relative step size. Defaults to ``tol``.
     maxiter : int, optional
         Maximum number of solver iterations. Defaults to 1000.
-    progressbar : bool, optional
-        Whether to display a progress bar while iterating. Defaults to True.
+    progressbar : bool or Progress, optional
+        Whether to display a progress bar while iterating, or a progress display to add the iteration row to.
+        Defaults to True.
 
     Returns
     -------
@@ -130,7 +133,7 @@ def _run_sparse_root(
     f_tol: float | None = None,
     x_tol: float | None = None,
     maxiter: int | None = None,
-    progressbar: bool = True,
+    progressbar: bool | Progress = True,
 ) -> OptimizeResult:
     """Run :func:`sparse_root` without validating ``fun``, for callers whose ``fun`` is known to be well formed."""
     if solver is None:
@@ -150,6 +153,8 @@ def _run_sparse_root(
     max_line_search_evals = (
         DEFAULT_ARMIJO_MAX_ITER if globalization is None else globalization.max_iter
     )
+    if progressbar is True:
+        progressbar = simulation_progress(ROOT_STATISTICS)
     objective = ObjectiveWrapper(
         maxeval=maxiter * (max_line_search_evals + 1),
         f=fun,

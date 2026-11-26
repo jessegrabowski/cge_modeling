@@ -298,11 +298,7 @@ def compile_pytensor_cge_functions(
                 f_step = compile_with_packed_inputs(inputs, outputs, mode=mode)
 
             f_euler = partial(
-                pytensor_euler_function_with_python_loop,
-                cge_model=cge_model,
-                f_step=f_step,
-                f_system=f_system,
-                f_grad=f_grad,
+                pytensor_euler_function_with_python_loop, cge_model=cge_model, f_step=f_step
             )
         else:
             theta_final, n_steps, euler_output = symbolic_euler_approximation(
