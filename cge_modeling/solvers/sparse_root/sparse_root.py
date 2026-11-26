@@ -20,6 +20,7 @@ from cge_modeling.solvers.sparse_root.base import (
     validate_fused_fun,
 )
 from cge_modeling.solvers.sparse_root.line_search import newton_armijo
+from cge_modeling.tools.progress import ROOT_STATISTICS, simulation_progress
 
 
 def sparse_root(
@@ -152,6 +153,8 @@ def _run_sparse_root(
     max_line_search_evals = (
         DEFAULT_ARMIJO_MAX_ITER if globalization is None else globalization.max_iter
     )
+    if progressbar is True:
+        progressbar = simulation_progress(ROOT_STATISTICS)
     objective = ObjectiveWrapper(
         maxeval=maxiter * (max_line_search_evals + 1),
         f=fun,

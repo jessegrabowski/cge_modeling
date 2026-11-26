@@ -436,3 +436,11 @@ class TestStackedSystem:
 
         assert result.success
         np.testing.assert_allclose(result.x, stacked_system.x_true, atol=1e-6)
+
+
+def test_a_bare_progressbar_draws_the_shared_progress_table(capsys):
+    sparse_root(scaled_quadratic, np.array([2.0, 3.0]), args=(1.0,), progressbar=True)
+
+    output = capsys.readouterr().err
+    assert "Finding Roots" in output
+    assert "Step" in output

@@ -694,6 +694,8 @@ class CGEModel:
             )
         if use_jac and "root" not in self._compiled:
             raise ValueError("Jacobian has not been compiled.")
+        if progressbar is True:
+            progressbar = simulation_progress(self._statistic_headings("root"))
 
         x0, _theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
 
@@ -746,6 +748,8 @@ class CGEModel:
     ):
         if "minimize" not in self._compiled:
             raise ValueError("Minimization functions have not been compiled.")
+        if progressbar is True:
+            progressbar = simulation_progress(self._statistic_headings("minimize"))
 
         fixed_values = {} if fixed_values is None else fixed_values
 

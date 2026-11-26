@@ -618,3 +618,15 @@ def test_minimize_step_statistics_report_the_loss_and_its_gradient_norm():
     np.testing.assert_allclose(
         statistics["grad_norm"], np.linalg.norm(model.f_grad(x, theta)), rtol=1e-10
     )
+
+
+def test_root_solve_with_a_bare_progressbar_draws_the_shared_progress_table(capsys):
+    model = load_and_cache_model(model_id=1, mode="FAST_RUN", functions_to_compile=("root",))
+    data = calibrate_model_1(**model_1_data)
+    _, theta = variable_dict_to_flat_array(data, model.variables, model.parameters)
+
+    model._solve_with_root(data, theta, progressbar=True, verbose=False)
+
+    output = capsys.readouterr().err
+    assert "Finding Roots" in output
+    assert "Step" in output
