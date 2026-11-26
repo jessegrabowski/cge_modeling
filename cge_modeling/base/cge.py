@@ -19,7 +19,7 @@ from better_optimize import minimize, root
 from better_optimize.constants import minimize_method, root_method
 from cloudpickle import cloudpickle
 from IPython.display import Latex
-from pytensor.compile.mode import Mode
+from pytensor.compile.mode import Mode, get_mode
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.xtensor import as_xtensor
 from pytensor.xtensor.basic import xtensor_from_tensor
@@ -44,6 +44,7 @@ from cge_modeling.base.utilities import (
     unpack_equation_name,
     variable_dict_to_flat_array,
 )
+from cge_modeling.compile.constants import CompiledFunctions
 from cge_modeling.solvers.sparse_root import sparse_root
 from cge_modeling.tools.latex import equation_to_latex
 from cge_modeling.tools.output_tools import (
@@ -54,6 +55,18 @@ from cge_modeling.tools.output_tools import (
 )
 
 _log = logging.getLogger(__name__)
+
+
+def _parse_compile_kwarg(
+    compile: CompiledFunctions | Sequence[CompiledFunctions] | Literal[True] | None = None,
+) -> Sequence[CompiledFunctions] | None:
+    if compile is None:
+        return None
+    if compile is True or compile == "all":
+        return ["root", "minimize", "euler"]
+    if isinstance(compile, str):
+        return [compile]
+    return compile
 
 
 def _judge_equilibrium(
@@ -270,11 +283,73 @@ class CGEModel:
             raise ValueError(f"{name} has not been compiled.")
         return function
 
-    def _compile(self, **compile_kwargs) -> None:
-        # cge_modeling.base.build imports this module, so compile_model can only be imported here.
-        from cge_modeling.base.build import compile_model
+    def compile(
+        self,
+        mode: str | None = None,
+        functions_to_compile: CompiledFunctions | Sequence[CompiledFunctions] | None = "all",
+        use_scan_euler: bool = False,
+        use_rk4: bool = False,
+        use_sparse_matrices: bool = False,
+    ) -> "CGEModel":
+        """
+        Compile the functions the solvers use: the system residuals, and the Jacobian, loss or Euler step each solver
+        needs.
 
-        compile_model(self, **compile_kwargs)
+        Parameters
+        ----------
+        mode : str, optional
+            PyTensor compilation mode. Default is PyTensor's default mode.
+        functions_to_compile : {"root", "minimize", "euler", "all"} or sequence of them, optional
+            Solver functions to compile, on top of the system residuals, which are always compiled. Default is
+            ``"all"``.
+        use_scan_euler : bool, optional
+            Build the Euler approximation as a single scan graph. Default is False.
+        use_rk4 : bool, optional
+            Take fourth-order Runge-Kutta steps in the Euler approximation. Default is False.
+        use_sparse_matrices : bool, optional
+            Build the Jacobian as a sparse matrix and find roots with ``sparse_root``. Default is False.
+
+        Returns
+        -------
+        model : CGEModel
+            This model, with its compiled functions set.
+        """
+        # cge_modeling.compile.pytensor imports this module, so it can only be imported here.
+        from cge_modeling.compile.pytensor import compile_pytensor_cge_functions
+
+        self.check_initialization()
+        _log.info(
+            f"Compiling a model with {self.n_equations} equations, {self.n_variables} variables, "
+            f"{self.n_parameters} parameters"
+        )
+
+        compile_list = list(_parse_compile_kwarg(functions_to_compile) or [])
+
+        # TODO: 'inplace_elemwise_optimizer' was triggering an infinite loop during graph rewrites, but that's probably
+        #  a bug in PyTensor. Remove this once the bug is fixed.
+        compile_mode = get_mode(mode).excluding("inplace_elemwise_optimizer")
+
+        (
+            self.f_system,
+            self.f_jac,
+            self.f_resid,
+            self.f_grad,
+            self.f_hess,
+            self.f_hessp,
+            self.f_euler,
+            self.f_sparse_system_and_jac,
+        ) = compile_pytensor_cge_functions(
+            cge_model=self,
+            functions_to_compile=compile_list,
+            mode=compile_mode,
+            use_scan_euler=use_scan_euler,
+            use_rk4=use_rk4,
+            use_sparse_matrices=use_sparse_matrices,
+        )
+        self._compiled = compile_list
+        self.mode = compile_mode
+
+        return self
 
     def check_initialization(self):
         if self.n_variables != self.n_equations:
@@ -889,7 +964,7 @@ class CGEModel:
 
                 compile_kwargs = {"functions_to_compile": to_compile}
 
-            self._compile(**compile_kwargs)
+            self.compile(**compile_kwargs)
 
         if isinstance(initial_state, Result):
             x0_var_param = deepcopy(initial_state.to_dict()["fitted"])

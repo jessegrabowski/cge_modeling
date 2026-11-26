@@ -1,7 +1,6 @@
 import logging
 
 from cge_modeling.base.cge import CGEModel
-from cge_modeling.base.build import compile_model
 from cge_modeling.model import Equation, Parameter, Variable
 from cge_modeling.compile.pytensor_tools import prod_to_no_zero_prod
 from cge_modeling.plotting import plot_bar, plot_areas, plot_lines
@@ -50,7 +49,6 @@ __all__ = [
     "SymbolicSAM",
     "Variable",
     "cells_forced_to_zero",
-    "compile_model",
     "display_info_as_table",
     "linear_constraints",
     "plot_areas",

@@ -7,7 +7,7 @@ import xarray.testing as xr_testing
 from pytensor.graph import rewrite_graph
 from pytensor.graph.traversal import explicit_graph_inputs
 
-from cge_modeling import CGEModel, compile_model
+from cge_modeling import CGEModel
 from cge_modeling import model as cm
 from cge_modeling.base.utilities import variable_dict_to_flat_array
 from tests.utilities.models import (
@@ -412,7 +412,7 @@ def test_check_for_equilibrium_names_the_failing_elements_of_a_context_built_mod
         P = cm.Variable("P", dims="i")
         P_bar = cm.Parameter("P_bar")
         cm.Equation("Price of <dim:i>", P, P_bar)
-    compile_model(model, functions_to_compile=("root",))
+    model.compile(functions_to_compile=("root",))
 
     with caplog.at_level(logging.INFO, logger="cge_modeling"):
         model.check_for_equilibrium({"P": np.array([1.0, 3.0]), "P_bar": 1.0})
