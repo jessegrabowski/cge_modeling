@@ -496,7 +496,9 @@ def test_parse_compile_kwarg(compile_arg, expected_output):
     ],
     ids=["all", "root_only", "minimize_only", "euler_only", "none"],
 )
-def test_cge_model_factory(functions_to_compile, expected_compiled_list):
+def test_compile_builds_only_the_requested_solver_functions(
+    functions_to_compile, expected_compiled_list
+):
     model = load_and_cache_model(
         model_id=1, mode="FAST_RUN", functions_to_compile=functions_to_compile
     )
@@ -552,3 +554,19 @@ def test_compile_logs_the_model_size_once(caplog):
 
     size_messages = [r.message for r in caplog.records if "Compiling a model with" in r.message]
     assert len(size_messages) == 1
+
+
+def test_simulate_compiles_only_the_functions_it_uses():
+    model = build_model_1()
+
+    model.simulate(
+        calibrate_model_1(**model_1_data),
+        final_delta_pct={"L_s": 0.1},
+        use_euler_approximation=False,
+        progressbar=False,
+    )
+
+    assert model._compiled == ["root"]
+    assert model.f_jac is not None
+    assert model.f_euler is None
+    assert model.f_grad is None
