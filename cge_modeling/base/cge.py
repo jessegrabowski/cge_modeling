@@ -58,15 +58,18 @@ _log = logging.getLogger(__name__)
 
 
 def _parse_compile_kwarg(
-    compile: CompiledFunctions | Sequence[CompiledFunctions] | Literal[True] | None = None,
+    functions_to_compile: CompiledFunctions
+    | Sequence[CompiledFunctions]
+    | Literal[True]
+    | None = None,
 ) -> Sequence[CompiledFunctions] | None:
-    if compile is None:
+    if functions_to_compile is None:
         return None
-    if compile is True or compile == "all":
+    if functions_to_compile is True or functions_to_compile == "all":
         return ["root", "minimize", "euler"]
-    if isinstance(compile, str):
-        return [compile]
-    return compile
+    if isinstance(functions_to_compile, str):
+        return [functions_to_compile]
+    return functions_to_compile
 
 
 def _judge_equilibrium(
