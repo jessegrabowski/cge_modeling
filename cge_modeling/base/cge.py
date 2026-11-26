@@ -21,6 +21,7 @@ from better_optimize.utilities import ToggleableProgress
 from cloudpickle import cloudpickle
 from IPython.display import Latex
 from pytensor.compile.mode import Mode, get_mode
+from pytensor.graph.replace import graph_replace
 from pytensor.graph.traversal import explicit_graph_inputs
 from pytensor.xtensor import as_xtensor
 from pytensor.xtensor.basic import xtensor_from_tensor
@@ -193,6 +194,53 @@ class CGEModel:
             return position(labels)
         return [position(label) for label in labels]
 
+    def __copy__(self) -> "CGEModel":
+        return self.copy()
+
+    def __deepcopy__(self, memo) -> "CGEModel":
+        return self.copy()
+
+    def copy(self) -> "CGEModel":
+        """
+        Return an uncompiled copy of the model, with its own variables, parameters and equations.
+
+        The copy's objects are retrieved by name, as ``copy["name"]``. Changes to the copy, such as new equations,
+        leave this model unchanged.
+        """
+        clone = CGEModel(coords={dim: list(labels) for dim, labels in self.coords.items()})
+
+        replacements = {}
+        for obj in [*self.variables, *self.parameters]:
+            cloned_object = clone._register_model_object(
+                name=obj.name,
+                dims=obj.dims,
+                kind="variable" if isinstance(obj, Variable) else "parameter",
+                description=obj.description,
+                latex_name=obj.latex_name,
+                extend_subscript=obj.extend_subscript,
+            )
+            replacements[self._model_objects[obj.name].owner.inputs[0]] = (
+                cloned_object.owner.inputs[0]
+            )
+
+        for equation in self.equations:
+            lhs, rhs = graph_replace(
+                [equation.lhs, equation.rhs], replace=replacements, strict=False
+            )
+            clone._register_model_equation(name=equation.name, lhs=lhs, rhs=rhs)
+
+        return clone
+
+    def _store_object(self, obj: Variable | Parameter) -> None:
+        group = "variables" if isinstance(obj, Variable) else "parameters"
+        getattr(self, f"_{group}")[obj.name] = obj
+        getattr(self, f"_unpacked_{group}").update(
+            {
+                make_indexed_name(unpacked): {"modelobj": unpacked}
+                for unpacked in self._unpack_objects([obj])
+            }
+        )
+
     def _register_model_object(
         self,
         name: str,
@@ -229,14 +277,7 @@ class CGEModel:
         # only, and graph clones made during compilation are plain XTensorVariables, which is all they need to be.
         xtensor.__class__ = ModelObjectVariable
 
-        group = f"{kind}s"
-        getattr(self, f"_{group}")[name] = obj
-        getattr(self, f"_unpacked_{group}").update(
-            {
-                make_indexed_name(unpacked): {"modelobj": unpacked}
-                for unpacked in self._unpack_objects([obj])
-            }
-        )
+        self._store_object(obj)
         self._model_objects[name] = xtensor
         return xtensor
 

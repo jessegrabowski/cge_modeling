@@ -1,3 +1,4 @@
+import copy
 import logging
 
 import numpy as np
@@ -234,6 +235,39 @@ def test_model_4_tariff_cut_reproduces_the_published_sales_tax_increase():
     assert result["optim_res"].success
     for name, value in published.items():
         np.testing.assert_allclose(float(root[name]), value, atol=0.005, err_msg=name)
+
+
+def residuals_at_random_point(model):
+    rng = np.random.default_rng(seed=0)
+    point = {
+        name: rng.uniform(0.5, 1.5) for name in sorted(model.variable_names + model.parameter_names)
+    }
+    residuals = {}
+    for equation in model.equations:
+        lowered = rewrite_graph(equation.residual.values, include=("lower_xtensor",))
+        residuals[equation.name] = lowered.eval(
+            {tensor: point[tensor.name] for tensor in explicit_graph_inputs([lowered])}
+        )
+    return residuals
+
+
+def test_copy_is_an_independent_uncompiled_model_with_the_same_equations():
+    model = build_model_4(closure="savings_driven")
+    expected = residuals_at_random_point(model)
+
+    for clone in [model.copy(), copy.copy(model), copy.deepcopy(model)]:
+        assert clone["Z"] is not model["Z"]
+        assert clone.variable_names == model.variable_names
+        assert clone.parameter_names == model.parameter_names
+        assert clone.f_system is None
+
+        actual = residuals_at_random_point(clone)
+        for name in model.equation_names:
+            np.testing.assert_allclose(actual[name], expected[name], err_msg=name)
+
+    with model.copy() as clone:
+        cm.Variable("extra")
+    assert "extra" not in model.variable_names
 
 
 def test_model_5_is_square_and_holds_at_the_calibrated_point():
