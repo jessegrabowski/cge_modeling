@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 
-from cge_modeling import compile_model
 from cge_modeling.base.utilities import variable_dict_to_flat_array
 from cge_modeling.compile.sparse import SparseJacobianLayout, color_jacobian_columns
 from tests.utilities.models import (
@@ -63,8 +62,8 @@ def test_layout_assembles_the_jacobian_from_its_compressed_columns():
     ids=["model_1", "model_2", "model_3", "model_4", "model_5"],
 )
 def test_sparse_jacobian_matches_the_dense_jacobian(build, calibrated_values):
-    dense = compile_model(build(), functions_to_compile=["root"])
-    sparse = compile_model(build(), functions_to_compile=["root"], use_sparse_matrices=True)
+    dense = build().compile(functions_to_compile=["root"])
+    sparse = build().compile(functions_to_compile=["root"], use_sparse_matrices=True)
     x, theta = variable_dict_to_flat_array(calibrated_values(), dense.variables, dense.parameters)
     x = x * np.random.default_rng(0).uniform(0.9, 1.1, size=x.shape)
 
@@ -85,9 +84,7 @@ def test_sparse_jacobian_matches_the_dense_jacobian(build, calibrated_values):
 )
 def test_sparse_simulation_matches_the_dense_simulation(model_id, build, calibrated_values):
     dense = load_and_cache_model(model_id)
-    sparse = compile_model(
-        build(), functions_to_compile=["root", "euler"], use_sparse_matrices=True
-    )
+    sparse = build().compile(functions_to_compile=["root", "euler"], use_sparse_matrices=True)
     initial_state = calibrated_values()
     shock = {"L_s": 0.1}
 
@@ -108,8 +105,7 @@ def test_sparse_simulation_matches_the_dense_simulation(model_id, build, calibra
 
 def test_sparse_matrices_reject_the_scan_euler_approximation():
     with pytest.raises(ValueError, match="use_scan_euler=False"):
-        compile_model(
-            build_model_1(),
+        build_model_1().compile(
             functions_to_compile=["euler"],
             use_scan_euler=True,
             use_sparse_matrices=True,
@@ -118,14 +114,14 @@ def test_sparse_matrices_reject_the_scan_euler_approximation():
 
 def test_sparse_matrices_reject_rk4_euler_steps():
     with pytest.raises(NotImplementedError, match="RK4"):
-        compile_model(
-            build_model_1(), functions_to_compile=["euler"], use_rk4=True, use_sparse_matrices=True
+        build_model_1().compile(
+            functions_to_compile=["euler"], use_rk4=True, use_sparse_matrices=True
         )
 
 
 @pytest.mark.parametrize("method", ["lm", "hybr"])
 def test_sparse_root_rejects_any_scipy_method(method):
-    model = compile_model(build_model_1(), functions_to_compile=["root"], use_sparse_matrices=True)
+    model = build_model_1().compile(functions_to_compile=["root"], use_sparse_matrices=True)
     initial_state = calibrate_model_1(**model_1_data)
 
     with pytest.raises(ValueError, match="solver="):

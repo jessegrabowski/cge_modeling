@@ -3,13 +3,13 @@ from typing import Literal
 
 import numpy as np
 
-from cge_modeling import CGEModel, compile_model
+from cge_modeling import CGEModel
 from cge_modeling import model as cm
 from cge_modeling.production_functions import CES, CET, CobbDouglas, Leontief
 
 
 def load_model_1(**compile_kwargs):
-    return compile_model(build_model_1(), **compile_kwargs)
+    return build_model_1().compile(**compile_kwargs)
 
 
 def calibrate_model_1(L_s, K_s, P, r):
@@ -80,7 +80,7 @@ model_1_data = {"L_s": 7000.0, "K_s": 4000.0, "P": 1.0, "r": 1.0}
 
 
 def load_model_2(**compile_kwargs):
-    return compile_model(build_model_2(), **compile_kwargs)
+    return build_model_2().compile(**compile_kwargs)
 
 
 def build_model_2() -> CGEModel:
