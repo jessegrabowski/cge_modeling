@@ -54,7 +54,7 @@ from cge_modeling.solvers.sparse_root import sparse_root
 from cge_modeling.tools.latex import equation_to_latex
 from cge_modeling.tools.output_tools import (
     datatree_to_value_dict,
-    display_latex_table,
+    display_table,
     list_of_array_to_idata,
     optimizer_result_to_idata,
 )
@@ -676,7 +676,7 @@ class CGEModel:
             initial, final = result_df.loc[variables, :].values.T
             info_dict[result.name] = {"Initial": initial, "Final": final}
 
-        display_latex_table(info_dict)
+        display_table(info_dict)
 
     def equation_table(self) -> None:
         """Display a table of the model's equations, numbered, with their names and LaTeX forms."""
@@ -686,7 +686,7 @@ class CGEModel:
             info_dict["Name"].append(_replace_dim_marker_with_dim_name(equation.name))
             info_dict["Equation"].append(Latex(equation_to_latex(equation, model=self)))
 
-        display_latex_table(info_dict)
+        display_table(info_dict, column_widths=["4%", "22%", "74%"])
 
     def calibrate(
         self,

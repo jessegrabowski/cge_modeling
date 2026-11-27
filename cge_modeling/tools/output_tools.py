@@ -1,15 +1,16 @@
-import re
+import html
+import numbers
 import warnings
 
 from collections import defaultdict
+from collections.abc import Sequence
 from copy import deepcopy
+from typing import Any
 
 import numpy as np
 import xarray as xr
 
-from IPython.display import Latex, display
-from latextable import draw_latex
-from texttable import Texttable
+from IPython.display import HTML, Latex, display
 
 from cge_modeling.base.primitives import ModelObject
 from cge_modeling.base.utilities import flat_array_to_variable_dict
@@ -223,104 +224,101 @@ def build_tree(d, tree=None, parent=None):
     return tree
 
 
-def heading_to_latex(s):
-    return r"\textbf{" + s + "}"
+TEXT_SPECIAL_CHARACTERS = {char: "\\" + char for char in "_%&#$"}
+CELL_STYLE = "text-align: left; vertical-align: middle; padding: 0.5em"
+STRIPE_STYLE = "background: rgba(128, 128, 128, 0.1)"
 
 
-def parse_data(x):
-    if isinstance(x, ModelObject):
-        return x._full_latex_name
-
-    elif isinstance(x, float | int):
-        return x
-    elif isinstance(x, str):
-        if x.isnumeric():
-            return x
-        else:
-            return r"\text{" + x + "}"
-    elif isinstance(x, Latex):
-        return x.data
-    else:
-        raise ValueError(f"Unexpected type {type(x)} in table data")
+def text_to_latex(text: str, command: str = r"\text") -> list[str]:
+    """Return one LaTeX block per word of ``text``."""
+    # MathJax never breaks a line inside one text block, so a block per word lets the browser wrap
+    # between words.
+    escaped = text.translate(str.maketrans(TEXT_SPECIAL_CHARACTERS))
+    return [command + "{" + word + "}" for word in escaped.split()]
 
 
-def make_table(info_dict):
+def cell_to_latex(value) -> list[str]:
+    if isinstance(value, ModelObject):
+        return [str(value._full_latex_name)]
+    if isinstance(value, Latex):
+        return [str(value.data)]
+    if isinstance(value, numbers.Integral):
+        return [str(value)]
+    if isinstance(value, numbers.Real):
+        return [f"{value:.3f}"]
+    if isinstance(value, str):
+        return [value] if value.isnumeric() else text_to_latex(value)
+    raise ValueError(f"Unexpected type {type(value)} in table data")
+
+
+def math_cell(latex_blocks: list[str], tag: str = "td", width: str | None = None) -> str:
+    """Return an HTML table cell whose content MathJax typesets as separate inline math blocks."""
+    # Typesetting cell by cell keeps every table under the size limit MathJax puts on a single block.
+    style = CELL_STYLE if width is None else f"{CELL_STYLE}; width: {width}"
+    content = " ".join(f"\\({html.escape(latex)}\\)" for latex in latex_blocks)
+    return f"<{tag} style='{style}'>{content}</{tag}>"
+
+
+def make_table(info_dict: dict[str, Any], column_widths: Sequence[str] | None = None) -> str:
+    """
+    Return an HTML table of ``info_dict`` with every cell typeset as math.
+
+    Parameters
+    ----------
+    info_dict : dict
+        Column headings mapped to column data, or to dicts of subheadings mapped to column data. Every column has
+        the same length.
+    column_widths : sequence of str, optional
+        One CSS width per data column, such as ``"20%"``. With widths, the table spans its container with fixed
+        column widths, which gives MathJax the width it needs to typeset long equations on one line. Without them,
+        columns fit their content. Default is None.
+    """
     tree = build_tree(info_dict)
-    headings = tree.make_headings()
-    headings = [
-        [heading_to_latex(s) if s is not None else "" for s in heading] for heading in headings
+    leaves = tree.get_leaves()
+    datas = [leaf.data for leaf in leaves]
+    n_rows = len(datas[0])
+    if any(len(data) != n_rows for data in datas):
+        raise ValueError("Every column of the table must have the same length.")
+    if column_widths is not None and len(column_widths) != len(leaves):
+        raise ValueError(f"Expected {len(leaves)} column widths, found {len(column_widths)}.")
+
+    widths = column_widths if column_widths is not None else [None] * len(leaves)
+    heading_rows = [
+        "".join(
+            math_cell(
+                text_to_latex(heading, command=r"\textbf") if heading else [],
+                tag="th",
+                width=width if level == 0 else None,
+            )
+            for heading, width in zip(headings, widths, strict=True)
+        )
+        for level, headings in enumerate(tree.make_headings())
+    ]
+    data_rows = [
+        "".join(math_cell(cell_to_latex(data[row])) for data in datas) for row in range(n_rows)
     ]
 
-    leaves = tree.get_leaves()
-    n_cols = len(leaves)
-
-    datas = [leaf.data for leaf in leaves]
-    data_lens = [len(data) for data in datas]
-    assert all([data_len == data_lens[0] for data_len in data_lens])
-
-    n_data = data_lens[0]
-    data_rows = [[parse_data(datas[i][row]) for i in range(n_cols)] for row in range(n_data)]
-
-    equation_table = Texttable()
-    equation_table.set_cols_align(["c"] * n_cols)
-    equation_table.set_cols_valign(["m"] * n_cols)
-
-    equation_table.add_rows(headings + data_rows)
-    latex_table = draw_latex(equation_table)
-
-    return latex_table
+    layout = "width: auto" if column_widths is None else "width: 100%; table-layout: fixed"
+    table_style = f"{layout}; font-size: 14px"
+    head = "".join(f"<tr>{row}</tr>" for row in heading_rows)
+    body = "\n".join(
+        f"<tr style='{STRIPE_STYLE}'>{row}</tr>" if index % 2 == 0 else f"<tr>{row}</tr>"
+        for index, row in enumerate(data_rows)
+    )
+    return f"<table class='mathjax_process' style='{table_style}'><thead>{head}</thead><tbody>{body}</tbody></table>"
 
 
-def make_summary_table(variables, values=None):
-    headings = [r"\text{Symbol}", r"\text{Description}"]
-    if values is not None:
-        headings += [r"\text{Calibrated Value}"]
-    heading_row = [headings]
-
-    summary_table = Texttable()
-    summary_table.set_cols_align(["c"] * (2 + int(values is not None)))
-    summary_table.set_cols_valign(["m"] * (2 + int(values is not None)))
-
-    if values is None:
-        data_rows = [[d["latex_name"], "\\text{" + d["description"] + "}"] for d in variables]
-    else:
-        data_rows = [
-            [d["latex_name"], "\\text{" + d["description"] + "}", value]
-            for d, value in zip(variables, values)
-        ]
-
-    summary_table.add_rows(heading_row + data_rows)
-    latex_table = draw_latex(summary_table)
-
-    return latex_table
+def display_table(info_dict: dict[str, Any], column_widths: Sequence[str] | None = None) -> None:
+    display(HTML(make_table(info_dict, column_widths=column_widths)))
 
 
-def convert_table_to_array(latex_table):
-    # Remove the \begin{table} and \end{table} commands
-    latex_table = re.sub(r"\\begin{table}", "", latex_table)
-    latex_table = re.sub(r"\\end{table}", "", latex_table)
-
-    # Remove \caption and \centering
-    latex_table = re.sub(r"\\caption{.*?}", "", latex_table)
-    latex_table = re.sub(r"\\centering", "", latex_table)
-    latex_table = re.sub(r"\\begin{center}", "", latex_table)
-    latex_table = re.sub(r"\\end{center}", "", latex_table)
-
-    # Replace \begin{tabular} and \end{tabular} with \begin{array} and \end{array}
-    latex_table = re.sub(r"\\begin{tabular}", r"\\begin{array}", latex_table)
-    latex_table = re.sub(r"\\end{tabular}", r"\\end{array}", latex_table)
-
-    return latex_table
-
-
-def display_latex_table(info_dict):
-    table = make_table(info_dict)
-    display(Latex(convert_table_to_array(table)))
-
-
-def display_info_as_table(variable_info):
-    variable_table = make_summary_table(variable_info)
-    display(Latex(convert_table_to_array(variable_table)))
+def display_info_as_table(variable_info: list[dict[str, str]]) -> None:
+    display_table(
+        {
+            "Symbol": [Latex(info["latex_name"]) for info in variable_info],
+            "Description": [info["description"] for info in variable_info],
+        }
+    )
 
 
 def datatree_to_value_dict(tree: xr.DataTree) -> dict[str, np.ndarray]:
@@ -329,6 +327,48 @@ def datatree_to_value_dict(tree: xr.DataTree) -> dict[str, np.ndarray]:
         for group in ("variables", "parameters")
         for name, data in tree[group].data_vars.items()
     }
+
+
+def index_by_parameter(tree: xr.DataTree, parameter: str) -> xr.DataTree:
+    """
+    Index a simulation group by the values of one scalar parameter instead of by ``step``.
+
+    Parameters
+    ----------
+    tree : xr.DataTree
+        A group of a ``CGEModel.simulate`` result, such as ``result["euler"]``, whose ``variables`` and
+        ``parameters`` children are indexed by ``step``.
+    parameter : str
+        Name of a scalar parameter whose value changes strictly monotonically along ``step``.
+
+    Returns
+    -------
+    indexed : xr.DataTree
+        The same tree with ``parameter`` as the dimension of both children. ``step`` stays as a coordinate, and the
+        parameter itself moves from the ``parameters`` data variables to the index.
+    """
+    variables = tree.children["variables"].to_dataset(inherit=False)
+    parameters = tree.children["parameters"].to_dataset(inherit=False)
+    values = parameters[parameter]
+    if values.dims != ("step",):
+        raise ValueError(f"{parameter} must be a scalar parameter, but it has dims {values.dims}.")
+    path_values = values.to_numpy()
+    increments = np.diff(path_values)
+    if not (np.all(increments > 0) or np.all(increments < 0)):
+        raise ValueError(
+            f"{parameter} must change strictly monotonically along step to index by it."
+        )
+
+    def reindex(group: xr.Dataset) -> xr.Dataset:
+        return group.assign_coords({parameter: ("step", path_values)}).swap_dims(step=parameter)
+
+    return xr.DataTree.from_dict(
+        {
+            "/": tree.to_dataset(inherit=False),
+            "variables": reindex(variables),
+            "parameters": reindex(parameters.drop_vars(parameter)),
+        }
+    )
 
 
 def list_of_array_to_idata(list_of_arrays: list, cge_model):

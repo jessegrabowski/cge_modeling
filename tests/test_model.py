@@ -510,7 +510,7 @@ def test_calibrate_without_data_names_the_entries_no_equation_determines():
 
 def test_equation_table_shows_the_latex_of_context_built_equations(monkeypatch):
     shown = {}
-    monkeypatch.setattr("cge_modeling.base.cge.display_latex_table", shown.update)
+    monkeypatch.setattr("cge_modeling.base.cge.display_table", shown.update)
     with CGEModel(coords={"i": ["a", "b"]}) as model:
         P = cm.Variable("P", dims="i")
         P_bar = cm.Parameter("P_bar", latex_name=r"\bar{P}")
@@ -525,7 +525,7 @@ def test_equation_table_shows_the_latex_of_context_built_equations(monkeypatch):
 
 def test_summary_shows_the_symbols_and_descriptions_of_the_requested_objects(monkeypatch):
     shown = {}
-    monkeypatch.setattr("cge_modeling.base.cge.display_latex_table", shown.update)
+    monkeypatch.setattr("cge_modeling.base.cge.display_table", shown.update)
     with CGEModel(coords={"i": ["a", "b"]}) as model:
         P = cm.Variable("P", dims="i", description="Price of <dim:i>")
         P_bar = cm.Parameter("P_bar", description="Reference price")

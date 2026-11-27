@@ -50,7 +50,11 @@ ITEM_TEMPLATE = """
       :shadow: none
 """
 
-folder_title_map = {"getting_started": "Getting Started", "rebalance": "Balancing SAMs"}
+folder_title_map = {
+    "getting_started": "Getting Started",
+    "building_a_cge": "Building a CGE Model Step by Step",
+    "rebalance": "Balancing SAMs",
+}
 
 # Notebooks listed here open their section in the given order. The rest of the section follows alphabetically.
 leading_notebooks = {"rebalance": ["introduction_to_sam_rebalance"]}
