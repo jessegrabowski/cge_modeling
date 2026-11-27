@@ -2,7 +2,6 @@ import re
 import warnings
 
 from collections import defaultdict
-from collections.abc import Mapping
 from copy import deepcopy
 
 import numpy as np
@@ -406,55 +405,3 @@ def optimizer_result_to_idata(res, theta, initial_values, mod):
         )
 
     return optim_idata
-
-
-def sweep_to_idata(
-    solutions: Mapping[float, Mapping[str, np.ndarray]],
-    converged: Mapping[float, bool],
-    parameter: str,
-    mod,
-) -> xr.DataTree:
-    """
-    Stack the solutions of a parameter sweep along a dimension named after the swept parameter.
-
-    Parameters
-    ----------
-    solutions : dict of float to dict of str to array
-        Values of every variable and parameter at each value of the swept parameter.
-    converged : dict of float to bool
-        Whether the solution at each value of the swept parameter is an equilibrium.
-    parameter : str
-        Name of the swept parameter, used as the dimension name. Its values are the dimension's coordinate, so it is
-        left out of the ``parameters`` group.
-    mod : CGEModel
-        The model that was swept.
-
-    Returns
-    -------
-    idata : xr.DataTree
-        DataTree with ``variables`` and ``parameters`` children and a ``converged`` variable at the root, all indexed
-        by the sorted values of the swept parameter.
-    """
-    sweep_values = np.array(sorted(solutions))
-
-    def stack(objects):
-        return {
-            obj.name: (
-                (parameter, *obj.dims),
-                np.stack([solutions[value][obj.name] for value in sweep_values]),
-            )
-            for obj in objects
-            if obj.name != parameter
-        }
-
-    coords = {**mod.coords, parameter: sweep_values}
-    return xr.DataTree.from_dict(
-        {
-            "/": xr.Dataset(
-                {"converged": (parameter, [converged[value] for value in sweep_values])},
-                coords={parameter: sweep_values},
-            ),
-            "variables": xr.Dataset(stack(mod.variables), coords=coords),
-            "parameters": xr.Dataset(stack(mod.parameters), coords=coords),
-        }
-    )

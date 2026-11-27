@@ -55,13 +55,11 @@ from cge_modeling.tools.output_tools import (
     display_latex_table,
     list_of_array_to_idata,
     optimizer_result_to_idata,
-    sweep_to_idata,
 )
 from cge_modeling.tools.progress import (
     MINIMIZE_STATISTICS,
     ROOT_STATISTICS,
     simulation_progress,
-    sweep_progress,
 )
 
 _log = logging.getLogger(__name__)
@@ -96,15 +94,6 @@ def _judge_equilibrium(
         )
     res.success = is_equilibrium
     return res
-
-
-def _final_residual(res: OptimizeResult, optimizer_mode: Literal["root", "minimize"]) -> float:
-    """Return the statistic the progress table reports as ``f_value`` at the optimizer's final point."""
-    if res.fun is None:
-        return np.inf
-    if optimizer_mode == "root":
-        return float(np.linalg.norm(res.fun))
-    return float(res.fun)
 
 
 class CGEModel:
@@ -1291,125 +1280,6 @@ class CGEModel:
             )
 
         return return_values
-
-    def sweep(
-        self,
-        initial_state: Mapping[str, float | np.ndarray],
-        parameter: str,
-        values: Sequence[float] | np.ndarray,
-        n_iter_euler: int = 100,
-        optimizer_mode: Literal["root", "minimize"] = "root",
-        progressbar: bool = True,
-        **optimizer_kwargs,
-    ) -> xr.DataTree:
-        """
-        Solve for the equilibrium at each of several values of one scalar parameter, holding the other parameters at
-        their initial values.
-
-        The sweep starts at the parameter's initial value and moves outward in both directions. It solves each point
-        with an Euler approximation from the previous solved point, refined by the optimizer, so every point starts
-        close to its solution.
-
-        Parameters
-        ----------
-        initial_state : dict of str to array
-            Values of every variable and parameter at an equilibrium of the model.
-        parameter : str
-            Name of the scalar parameter to sweep.
-        values : sequence of float
-            Values of ``parameter`` at which to solve. Repeated values are solved once.
-        n_iter_euler : int, optional
-            Number of Euler steps from one point to the next. Default is 100.
-        optimizer_mode : {"root", "minimize"}, optional
-            The optimizer that refines each Euler approximation. Default is "root".
-        progressbar : bool, optional
-            Whether to draw the progress table. Default is True.
-        **optimizer_kwargs
-            Keyword arguments passed to the optimizer, as in :meth:`simulate`.
-
-        Returns
-        -------
-        sweep : xr.DataTree
-            The ``variables`` and ``parameters`` groups of a :meth:`simulate` result, indexed by a dimension named
-            ``parameter`` whose coordinate holds the sorted values. The swept parameter itself is that coordinate. A
-            boolean ``converged`` variable along the same dimension records whether each point reached an equilibrium.
-            A point that does not converge is kept, and the sweep continues from the last point that did.
-        """
-        if parameter not in self.parameter_names:
-            raise ValueError(f"{parameter} is not a parameter of the model.")
-        parameter_dims = cast(Parameter, self.get(parameter)).dims
-        if parameter_dims:
-            raise ValueError(
-                f"Only scalar parameters can be swept, and {parameter} has dims {parameter_dims}."
-            )
-        if optimizer_mode not in ("root", "minimize"):
-            raise ValueError(f"Unknown optimizer mode {optimizer_mode}")
-
-        sweep_values = np.unique(np.asarray(values, dtype=float))
-        if sweep_values.size == 0:
-            raise ValueError("values must be a non-empty sequence of numbers.")
-
-        if not self._compiled:
-            self.compile(functions_to_compile=["euler", optimizer_mode])
-
-        solve = self._solve_with_root if optimizer_mode == "root" else self._solve_with_minimize
-        initial_value = float(initial_state[parameter])
-        branches = [
-            sweep_values[sweep_values < initial_value][::-1],
-            sweep_values[sweep_values >= initial_value],
-        ]
-
-        def point_label(value: float) -> str:
-            return f"{parameter}={value:g}"
-
-        progress = sweep_progress(
-            self._statistic_headings(optimizer_mode),
-            description=f"Sweep {parameter}",
-            point_labels=[point_label(value) for value in sweep_values],
-            enabled=progressbar,
-        )
-
-        solutions: dict[float, dict[str, Any]] = {}
-        converged: dict[float, bool] = {}
-        with progress:
-            for branch in branches:
-                state = dict(initial_state)
-                for value in branch:
-                    progress.start_point(point_label(value))
-                    point = {**state, parameter: value}
-                    _, theta = variable_dict_to_flat_array(point, self.variables, self.parameters)
-
-                    euler = self._solve_with_euler_approximation(
-                        state,
-                        theta,
-                        n_steps=n_iter_euler,
-                        progressbar=progress,
-                        optimizer_mode=optimizer_mode,
-                    )
-                    res = solve(
-                        datatree_to_value_dict(euler.isel(step=-1)),
-                        theta,
-                        progressbar=progress,
-                        **optimizer_kwargs,
-                    )
-
-                    solutions[value] = {
-                        **point,
-                        **flat_array_to_variable_dict(res.x, self.variables, self.coords),
-                    }
-                    converged[value] = bool(res.success)
-                    progress.finish_point(_final_residual(res, optimizer_mode), converged[value])
-                    if res.success:
-                        state = solutions[value]
-
-        failed = [point_label(value) for value in sweep_values if not converged[value]]
-        if failed:
-            warnings.warn(
-                f"Optimizer did not converge at {', '.join(failed)}. Results at those points do not represent a "
-                f"valid equilibrium, and are returned for diagnostic purposes only"
-            )
-
-        return sweep_to_idata(solutions, converged, parameter=parameter, mod=self)
 
     def print_residuals(self, res):
         n_vars = len(self.unpacked_variable_names)

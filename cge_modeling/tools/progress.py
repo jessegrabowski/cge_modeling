@@ -1,4 +1,3 @@
-import math
 import sys
 import threading
 
@@ -12,13 +11,10 @@ from rich.jupyter import JupyterRenderable, _render_segments
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
-    Progress,
     ProgressColumn,
     Task,
-    TaskID,
     TextColumn,
     TimeElapsedColumn,
-    TimeRemainingColumn,
 )
 from rich.table import Column, Table
 from rich.text import Text
@@ -29,9 +25,6 @@ BAR_WIDTH = 20
 ROOT_STATISTICS = {"f_value": "Residual", "grad_norm": "||Jᵀf||"}
 MINIMIZE_STATISTICS = {"f_value": "Objective", "grad_norm": "||grad||", "rayleigh": "gᵀHg/|g|²"}
 STATISTIC_FORMATS = {"f_value": "{:0.8f}", "grad_norm": "{:0.8f}", "rayleigh": "{:+0.4e}"}
-
-# The rows a simulation's stages add: the Euler approximation, and better_optimize's root and minimize solvers.
-STAGE_NAMES = ("Euler", "Finding Roots", "Minimizing")
 
 
 class FieldColumn(ProgressColumn):
@@ -128,94 +121,6 @@ class SimulationProgress(ToggleableProgress):
             self._display_handle.update(_jupyter_frame(self))
 
 
-class SweepProgress(SimulationProgress):
-    """
-    A simulation progress table for a sweep: one row counting the sweep's points, and one row per solver stage that
-    every point reuses.
-
-    Stages add their rows with ``add_task`` exactly as in a single simulation. The first point creates each stage's
-    row, and later points reset it, so the table keeps the same rows however many points the sweep has.
-    """
-
-    def __init__(self, *columns, description: str, total: int, **kwargs) -> None:
-        super().__init__(*columns, **kwargs)
-        self._description = description
-        self._point_label = ""
-        self._stage_rows: dict[str, TaskID] = {}
-        self._worst_residual = 0.0
-        self._n_failed = 0
-        self._sweep_row = (
-            Progress.add_task(self, description, total=total, show_remaining=True)
-            if self.is_enabled
-            else None
-        )
-
-    def add_task(
-        self, description: str, *args, total: float | None = None, **fields
-    ) -> TaskID | None:
-        if not self.is_enabled:
-            return None
-
-        label = f"{self._point_label} {description}"
-        if description in self._stage_rows:
-            task_id = self._stage_rows[description]
-            self.reset(task_id, total=total, description=label, **fields)
-            return task_id
-
-        task_id = Progress.add_task(self, label, *args, total=total, **fields)
-        self._stage_rows[description] = task_id
-        return task_id
-
-    def start_point(self, label: str) -> None:
-        """Label the stage rows with the point the sweep is solving next."""
-        self._point_label = label
-
-    def finish_point(self, residual: float, converged: bool) -> None:
-        """Count a solved point, and show the largest final residual and the number of failures so far."""
-        if self._sweep_row is None:
-            return
-        if math.isnan(residual) or residual > self._worst_residual:
-            self._worst_residual = residual
-        if not converged:
-            self._n_failed += 1
-        description = self._description
-        if self._n_failed:
-            description = f"{description} ({self._n_failed} failed)"
-        self.update(
-            self._sweep_row, advance=1, description=description, f_value=self._worst_residual
-        )
-
-
-class RemainingColumn(TimeRemainingColumn):
-    """The estimated time remaining, shown only for tasks that set the ``show_remaining`` field."""
-
-    def render(self, task: Task) -> Text:
-        if not task.fields.get("show_remaining", False):
-            return Text("")
-        return super().render(task)
-
-
-def _progress_columns(
-    statistics: dict[str, str], description_width: int | None, show_remaining: bool
-) -> list[ProgressColumn]:
-    remaining = (
-        [RemainingColumn(table_column=Column("Remaining", no_wrap=True))] if show_remaining else []
-    )
-    return [
-        TextColumn(
-            "{task.description}", table_column=Column("", no_wrap=True, width=description_width)
-        ),
-        BarColumn(bar_width=BAR_WIDTH, table_column=Column("Progress")),
-        TimeElapsedColumn(table_column=Column("Elapsed", no_wrap=True)),
-        *remaining,
-        *(
-            FieldColumn(field, STATISTIC_FORMATS[field], table_column=Column(heading, no_wrap=True))
-            for field, heading in statistics.items()
-        ),
-        StepColumn(table_column=Column("Step", no_wrap=True)),
-    ]
-
-
 def simulation_progress(statistics: dict[str, str], enabled: bool = True) -> SimulationProgress:
     """
     Return a progress table with a label, a bar, the elapsed time, one column per statistic, and the step count.
@@ -233,53 +138,19 @@ def simulation_progress(statistics: dict[str, str], enabled: bool = True) -> Sim
     progress : SimulationProgress
         The progress table. Each stage adds its own row with ``add_task``.
     """
+    columns = [
+        TextColumn("{task.description}", table_column=Column("", no_wrap=True)),
+        BarColumn(bar_width=BAR_WIDTH, table_column=Column("Progress")),
+        TimeElapsedColumn(table_column=Column("Elapsed", no_wrap=True)),
+        *(
+            FieldColumn(field, STATISTIC_FORMATS[field], table_column=Column(heading, no_wrap=True))
+            for field, heading in statistics.items()
+        ),
+        StepColumn(table_column=Column("Step", no_wrap=True)),
+    ]
     return SimulationProgress(
-        *_progress_columns(statistics, description_width=None, show_remaining=False),
+        *columns,
         expand=False,
         disable=not enabled,
         console=Console(file=sys.stderr, width=CONSOLE_WIDTH),
-    )
-
-
-def sweep_progress(
-    statistics: dict[str, str],
-    description: str,
-    point_labels: list[str],
-    enabled: bool = True,
-) -> SweepProgress:
-    """
-    Return a progress table for a sweep, with the columns of :func:`simulation_progress` and the time remaining.
-
-    Parameters
-    ----------
-    statistics : dict of str to str
-        Task field name to column heading, as in :func:`simulation_progress`. The sweep's own row shows the largest
-        final ``f_value`` among the points solved so far.
-    description : str
-        Label of the row counting the sweep's points.
-    point_labels : list of str
-        Label of every point the sweep will solve. The label column is sized once from these, so it does not change
-        width as the sweep moves between points.
-    enabled : bool, optional
-        Whether to draw the table. Default is True.
-
-    Returns
-    -------
-    progress : SweepProgress
-        The progress table. Call ``start_point`` before solving each point and ``finish_point`` after.
-    """
-    longest_stage_label = max(map(len, point_labels), default=0) + 1 + max(map(len, STAGE_NAMES))
-    failure_suffix = len(f" ({len(point_labels)} failed)")
-    description_width = max(longest_stage_label, len(description) + failure_suffix)
-
-    # A simulation table fits CONSOLE_WIDTH with labels no longer than the stage names. Widen the console by the
-    # longer labels and the remaining-time column, so the bar keeps its full width.
-    extra_width = description_width - max(map(len, STAGE_NAMES)) + len("Remaining") + 2
-    return SweepProgress(
-        *_progress_columns(statistics, description_width=description_width, show_remaining=True),
-        description=description,
-        total=len(point_labels),
-        expand=False,
-        disable=not enabled,
-        console=Console(file=sys.stderr, width=CONSOLE_WIDTH + extra_width),
     )
