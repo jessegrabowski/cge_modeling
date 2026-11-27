@@ -28,4 +28,3 @@ If you use cge_modeling in your research, please cite the package using the foll
    examples/gallery
    api
    dev/index
-   release/index

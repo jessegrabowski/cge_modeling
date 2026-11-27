@@ -113,7 +113,6 @@ html_sidebars = {
     "user_guide/**": [],
     "examples/**": [],
     "dev/**": [],
-    "release/**": [],
     "genindex": [],
     "search": [],
 }
