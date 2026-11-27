@@ -98,6 +98,13 @@ def _judge_equilibrium(
     return res
 
 
+def _final_state(tree: xr.DataTree) -> dict[str, np.ndarray]:
+    """Return the values of every variable and parameter at the last step of a simulation group."""
+    if "step" in tree["variables"].dims:
+        tree = tree.isel(step=-1)
+    return datatree_to_value_dict(tree)
+
+
 class CGEModel:
     def __init__(self, coords: dict[str, list[str]] | None = None):
         """
@@ -1195,13 +1202,18 @@ class CGEModel:
 
         Parameters
         ----------
-        initial_state: dict[str, np.ndarray]
+        initial_state: dict[str, np.ndarray], dict of str to xr.DataTree, or xr.DataTree
             A dictionary of initial values for the model variables and parameters. The keys should be the names of the
             variables and parameters, and the values should be numpy arrays of the same shape as the variable or
             parameter.
 
-            .. warning:: The initial state **must** represent a model equilibrium. This is checked before simulation
-               begins, and an error is raised if the initial state is not an equilibrium.
+            The result of an earlier call to ``simulate`` is also accepted, and the simulation starts from its final
+            state: the optimizer's solution if it ran, otherwise the last step of the Euler approximation. So is one
+            of its groups, such as ``result["euler"]``. The last Euler step is an equilibrium only when the optimizer
+            or a ``solve_every`` checkpoint solved it.
+
+            .. warning:: The initial state **must** represent a model equilibrium. A state taken from an earlier
+               simulation is checked, and a ValueError is raised if it is not an equilibrium.
 
         final_values: dict[str, np.ndarray], optional
             A dictionary of exact final values for a subset of model parameters. The keys should be the names of the
@@ -1312,8 +1324,22 @@ class CGEModel:
 
             self.compile(**compile_kwargs)
 
+        continues_simulation = isinstance(initial_state, xr.DataTree) or (
+            isinstance(initial_state, dict)
+            and any(isinstance(value, xr.DataTree) for value in initial_state.values())
+        )
+        x0_var_param: dict[str, Any]
         if isinstance(initial_state, Result):
-            x0_var_param = deepcopy(initial_state.to_dict()["fitted"])
+            x0_var_param = cast(dict[str, Any], deepcopy(initial_state.to_dict()["fitted"]))
+        elif continues_simulation:
+            if isinstance(initial_state, xr.DataTree):
+                final_group = initial_state
+            else:
+                simulation = cast(dict[str, xr.DataTree], initial_state)
+                final_group = (
+                    simulation["optimizer"] if "optimizer" in simulation else simulation["euler"]
+                )
+            x0_var_param = _final_state(final_group)
         elif isinstance(initial_state, dict):
             x0_var_param = deepcopy(initial_state)
         elif isinstance(initial_state, xr.Dataset):
@@ -1341,6 +1367,19 @@ class CGEModel:
                 f"initial_state contains values for variables or parameters not in the model: {', '.join(unknown_objs)}"
             )
 
+        if continues_simulation:
+            x0, theta0 = variable_dict_to_flat_array(x0_var_param, self.variables, self.parameters)
+            squared_error = float(
+                np.sum(np.asarray(self._compiled_function("f_system")(x0, theta0)) ** 2)
+            )
+            equilibrium_tol = optimizer_kwargs.get("equilibrium_tol", 1e-6)
+            if squared_error >= equilibrium_tol:
+                raise ValueError(
+                    f"initial_state is the final state of an earlier simulation, and it is not an equilibrium: its sum "
+                    f"of squared residuals is {squared_error:.3e}, above equilibrium_tol={equilibrium_tol:g}."
+                )
+
+        initial_values = deepcopy(x0_var_param)
         final_param_dict = create_final_param_dict(
             x0_var_param, final_values, final_delta, final_delta_pct
         )
@@ -1417,7 +1456,7 @@ class CGEModel:
                         "returned for diagnostic purposes only"
                     )
 
-                idata_optim = optimizer_result_to_idata(res, theta_simulation, initial_state, self)
+                idata_optim = optimizer_result_to_idata(res, theta_simulation, initial_values, self)
                 return_values["optimizer"] = idata_optim
                 return_values["optim_res"] = res
 
@@ -1466,9 +1505,7 @@ class CGEModel:
             if not {"variables", "parameters"} <= set(data.children):
                 raise ValueError("DataTree must contain variables and parameters children")
 
-            if "step" in data["variables"].dims:
-                data = data.isel(step=-1)
-            data = datatree_to_value_dict(data)
+            data = _final_state(data)
 
         elif isinstance(data, xr.Dataset):
             data = {x.name: data[x.name].values for x in self.variables + self.parameters}

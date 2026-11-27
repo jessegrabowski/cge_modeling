@@ -321,6 +321,73 @@ def test_solve_every_puts_the_euler_path_back_on_the_equilibrium_at_each_checkpo
     assert equilibrium_residual_norms(mod, plain, [40])[0] > 1e-6
 
 
+@pytest.mark.parametrize(
+    "first_run, select_start",
+    [
+        ({}, lambda result: result),
+        ({}, lambda result: result["optimizer"]),
+        ({"use_optimizer": False, "solve_every": 25}, lambda result: result["euler"]),
+        ({"use_euler_approximation": False}, lambda result: result),
+    ],
+    ids=["result", "optimizer_group", "solved_euler_group", "optimizer_only_result"],
+)
+def test_simulate_continues_from_an_earlier_simulation(first_run, select_start):
+    mod = load_model_1(functions_to_compile=("euler", "root"))
+    initial_state = calibrate_model_1(**model_1_data)
+    labor_supply = initial_state["L_s"]
+
+    def final_variables(result):
+        return result["optimizer"]["variables"].dataset.isel(step=-1).to_array().values
+
+    first = mod.simulate(
+        initial_state,
+        final_values={"L_s": 0.5 * labor_supply},
+        n_iter_euler=50,
+        progressbar=False,
+        **first_run,
+    )
+    continued = mod.simulate(
+        select_start(first),
+        final_values={"L_s": 0.25 * labor_supply},
+        n_iter_euler=50,
+        progressbar=False,
+    )
+    direct = mod.simulate(
+        initial_state,
+        final_values={"L_s": 0.25 * labor_supply},
+        n_iter_euler=100,
+        progressbar=False,
+    )
+
+    np.testing.assert_allclose(
+        continued["euler"]["parameters"].dataset["L_s"].isel(step=0), 0.5 * labor_supply
+    )
+    np.testing.assert_allclose(
+        final_variables(continued), final_variables(direct), rtol=1e-8, atol=1e-8
+    )
+
+
+@pytest.mark.parametrize(
+    "select_start",
+    [lambda result: result, lambda result: result["euler"]],
+    ids=["result", "euler_group"],
+)
+def test_simulate_rejects_an_earlier_simulation_that_ended_off_the_equilibrium(select_start):
+    mod = load_model_1(functions_to_compile=("euler", "root"))
+    initial_state = calibrate_model_1(**model_1_data)
+
+    unsolved = mod.simulate(
+        initial_state,
+        final_delta_pct={"L_s": 3.0},
+        n_iter_euler=5,
+        use_optimizer=False,
+        progressbar=False,
+    )
+
+    with pytest.raises(ValueError, match="not an equilibrium"):
+        mod.simulate(select_start(unsolved), final_delta_pct={"L_s": 0.5}, progressbar=False)
+
+
 def test_solve_every_with_minimize_solves_each_checkpoint():
     mod = load_model_1(functions_to_compile=("euler", "minimize"))
     initial_state = calibrate_model_1(**model_1_data)
