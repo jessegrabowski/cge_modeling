@@ -60,7 +60,6 @@ def plot_lines(
     mod: CGEModel,
     n_cols: int = 5,
     var_names: list[str] | None = None,
-    initial_values: dict[str, np.ndarray] | None = None,
     plot_euler: bool = True,
     plot_optimizer: bool = True,
     rename_dict: dict[str, str] | None = None,
@@ -81,9 +80,6 @@ def plot_lines(
         The number of columns in the grid of plots.
     var_names: list of str, optional
         Name of the variables to plot. If None, all variables will be plotted.
-    initial_values: dict[str, np.ndarray], optional
-        The initial values of the variables in the model; those passed to the simulate method. If None, the initial
-        values will be taken from the DataTree.
     plot_euler: bool, default True
         Whether to trace the shape of the function in the shock direction using steps from the Euler approximation.
     plot_optimizer: bool, default True
@@ -97,7 +93,7 @@ def plot_lines(
         Matplotlib colormap, used to color the lines in plots with multiple variables. If None, the default colormap
         will be used.
     figure_kwargs: dict
-        Additional keyword arguments to pass to plt.figure.
+        Keyword arguments passed to plt.figure. figsize defaults to (15, 9) and dpi to 144.
 
     Returns
     -------
@@ -132,10 +128,9 @@ def plot_lines(
     n_cols = min(n_cols, n_vars)
     gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_vars)
 
-    figsize = figure_kwargs.get("figsize", (15, 9))
-    dpi = figure_kwargs.get("dpi", 144)
-
-    fig = plt.figure(figsize=figsize, dpi=dpi)
+    figure_kwargs.setdefault("figsize", (15, 9))
+    figure_kwargs.setdefault("dpi", 144)
+    fig = plt.figure(**figure_kwargs)
     cmap = "tab10" if cmap is None else cmap
 
     if cmap in plt.colormaps:

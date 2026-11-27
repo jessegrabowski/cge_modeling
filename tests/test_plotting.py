@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -268,3 +269,13 @@ def test_plot_bar_no_initial_values_uses_idata(cge_model):
     var_names = ["Y", "C"]
     fig = plot_bar(idata, model, var_names)
     assert isinstance(fig, Figure)
+
+
+@pytest.mark.usefixtures("auto_close_all_figures")
+def test_plot_lines_passes_figure_keywords_to_the_figure(cge_model):
+    model, _, idata = cge_model
+
+    fig = plot_lines(idata, model, var_names=["Y"], facecolor="red", figsize=(4, 3))
+
+    assert fig.get_facecolor() == (1.0, 0.0, 0.0, 1.0)
+    np.testing.assert_allclose(fig.get_size_inches(), [4, 3])
