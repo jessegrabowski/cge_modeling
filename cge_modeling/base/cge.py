@@ -35,7 +35,7 @@ from cge_modeling.base.function_wrappers import (
     select_free_variable_entries,
     wrap_compiled_function_for_scipy,
 )
-from cge_modeling.base.primitives import Parameter, Result, Variable
+from cge_modeling.base.primitives import Parameter, Variable
 from cge_modeling.base.utilities import (
     _replace_dim_marker_with_dim_name,
     create_final_param_dict,
@@ -145,8 +145,6 @@ class CGEModel:
         self._model_objects: dict[str, ModelObjectVariable] = {}
         self._xtensor_equations: dict[str, XTensorEquation] = {}
         self._context_tokens: list = []
-
-        self.scenarios: dict[str, Result] = {}
 
         self._compiled: Sequence[str] = []
         self.mode: Mode | str | None = None
@@ -637,12 +635,8 @@ class CGEModel:
     def summary(
         self,
         variables: Literal["all", "variables", "parameters"] | list[str] = "all",
-        results: Result | list[Result] | None = None,
     ) -> None:
-        """Display a table of the symbols and descriptions of ``variables``, with columns from each of ``results``."""
-        results = [] if results is None else results
-        if isinstance(results, Result):
-            results = [results]
+        """Display a table of the symbols and descriptions of ``variables``."""
 
         if variables == "all":
             variables = [
@@ -671,11 +665,6 @@ class CGEModel:
             _replace_dim_marker_with_dim_name(desc) for desc in info_dict["Description"]
         ]
 
-        for result in results:
-            result_df = result.to_frame()
-            initial, final = result_df.loc[variables, :].values.T
-            info_dict[result.name] = {"Initial": initial, "Final": final}
-
         display_table(info_dict)
 
     def equation_table(self) -> None:
@@ -692,9 +681,8 @@ class CGEModel:
         self,
         data: Mapping[str, float | np.ndarray] | None = None,
         max_iter: int = 100,
-        name: str = "initial_calibration",
         initial_values: Mapping[str, float | np.ndarray] | None = None,
-    ) -> Result:
+    ) -> xr.DataTree:
         """
         Solve for every variable and parameter value that ``data`` does not give.
 
@@ -704,21 +692,19 @@ class CGEModel:
             Known values, keyed by variable or parameter name.
         max_iter : int, optional
             Iteration limit of the solver. Default is 100.
-        name : str, optional
-            Name of the returned result. Default is ``"initial_calibration"``.
         initial_values : dict of str to float or ndarray, optional
             Starting values for unknowns, keyed by name.
 
         Returns
         -------
-        result : Result
-            The given and solved values, with ``success`` set when every equation holds.
+        state : xr.DataTree
+            The given and solved values in ``variables`` and ``parameters`` children, which :meth:`simulate` accepts
+            as its ``initial_state``. The root holds ``converged``, which is True when every equation holds.
         """
         # cge_modeling.tools.calibration imports the compile modules, which import this module.
         from cge_modeling.tools.calibration import (
             calibrate_entries,
             compile_calibration_system,
-            flatten_entries,
             residual_is_converged,
         )
 
@@ -726,18 +712,22 @@ class CGEModel:
         initial_values = {} if initial_values is None else initial_values
 
         system = compile_calibration_system(self)
-        fitted_values, residual = calibrate_entries(
+        entries, residual = calibrate_entries(
             system=system, data=data, initial_values=initial_values, max_iter=max_iter
         )
-        initial_values_flat, _ = flatten_entries(system=system, values=data, fill=np.nan)
+        values = flat_array_to_variable_dict(entries, self.variables + self.parameters, self.coords)
 
-        return Result(
-            name=name,
-            success=residual_is_converged(residual),
-            variables=self.unpacked_variable_names,
-            parameters=self.unpacked_parameter_names,
-            initial_values=initial_values_flat,
-            fitted_values=fitted_values,
+        def group(objects: list[Variable] | list[Parameter]) -> xr.Dataset:
+            return xr.Dataset(
+                {obj.name: (obj.dims, values[obj.name]) for obj in objects}, coords=self.coords
+            )
+
+        return xr.DataTree.from_dict(
+            {
+                "/": xr.Dataset({"converged": residual_is_converged(residual)}),
+                "variables": group(self.variables),
+                "parameters": group(self.parameters),
+            }
         )
 
     def _step_statistics(
@@ -1179,7 +1169,7 @@ class CGEModel:
 
     def simulate(
         self,
-        initial_state: dict[str, float | np.ndarray],
+        initial_state: dict[str, Any] | xr.DataTree,
         final_values: dict[str, float | np.ndarray] | None = None,
         final_delta: dict[str, float | np.ndarray] | None = None,
         final_delta_pct: dict[str, float | np.ndarray] | None = None,
@@ -1324,14 +1314,12 @@ class CGEModel:
 
             self.compile(**compile_kwargs)
 
-        continues_simulation = isinstance(initial_state, xr.DataTree) or (
+        from_tree = isinstance(initial_state, xr.DataTree) or (
             isinstance(initial_state, dict)
             and any(isinstance(value, xr.DataTree) for value in initial_state.values())
         )
         x0_var_param: dict[str, Any]
-        if isinstance(initial_state, Result):
-            x0_var_param = cast(dict[str, Any], deepcopy(initial_state.to_dict()["fitted"]))
-        elif continues_simulation:
+        if from_tree:
             if isinstance(initial_state, xr.DataTree):
                 final_group = initial_state
             else:
@@ -1349,7 +1337,7 @@ class CGEModel:
             )
         else:
             raise ValueError(
-                f"initial_state must be a Result or a dict of initial values, found {type(initial_state)}"
+                f"initial_state must be a dict of initial values or a DataTree, found {type(initial_state)}"
             )
 
         all_model_objs = [*self.variable_names, *self.parameter_names]
@@ -1367,7 +1355,7 @@ class CGEModel:
                 f"initial_state contains values for variables or parameters not in the model: {', '.join(unknown_objs)}"
             )
 
-        if continues_simulation:
+        if from_tree:
             x0, theta0 = variable_dict_to_flat_array(x0_var_param, self.variables, self.parameters)
             squared_error = float(
                 np.sum(np.asarray(self._compiled_function("f_system")(x0, theta0)) ** 2)
@@ -1375,8 +1363,8 @@ class CGEModel:
             equilibrium_tol = optimizer_kwargs.get("equilibrium_tol", 1e-6)
             if squared_error >= equilibrium_tol:
                 raise ValueError(
-                    f"initial_state is the final state of an earlier simulation, and it is not an equilibrium: its sum "
-                    f"of squared residuals is {squared_error:.3e}, above equilibrium_tol={equilibrium_tol:g}."
+                    f"initial_state is not an equilibrium: its sum of squared residuals is {squared_error:.3e}, above "
+                    f"equilibrium_tol={equilibrium_tol:g}."
                 )
 
         initial_values = deepcopy(x0_var_param)
@@ -1469,13 +1457,6 @@ class CGEModel:
             )
 
         return return_values
-
-    def print_residuals(self, res):
-        n_vars = len(self.unpacked_variable_names)
-        endog, exog = res.fitted_values[:n_vars], res.fitted_values[n_vars:]
-        errors = self.f_system(endog, exog)
-        for eq, val in zip(self.unpacked_equation_names, errors):
-            _log.info(f"{eq:<75}: {val:<10.3f}")
 
     def check_for_equilibrium(
         self,

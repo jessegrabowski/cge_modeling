@@ -651,7 +651,7 @@ def test_invalid_simulation_raises():
     initial_state = calibrate_model_1(**model_1_data)
 
     with pytest.raises(
-        ValueError, match="initial_state must be a Result or a dict of initial values"
+        ValueError, match="initial_state must be a dict of initial values or a DataTree"
     ):
         mod.simulate([1, 2, 3, 4, 5], final_values={"L_s": 1500})
 
