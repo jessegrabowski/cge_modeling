@@ -100,7 +100,7 @@ html_context = {
 
 # html_favicon = "../_static/PyMC.ico"
 # html_logo = "../_static/PyMC.png"
-html_title = "cge_modeling: CGE Modeling in Python"
+
 # Only the API reference keeps the left navigation sidebar. Sphinx warns when a page matches two
 # patterns that both hold a wildcard, so every other page and folder is listed by name rather than
 # through a catch-all "**". A new top-level page or folder needs its own entry, or it falls back to
