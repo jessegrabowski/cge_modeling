@@ -5,6 +5,7 @@ import warnings
 from collections import defaultdict
 from collections.abc import Sequence
 from copy import deepcopy
+from typing import Any
 
 import numpy as np
 import xarray as xr
@@ -229,42 +230,36 @@ STRIPE_STYLE = "background: rgba(128, 128, 128, 0.1)"
 
 
 def text_to_latex(text: str, command: str = r"\text") -> list[str]:
-    """
-    Return one LaTeX block per word of ``text``.
-
-    MathJax never breaks a line inside a single text block, so separate blocks let the browser wrap long text
-    between words.
-    """
+    """Return one LaTeX block per word of ``text``."""
+    # MathJax never breaks a line inside one text block, so a block per word lets the browser wrap
+    # between words.
     escaped = text.translate(str.maketrans(TEXT_SPECIAL_CHARACTERS))
     return [command + "{" + word + "}" for word in escaped.split()]
 
 
-def parse_data(x) -> list[str]:
-    if isinstance(x, ModelObject):
-        return [str(x._full_latex_name)]
-    if isinstance(x, Latex):
-        return [str(x.data)]
-    if isinstance(x, numbers.Integral):
-        return [str(x)]
-    if isinstance(x, numbers.Real):
-        return [f"{x:.3f}"]
-    if isinstance(x, str):
-        return [x] if x.isnumeric() else text_to_latex(x)
-    raise ValueError(f"Unexpected type {type(x)} in table data")
+def cell_to_latex(value) -> list[str]:
+    if isinstance(value, ModelObject):
+        return [str(value._full_latex_name)]
+    if isinstance(value, Latex):
+        return [str(value.data)]
+    if isinstance(value, numbers.Integral):
+        return [str(value)]
+    if isinstance(value, numbers.Real):
+        return [f"{value:.3f}"]
+    if isinstance(value, str):
+        return [value] if value.isnumeric() else text_to_latex(value)
+    raise ValueError(f"Unexpected type {type(value)} in table data")
 
 
 def math_cell(latex_blocks: list[str], tag: str = "td", width: str | None = None) -> str:
-    """
-    Return an HTML table cell whose content MathJax typesets as separate inline math blocks.
-
-    Each block is typeset on its own, so no table outgrows the size limit MathJax puts on a single block.
-    """
+    """Return an HTML table cell whose content MathJax typesets as separate inline math blocks."""
+    # Typesetting cell by cell keeps every table under the size limit MathJax puts on a single block.
     style = CELL_STYLE if width is None else f"{CELL_STYLE}; width: {width}"
     content = " ".join(f"\\({html.escape(latex)}\\)" for latex in latex_blocks)
     return f"<{tag} style='{style}'>{content}</{tag}>"
 
 
-def make_table(info_dict, column_widths: Sequence[str] | None = None) -> str:
+def make_table(info_dict: dict[str, Any], column_widths: Sequence[str] | None = None) -> str:
     """
     Return an HTML table of ``info_dict`` with every cell typeset as math.
 
@@ -300,7 +295,7 @@ def make_table(info_dict, column_widths: Sequence[str] | None = None) -> str:
         for level, headings in enumerate(tree.make_headings())
     ]
     data_rows = [
-        "".join(math_cell(parse_data(data[row])) for data in datas) for row in range(n_rows)
+        "".join(math_cell(cell_to_latex(data[row])) for data in datas) for row in range(n_rows)
     ]
 
     layout = "width: auto" if column_widths is None else "width: 100%; table-layout: fixed"
@@ -313,12 +308,12 @@ def make_table(info_dict, column_widths: Sequence[str] | None = None) -> str:
     return f"<table class='mathjax_process' style='{table_style}'><thead>{head}</thead><tbody>{body}</tbody></table>"
 
 
-def display_latex_table(info_dict, column_widths: Sequence[str] | None = None) -> None:
+def display_table(info_dict: dict[str, Any], column_widths: Sequence[str] | None = None) -> None:
     display(HTML(make_table(info_dict, column_widths=column_widths)))
 
 
-def display_info_as_table(variable_info):
-    display_latex_table(
+def display_info_as_table(variable_info: list[dict[str, str]]) -> None:
+    display_table(
         {
             "Symbol": [Latex(info["latex_name"]) for info in variable_info],
             "Description": [info["description"] for info in variable_info],
@@ -357,16 +352,15 @@ def index_by_parameter(tree: xr.DataTree, parameter: str) -> xr.DataTree:
     values = parameters[parameter]
     if values.dims != ("step",):
         raise ValueError(f"{parameter} must be a scalar parameter, but it has dims {values.dims}.")
-    increments = np.diff(values.to_numpy())
+    path_values = values.to_numpy()
+    increments = np.diff(path_values)
     if not (np.all(increments > 0) or np.all(increments < 0)):
         raise ValueError(
             f"{parameter} must change strictly monotonically along step to index by it."
         )
 
     def reindex(group: xr.Dataset) -> xr.Dataset:
-        return group.assign_coords({parameter: ("step", values.to_numpy())}).swap_dims(
-            step=parameter
-        )
+        return group.assign_coords({parameter: ("step", path_values)}).swap_dims(step=parameter)
 
     return xr.DataTree.from_dict(
         {
