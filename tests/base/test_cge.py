@@ -12,6 +12,7 @@ from scipy.optimize import OptimizeResult
 from cge_modeling import model as cm
 from cge_modeling.base.cge import CGEModel, _judge_equilibrium, _parse_compile_kwarg
 from cge_modeling.base.utilities import flat_array_to_variable_dict, variable_dict_to_flat_array
+from cge_modeling.tools.output_tools import datatree_to_value_dict
 from tests.utilities.models import (
     build_model_1,
     calibrate_model_1,
@@ -266,12 +267,12 @@ def test_scan_euler_matches_python_loop_euler():
         calibrated_data, theta_final, n_steps=500
     )
 
-    np.testing.assert_allclose(
-        scan_result["variables"].dataset.isel(step=-1).to_array().values,
-        loop_result["variables"].dataset.isel(step=-1).to_array().values,
-        rtol=1e-10,
-        atol=1e-8,
-    )
+    scan_path = scan_result["variables"].dataset.to_array().values
+    loop_path = loop_result["variables"].dataset.to_array().values
+    initial_point = np.array([calibrated_data[name] for name in loop_model.variable_names])
+
+    np.testing.assert_allclose(scan_path, loop_path, rtol=1e-10, atol=1e-8)
+    np.testing.assert_allclose(loop_path[:, 0], initial_point)
 
 
 def test_simulate_with_scan_euler_reports_no_nans(caplog):
@@ -283,6 +284,276 @@ def test_simulate_with_scan_euler_reports_no_nans(caplog):
 
     assert res["optim_res"].success
     assert "NaNs were encountered" not in caplog.text
+
+
+def equilibrium_residual_norms(mod, euler, steps):
+    """Return the norm of the model's residuals at each of ``steps`` of an Euler result."""
+    return np.array(
+        [
+            np.linalg.norm(
+                mod.f_system(
+                    *variable_dict_to_flat_array(
+                        datatree_to_value_dict(euler.isel(step=step)), mod.variables, mod.parameters
+                    )
+                )
+            )
+            for step in steps
+        ]
+    )
+
+
+@pytest.mark.parametrize("use_scan_euler", [False, True], ids=["loop", "scan"])
+def test_solve_every_puts_the_euler_path_back_on_the_equilibrium_at_each_checkpoint(use_scan_euler):
+    mod = load_model_1(functions_to_compile=("euler", "root"), use_scan_euler=use_scan_euler)
+    initial_state = calibrate_model_1(**model_1_data)
+    scenario = {"final_delta_pct": {"L_s": 3.0}, "n_iter_euler": 40, "use_optimizer": False}
+
+    plain = mod.simulate(initial_state, progressbar=False, **scenario)["euler"]
+    checked = mod.simulate(initial_state, solve_every=10, progressbar=False, **scenario)["euler"]
+    checkpoints = checked["converged"]["checkpoint"].values
+
+    assert checked["converged"].all()
+    np.testing.assert_array_equal(checkpoints, [10, 20, 30, 40])
+    assert checked["variables"].sizes["step"] == plain["variables"].sizes["step"] == 41
+    np.testing.assert_allclose(
+        equilibrium_residual_norms(mod, checked, checkpoints), 0.0, atol=1e-8
+    )
+    assert equilibrium_residual_norms(mod, plain, [40])[0] > 1e-6
+
+
+@pytest.mark.parametrize(
+    "first_run, select_start",
+    [
+        ({}, lambda result: result),
+        ({}, lambda result: result["optimizer"]),
+        ({"use_optimizer": False, "solve_every": 25}, lambda result: result["euler"]),
+        ({"use_euler_approximation": False}, lambda result: result),
+    ],
+    ids=["result", "optimizer_group", "solved_euler_group", "optimizer_only_result"],
+)
+def test_simulate_continues_from_an_earlier_simulation(first_run, select_start):
+    mod = load_model_1(functions_to_compile=("euler", "root"))
+    initial_state = calibrate_model_1(**model_1_data)
+    labor_supply = initial_state["L_s"]
+
+    def final_variables(result):
+        return result["optimizer"]["variables"].dataset.isel(step=-1).to_array().values
+
+    first = mod.simulate(
+        initial_state,
+        final_values={"L_s": 0.5 * labor_supply},
+        n_iter_euler=50,
+        progressbar=False,
+        **first_run,
+    )
+    continued = mod.simulate(
+        select_start(first),
+        final_values={"L_s": 0.25 * labor_supply},
+        n_iter_euler=50,
+        progressbar=False,
+    )
+    direct = mod.simulate(
+        initial_state,
+        final_values={"L_s": 0.25 * labor_supply},
+        n_iter_euler=100,
+        progressbar=False,
+    )
+
+    np.testing.assert_allclose(
+        continued["euler"]["parameters"].dataset["L_s"].isel(step=0), 0.5 * labor_supply
+    )
+    np.testing.assert_allclose(
+        final_variables(continued), final_variables(direct), rtol=1e-8, atol=1e-8
+    )
+
+
+@pytest.mark.parametrize(
+    "select_start",
+    [lambda result: result, lambda result: result["euler"]],
+    ids=["result", "euler_group"],
+)
+def test_simulate_rejects_an_earlier_simulation_that_ended_off_the_equilibrium(select_start):
+    mod = load_model_1(functions_to_compile=("euler", "root"))
+    initial_state = calibrate_model_1(**model_1_data)
+
+    unsolved = mod.simulate(
+        initial_state,
+        final_delta_pct={"L_s": 3.0},
+        n_iter_euler=5,
+        use_optimizer=False,
+        progressbar=False,
+    )
+
+    with pytest.raises(ValueError, match="not an equilibrium"):
+        mod.simulate(select_start(unsolved), final_delta_pct={"L_s": 0.5}, progressbar=False)
+
+
+def test_solve_every_with_minimize_solves_each_checkpoint():
+    mod = load_model_1(functions_to_compile=("euler", "minimize"))
+    initial_state = calibrate_model_1(**model_1_data)
+
+    euler = mod.simulate(
+        initial_state,
+        final_delta_pct={"L_s": 3.0},
+        n_iter_euler=40,
+        solve_every=10,
+        use_optimizer=False,
+        optimizer_mode="minimize",
+        tol=1e-14,
+        progressbar=False,
+    )["euler"]
+    checkpoints = euler["converged"]["checkpoint"].values
+
+    assert euler["converged"].all()
+    np.testing.assert_allclose(equilibrium_residual_norms(mod, euler, checkpoints), 0.0, atol=1e-6)
+
+
+def test_solve_every_leaves_the_last_step_to_the_optimizer_when_it_runs():
+    mod = load_model_1(functions_to_compile=("euler", "root"))
+    initial_state = calibrate_model_1(**model_1_data)
+    scenario = {"final_delta_pct": {"L_s": 3.0}, "n_iter_euler": 40, "progressbar": False}
+
+    plain = mod.simulate(initial_state, **scenario)
+    checked = mod.simulate(initial_state, solve_every=40, **scenario)
+
+    assert checked["euler"]["converged"].size == 0
+    xr.testing.assert_allclose(
+        checked["euler"]["variables"].to_dataset(inherit=False),
+        plain["euler"]["variables"].to_dataset(inherit=False),
+        rtol=1e-12,
+    )
+    assert checked["optim_res"].success
+
+
+def test_solve_every_stores_the_parameters_each_checkpoint_was_solved_at():
+    mod = load_model_1(functions_to_compile=("euler", "root"))
+    initial_state = calibrate_model_1(**model_1_data)
+    labor_supply = initial_state["L_s"]
+
+    euler = mod.simulate(
+        initial_state,
+        final_values={"L_s": 1.1 * labor_supply},
+        n_iter_euler=30,
+        solve_every=7,
+        use_optimizer=False,
+        progressbar=False,
+    )["euler"]
+    checkpoints = euler["converged"]["checkpoint"].values
+
+    # Summing seven Euler steps of this size misses these values in the last digits.
+    np.testing.assert_array_equal(checkpoints, [7, 14, 21, 28, 30])
+    np.testing.assert_array_equal(
+        euler["parameters"].dataset["L_s"].isel(step=checkpoints),
+        labor_supply + (1.1 * labor_supply - labor_supply) * checkpoints / 30,
+    )
+
+
+def test_solve_every_continues_from_the_euler_point_after_a_failed_checkpoint():
+    mod = load_model_1(functions_to_compile=("euler", "root"))
+    initial_state = calibrate_model_1(**model_1_data)
+    scenario = {"final_delta_pct": {"L_s": 1.5}, "n_iter_euler": 30, "use_optimizer": False}
+
+    plain = mod.simulate(initial_state, progressbar=False, **scenario)["euler"]
+    with pytest.warns(UserWarning, match="did not converge at Euler steps 10, 20, 30"):
+        failed = mod.simulate(
+            initial_state, solve_every=10, equilibrium_tol=0.0, progressbar=False, **scenario
+        )["euler"]
+
+    np.testing.assert_array_equal(failed["converged"], [False, False, False])
+    xr.testing.assert_allclose(
+        failed["variables"].to_dataset(inherit=False),
+        plain["variables"].to_dataset(inherit=False),
+        rtol=1e-10,
+    )
+
+
+def test_solve_every_accepts_a_numpy_integer():
+    mod = load_model_1(functions_to_compile=("euler", "root"))
+    initial_state = calibrate_model_1(**model_1_data)
+
+    euler = mod.simulate(
+        initial_state,
+        final_delta_pct={"L_s": 1.5},
+        n_iter_euler=20,
+        solve_every=np.int64(10),
+        use_optimizer=False,
+        progressbar=False,
+    )["euler"]
+
+    np.testing.assert_array_equal(euler["converged"]["checkpoint"], [10, 20])
+
+
+def test_solve_every_with_root_warns_about_use_hess_only_for_the_final_solve(caplog):
+    mod = load_model_1(functions_to_compile=("euler", "root"))
+    initial_state = calibrate_model_1(**model_1_data)
+
+    with caplog.at_level(logging.WARNING, logger="cge_modeling"):
+        mod.simulate(
+            initial_state,
+            final_delta_pct={"L_s": 1.5},
+            n_iter_euler=40,
+            solve_every=10,
+            use_hess=True,
+            progressbar=False,
+        )
+
+    assert caplog.text.count('The "use_hess" argument is not used') == 1
+
+
+def test_saved_simulation_names_record_checkpoints_and_the_optimizer_that_solves_them(tmp_path):
+    mod = load_model_1(functions_to_compile=("euler", "root"))
+    initial_state = calibrate_model_1(**model_1_data)
+    scenario = {
+        "final_delta_pct": {"L_s": 1.5},
+        "n_iter_euler": 20,
+        "progressbar": False,
+        "save_results": True,
+        "output_path": str(tmp_path),
+    }
+
+    mod.simulate(initial_state, **scenario)
+    mod.simulate(initial_state, solve_every=10, use_optimizer=False, **scenario)
+    names = sorted(path.name for path in tmp_path.iterdir())
+
+    assert len(names) == 2
+    assert any("_Euler[steps=20]_root[" in name for name in names)
+    assert any("_Euler[steps=20,solve_every=10]_root[" in name for name in names)
+
+
+def test_euler_approximation_rejects_an_unknown_keyword_argument():
+    mod = load_model_1(functions_to_compile=("euler",))
+    initial_state = calibrate_model_1(**model_1_data)
+    _, theta_final = variable_dict_to_flat_array(initial_state, mod.variables, mod.parameters)
+
+    with pytest.raises(TypeError, match="not_an_option"):
+        mod._solve_with_euler_approximation(
+            initial_state, theta_final, n_steps=10, progressbar=False, not_an_option=1
+        )
+
+
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        ({"solve_every": 0}, "solve_every must be a positive number of steps"),
+        ({"solve_every": 2.5}, "solve_every must be a positive number of steps"),
+        ({"solve_every": True}, "solve_every must be a positive number of steps"),
+        ({"optimizer_mode": "Root"}, "Unknown optimizer mode Root"),
+    ],
+    ids=["zero_steps", "fractional_steps", "boolean_steps", "unknown_mode"],
+)
+def test_simulate_rejects_invalid_checkpoint_options_before_compiling(options, message):
+    mod = build_model_1()
+    initial_state = calibrate_model_1(**model_1_data)
+
+    with pytest.raises(ValueError, match=message):
+        mod.simulate(
+            initial_state,
+            final_delta_pct={"L_s": 1.5},
+            use_optimizer=False,
+            **{"solve_every": 10, **options},
+        )
+
+    assert not mod._compiled
 
 
 def test_generate_SAM():

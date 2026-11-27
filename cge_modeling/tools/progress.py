@@ -11,8 +11,10 @@ from rich.jupyter import JupyterRenderable, _render_segments
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
+    Progress,
     ProgressColumn,
     Task,
+    TaskID,
     TextColumn,
     TimeElapsedColumn,
 )
@@ -66,18 +68,38 @@ class SimulationProgress(ToggleableProgress):
     """
     One progress table shared by every stage of a simulation, one row per stage.
 
+    A row is identified by its description. A stage that runs more than once, such as the solve at each checkpoint of
+    an Euler path, resets its row instead of adding another, so the table keeps one row per stage however many times
+    each one runs.
+
     In a terminal, rich's live display draws the table. In a notebook, the table is drawn to one display handle that
     updates in place, and its final frame stays in the cell output as static content.
     """
 
     def __init__(self, *columns, **kwargs) -> None:
         super().__init__(*columns, **kwargs)
+        self._stage_rows: dict[str, TaskID] = {}
         self._render_thread: threading.Thread | None = None
         self._stop_rendering = threading.Event()
         self._display_handle = None
         self._in_notebook = self.is_enabled and self.console.is_jupyter
         if self._in_notebook:
             self.disable = True
+
+    def add_task(
+        self, description: str, *args, total: float | None = None, **fields
+    ) -> TaskID | None:
+        if not self.is_enabled:
+            return None
+
+        if description in self._stage_rows:
+            task_id = self._stage_rows[description]
+            self.reset(task_id, total=total, **fields)
+            return task_id
+
+        task_id = Progress.add_task(self, description, *args, total=total, **fields)
+        self._stage_rows[description] = task_id
+        return task_id
 
     def make_tasks_table(self, tasks: Iterable[Task]) -> Table:
         tasks = list(tasks)

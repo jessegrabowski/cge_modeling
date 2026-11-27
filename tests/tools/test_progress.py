@@ -34,6 +34,20 @@ def test_simulation_progress_leaves_a_statistic_blank_for_a_stage_that_does_not_
     assert re.findall(r"\d+\.\d{8}", row) == ["0.12500000"]
 
 
+def test_simulation_progress_resets_the_row_of_a_stage_that_runs_again():
+    progress = simulation_progress(ROOT_STATISTICS)
+    first = progress.add_task("Finding Roots", total=10, f_value=0.5)
+    progress.update(first, completed=10)
+    second = progress.add_task("Finding Roots", total=4, f_value=0.25)
+
+    _, _, row = [line for line in render_table(progress).splitlines() if line.strip()]
+
+    assert second == first
+    assert len(progress.tasks) == 1
+    assert row.rstrip().endswith(" 0/4")
+    assert re.findall(r"\d+\.\d{8}", row) == ["0.25000000"]
+
+
 def test_disabled_simulation_progress_adds_no_tasks():
     progress = simulation_progress(ROOT_STATISTICS, enabled=False)
 
