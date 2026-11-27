@@ -23,36 +23,50 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Each job's cost is dominated by compiling its models from an empty compile cache, which happens whenever a
+          # job's cache key changes. The subsets split the files whose cold compiles are expensive across jobs.
           - subset-name: "Model Tests"
             os: ubuntu-latest
             environment: default
-            test-subset: "tests/base/test_cge.py --deselect tests/base/test_cge.py::test_model_gradients --deselect tests/base/test_cge.py::test_jax_mode_agrees_with_default_mode"
+            test-subset: "tests/base/test_cge.py"
             test-marker: ""
 
-          - subset-name: "Model Gradients"
+          - subset-name: "Model API Tests"
             os: ubuntu-latest
             environment: default
-            test-subset: "tests/base/test_cge.py::test_model_gradients"
+            test-subset: "tests/test_model.py"
             test-marker: ""
 
-          - subset-name: "JAX Mode"
+          - subset-name: "Compile Tests"
             os: ubuntu-latest
             environment: default
-            test-subset: "tests/base/test_cge.py::test_jax_mode_agrees_with_default_mode"
+            test-subset: "tests/compile"
             test-marker: ""
 
           - subset-name: "Other Tests"
             os: ubuntu-latest
             environment: default
-            test-subset: "tests/ --ignore=tests/base/test_cge.py"
+            test-subset: "tests/ --ignore=tests/base/test_cge.py --ignore=tests/test_model.py --ignore=tests/compile"
             test-marker: ""
 
           # Windows is a smoke test of the OS-sensitive machinery (pytensor's compile toolchain), not a
           # correctness sweep. The slow model tests in tests/base/test_cge.py run on Ubuntu only.
-          - subset-name: "Windows Partial Test Suite"
+          - subset-name: "Windows Model API Tests"
             os: windows-latest
             environment: py313
-            test-subset: "tests/ --ignore=tests/base/test_cge.py"
+            test-subset: "tests/test_model.py"
+            test-marker: ""
+
+          - subset-name: "Windows Compile Tests"
+            os: windows-latest
+            environment: py313
+            test-subset: "tests/compile"
+            test-marker: ""
+
+          - subset-name: "Windows Other Tests"
+            os: windows-latest
+            environment: py313
+            test-subset: "tests/ --ignore=tests/base/test_cge.py --ignore=tests/test_model.py --ignore=tests/compile"
             test-marker: ""
 
     name: ${{ matrix.subset-name }} (${{ matrix.os }}, ${{ matrix.environment }})
@@ -82,11 +96,13 @@ jobs:
 
     - name: Create matrix id
       id: matrix-id
+      # The id names the job's compile cache, so it hashes only what decides which models the job compiles. Editing a
+      # job's test list keeps its cache, and renaming the job starts a new one.
       env:
-        MATRIX_CONTEXT: ${{ toJson(matrix) }}
+        CACHE_CONTEXT: ${{ matrix.subset-name }}-${{ matrix.os }}-${{ matrix.environment }}
       run: |
-        echo $MATRIX_CONTEXT
-        export MATRIX_ID=`echo $MATRIX_CONTEXT | sha256sum | cut -c 1-32`
+        echo $CACHE_CONTEXT
+        export MATRIX_ID=`echo $CACHE_CONTEXT | sha256sum | cut -c 1-32`
         echo $MATRIX_ID
         echo "id=$MATRIX_ID" >> $GITHUB_OUTPUT
 
