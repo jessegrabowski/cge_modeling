@@ -1,5 +1,5 @@
-CGE
----
+Model
+=====
 
 .. currentmodule:: cge_modeling.base.cge
 
@@ -8,8 +8,7 @@ CGE
 
     CGEModel
 
-
-Model Components
+Model components
 ----------------
 
 .. currentmodule:: cge_modeling.model

@@ -43,6 +43,28 @@ class LevenbergMarquardt:
         Maximum consecutive rejected steps before reporting failure. Defaults to 50.
     linear_solver : callable, optional
         Sparse linear solver called as ``linear_solver(A, b)``. Defaults to :func:`scipy.sparse.linalg.spsolve`.
+
+    Examples
+    --------
+    Damp the Newton step, which keeps the solve going where the Jacobian is close to singular:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import LevenbergMarquardt, sparse_root
+
+
+        def fun(x):
+            res = np.array([x[0] + x[1] - 3.0, x[0] * x[1] - 2.0])
+            jac = sp.csc_matrix([[1.0, 1.0], [x[1], x[0]]])
+            return res, jac
+
+
+        solver = LevenbergMarquardt(lam0=1e-2)
+        result = sparse_root(fun, np.array([1.0, 1.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
 
     lam0: float = 1e-3

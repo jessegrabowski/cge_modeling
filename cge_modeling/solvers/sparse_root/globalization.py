@@ -96,6 +96,32 @@ class ArmijoBacktracking:
         Residual-only function ``merit_fun(x, *args)`` used to evaluate trial points. When given, ``fun`` is called
         once at the accepted point to obtain the Jacobian, which saves work when the Jacobian costs far more than the
         residuals. Defaults to ``None``, meaning ``fun`` evaluates every trial point.
+
+    Examples
+    --------
+    Demand a larger decrease at each step and back off more slowly, inside a ``LineSearchSolver``:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import (
+            ArmijoBacktracking,
+            LineSearchSolver,
+            NewtonDirection,
+            sparse_root,
+        )
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        globalization = ArmijoBacktracking(c1=1e-3, beta=0.8)
+        solver = LineSearchSolver(direction=NewtonDirection(), globalization=globalization)
+        result = sparse_root(fun, np.array([2.0, 3.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
 
     c1: float = DEFAULT_ARMIJO_C1
@@ -166,6 +192,32 @@ class NonmonotoneBacktracking:
     merit_fun : callable, optional
         Residual-only function ``merit_fun(x, *args)`` used to evaluate trial points. See
         :class:`~cge_modeling.solvers.sparse_root.globalization.ArmijoBacktracking`. Defaults to ``None``.
+
+    Examples
+    --------
+    Compare each trial point against the worst of the last five merit values, inside a ``LineSearchSolver``:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import (
+            LineSearchSolver,
+            NewtonDirection,
+            NonmonotoneBacktracking,
+            sparse_root,
+        )
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        solver = LineSearchSolver(direction=NewtonDirection(),
+                                  globalization=NonmonotoneBacktracking(memory=5))
+        result = sparse_root(fun, np.array([2.0, 3.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
 
     c1: float = DEFAULT_ARMIJO_C1

@@ -70,37 +70,73 @@ def plot_lines(
     **figure_kwargs,
 ) -> plt.Figure:
     """
-    Trace the evolution of the variables in the model over the course of the optimizer's iterations.
+    Plot each variable along the Euler path, with stars at the optimizer's initial and final values.
 
     Parameters
     ----------
-    idata: dict of xr.DataTree
-        The value returned by the model's simulate method, a dictionary of DataTrees with keys "euler" and "optimizer".
-    mod: CGEModel
-        The model object.
-    n_cols: int, default 5
-        The number of columns in the grid of plots.
-    var_names: list of str, optional
-        Name of the variables to plot. If None, all variables will be plotted.
-    plot_euler: bool, default True
-        Whether to trace the shape of the function in the shock direction using steps from the Euler approximation.
-    plot_optimizer: bool, default True
-        Whether to plot the final values of each variable found by the optimizer.
-    legends: bool or list, optional
-        Whether to add a legend to the plot. If a list is passed, legends will be added to the variable names in the list.
-        By default, no legends is added.
-    rename_dict : dict[str, str], optional
-        A dictionary mapping the variable names to more descriptive (or human readable) names for the plot.
-    cmap: str, optional
-        Matplotlib colormap, used to color the lines in plots with multiple variables. If None, the default colormap
-        will be used.
-    figure_kwargs: dict
-        Keyword arguments passed to plt.figure. figsize defaults to (15, 9) and dpi to 144.
+    idata : dict of str to xr.DataTree
+        The result of :meth:`~cge_modeling.base.cge.CGEModel.simulate`, with an ``"euler"`` group, an
+        ``"optimizer"`` group, or both.
+    mod : CGEModel
+        The model that produced ``idata``.
+    n_cols : int, optional
+        Number of columns in the grid of panels, capped at the number of variables. Default is 5.
+    var_names : list of str, optional
+        Variables to plot, one panel each. Default is None, which plots every variable of ``mod``.
+    plot_euler : bool, optional
+        Draw the Euler path of each variable. Default is True.
+    plot_optimizer : bool, optional
+        Mark the optimizer's initial value with a green star and its final value with a red star. Default is True.
+    rename_dict : dict of str to str, optional
+        Panel titles, keyed by variable name. Default is None, which titles each panel with its variable name.
+    legends : bool or list of str, optional
+        True adds a legend to every panel, and a list adds one to the panels of the variables it names. Default is
+        None, which adds no legend.
+    cmap : str, optional
+        Name of a matplotlib colormap or color sequence, which colors the lines of an indexed variable. Default is
+        None, which uses ``"tab10"``.
+    **figure_kwargs
+        Passed to ``plt.figure``. Default ``figsize`` is ``(15, 9)`` and default ``dpi`` is 144.
 
     Returns
     -------
-    fig: plt.Figure
-        The figure object containing the plot.
+    fig : matplotlib.figure.Figure
+        The figure, with one panel per variable.
+
+    Examples
+    --------
+    Raise labor supply by 10 percent and trace output and both prices along the way to the new equilibrium:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        with cm.CGEModel() as model:
+            Y = cm.Variable("Y", description="Output")
+            K_d = cm.Variable("K_d", description="Capital demand")
+            L_d = cm.Variable("L_d", description="Labor demand")
+            r = cm.Variable("r", description="Rental rate of capital")
+            P = cm.Variable("P", description="Price of output")
+            w = cm.Parameter("w", description="Wage, the numeraire")
+            alpha = cm.Parameter("alpha", description="Capital share")
+            A = cm.Parameter("A", description="Total factor productivity")
+            K_s = cm.Parameter("K_s", description="Capital supply")
+            L_s = cm.Parameter("L_s", description="Labor supply")
+
+            cm.Equation("Production", Y, A * K_d**alpha * L_d ** (1 - alpha))
+            cm.Equation("Capital demand", r * K_d, alpha * P * Y)
+            cm.Equation("Labor demand", w * L_d, (1 - alpha) * P * Y)
+            cm.Equation("Capital market clearing", K_d, K_s)
+            cm.Equation("Labor market clearing", L_d, L_s)
+
+        calibration = model.calibrate({"K_s": 3000.0, "L_s": 7000.0, "w": 1.0, "r": 1.0, "P": 1.0})
+        result = model.simulate(initial_state=calibration,
+                                final_delta_pct={"L_s": 1.1},
+                                n_iter_euler=100,
+                                progressbar=False,
+                                verbose=False)
+
+        fig = cm.plot_lines(result, model, var_names=["Y", "r", "P"], n_cols=3)
     """
     if var_names is None:
         var_names = mod.variable_names
@@ -207,32 +243,82 @@ def plot_areas(
     **plot_kwargs,
 ) -> plt.Figure:
     """
-    Make an area plot of the initial and final values of the variables in the model.
+    Draw treemaps of indexed variables before and after a shock, side by side, with one tile per label.
+
+    Tiles whose initial or final value is zero are dropped. Drawing the tiles requires the ``squarify`` package.
 
     Parameters
     ----------
-    idata: dict of xr.DataTree
-        The value returned by the model's simulate method, a dictionary of DataTrees with keys "euler" and "optimizer".
-    initial_values: dict[str, np.ndarray]
-        The initial values of the variables in the model; those passed to the simulate method.
-    mod: CGEModel
-        The model object.
-    var_names: str or list of str
-        Name of the variables to plot. All variables must have dimensions, and all dimensions must be the same.
-    shock_name: str, optional
-        The name of the variable that was shocked, used in the title of the plot. If None, the title will just be
-        "Pre-Shock" and "Post-Shock".
-    rename_dict: dict[str, str], optional
-        A dictionary mapping the variable names to more descriptive (or human readable) names for the plot.
-    cmap: str or matplotlib.colors.Colormap, optional
-        The colormap to use for the plot. If None, the default colormap will be used.
-
+    idata : dict of str to xr.DataTree
+        The result of :meth:`~cge_modeling.base.cge.CGEModel.simulate`. The final values come from its
+        ``"optimizer"`` group if it has one, and from its ``"euler"`` group otherwise.
+    initial_values : dict of str to ndarray
+        Values before the shock, keyed by variable name, such as the ``initial_state`` passed to ``simulate``.
+    mod : CGEModel
+        The model that produced ``idata``.
+    var_names : list of str
+        Variables to draw together. Every one must be indexed, and all must have the same dims.
+    shock_name : str, optional
+        Name of the shock in the panel titles, "Pre-" and "Post-" followed by it. Default is None, which uses
+        ``"Shock"``.
+    rename_dict : dict of str to str, optional
+        Tile labels, keyed by coordinate label. Default is None, which labels each tile with its coordinate label.
+    cmap : str or matplotlib.colors.Colormap, optional
+        Colormap of the tiles. Default is None, which uses ``"tab10"``.
     **plot_kwargs
+        Passed to ``squarify.plot``.
 
     Returns
     -------
-    matplotlib.figure.Figure
-        The figure object containing the plot.
+    fig : matplotlib.figure.Figure
+        The figure, with the pre-shock treemap on the left and the post-shock treemap on the right.
+
+    Examples
+    --------
+    Raise the capital stock of a two-sector economy by 20 percent and compare the sectors' output before and after:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+            Y = cm.Variable("Y", dims="sector", description="Output")
+            C = cm.Variable("C", dims="sector", description="Household consumption")
+            K_d = cm.Variable("K_d", dims="sector", description="Capital demand")
+            L_d = cm.Variable("L_d", dims="sector", description="Labor demand")
+            P = cm.Variable("P", dims="sector", description="Price of output")
+            r = cm.Variable("r", description="Rental rate of capital")
+            income = cm.Variable("income", description="Household income")
+            resid = cm.Variable("resid", description="Walras residual")
+            w = cm.Parameter("w", description="Wage, the numeraire")
+            alpha = cm.Parameter("alpha", dims="sector", description="Capital share")
+            A = cm.Parameter("A", dims="sector", description="Total factor productivity")
+            beta = cm.Parameter("beta", dims="sector", description="Consumption share")
+            K_s = cm.Parameter("K_s", description="Capital supply")
+            L_s = cm.Parameter("L_s", description="Labor supply")
+
+            cm.Equation("Production", Y, A * K_d**alpha * L_d ** (1 - alpha))
+            cm.Equation("Capital demand", r * K_d, alpha * P * Y)
+            cm.Equation("Labor demand", w * L_d, (1 - alpha) * P * Y)
+            cm.Equation("Household income", income, w * L_s + r * K_s)
+            cm.Equation("Consumption", P * C, beta * income)
+            cm.Equation("Goods market clearing", Y, C)
+            cm.Equation("Capital market clearing", K_s, K_d.sum("sector"))
+            cm.Equation("Labor market clearing", L_s, L_d.sum("sector") + resid)
+
+        calibration = model.calibrate({"K_d": [1000.0, 2000.0],
+                                       "L_d": [3000.0, 4000.0],
+                                       "L_s": 7000.0,
+                                       "w": 1.0,
+                                       "r": 1.0,
+                                       "P": [1.0, 1.0]})
+        result = model.simulate(initial_state=calibration,
+                                final_delta_pct={"K_s": 1.2},
+                                n_iter_euler=100,
+                                progressbar=False,
+                                verbose=False)
+
+        fig = cm.plot_areas(result, calibration["variables"], model, var_names=["Y"], shock_name="Capital")
     """
     try:
         import squarify
@@ -401,6 +487,150 @@ def plot_bar(
     legend=True,
     **figure_kwargs,
 ):
+    """
+    Plot bar charts of how variables change between the start and the end of a simulation.
+
+    The final values come from the last step of the ``"optimizer"`` group of ``idata`` if it has one, and from the
+    last step of the ``"euler"`` group otherwise.
+
+    Parameters
+    ----------
+    idata : dict of str to xr.DataTree
+        The result of :meth:`~cge_modeling.base.cge.CGEModel.simulate`.
+    mod : CGEModel
+        The model that produced ``idata``.
+    var_names : list of str, optional
+        Variables to plot. Default is None, which plots every variable of ``mod``.
+    initial_values : xr.Dataset, optional
+        Values at the start, as a dataset of ``var_names``. Default is None, which takes them from the first step of
+        the same group as the final values.
+    plot_together : bool, optional
+        Draw every variable in one panel, which requires them to have the same dims after ``coords`` selects from
+        them. Default is False, which draws one panel per variable.
+    group_dict : dict of str to dict, optional
+        Groupings to sum bars into, keyed by dim name, each mapping a coordinate label to its group. Default is None,
+        which draws one bar per label.
+    orientation : {"v", "h"}, optional
+        Vertical or horizontal bars. Default is ``"v"``.
+    n_cols : int, optional
+        Number of columns in the grid of panels, capped at the number of variables. Default is 3.
+    coords : dict of str to str or list of str, optional
+        Labels to select, keyed by dim name. A dim given a single label is dropped from the bars. Default is None,
+        which keeps every label.
+    metric : {"pct_change", "change", "abs_change", "final", "initial", "both"}, optional
+        What each bar shows: the fractional change, the change, its absolute value, the final value, the initial
+        value, or the final and initial values side by side. Default is ``"pct_change"``.
+    threshold : float, optional
+        Initial values at or below this get a fractional change of zero, for ``metric="pct_change"``. Default is
+        1e-6.
+    labelsize : int, optional
+        Font size of the tick labels. Default is 12.
+    xlabel_rotation : float, optional
+        Rotation of the x tick labels, in degrees. Default is 0.
+    legend : bool, optional
+        Add a legend to each panel. Default is True.
+    **figure_kwargs
+        Passed to ``plt.figure``, or to ``plt.subplots`` when ``plot_together`` is True. ``dpi`` and ``figsize``
+        default to 144 and ``(15, 9)``.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure.
+
+    Examples
+    --------
+    Raise the capital stock of a two-sector economy by 20 percent and compare the change in each sector's output
+    and price:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+            Y = cm.Variable("Y", dims="sector", description="Output")
+            C = cm.Variable("C", dims="sector", description="Household consumption")
+            K_d = cm.Variable("K_d", dims="sector", description="Capital demand")
+            L_d = cm.Variable("L_d", dims="sector", description="Labor demand")
+            P = cm.Variable("P", dims="sector", description="Price of output")
+            r = cm.Variable("r", description="Rental rate of capital")
+            income = cm.Variable("income", description="Household income")
+            resid = cm.Variable("resid", description="Walras residual")
+            w = cm.Parameter("w", description="Wage, the numeraire")
+            alpha = cm.Parameter("alpha", dims="sector", description="Capital share")
+            A = cm.Parameter("A", dims="sector", description="Total factor productivity")
+            beta = cm.Parameter("beta", dims="sector", description="Consumption share")
+            K_s = cm.Parameter("K_s", description="Capital supply")
+            L_s = cm.Parameter("L_s", description="Labor supply")
+
+            cm.Equation("Production", Y, A * K_d**alpha * L_d ** (1 - alpha))
+            cm.Equation("Capital demand", r * K_d, alpha * P * Y)
+            cm.Equation("Labor demand", w * L_d, (1 - alpha) * P * Y)
+            cm.Equation("Household income", income, w * L_s + r * K_s)
+            cm.Equation("Consumption", P * C, beta * income)
+            cm.Equation("Goods market clearing", Y, C)
+            cm.Equation("Capital market clearing", K_s, K_d.sum("sector"))
+            cm.Equation("Labor market clearing", L_s, L_d.sum("sector") + resid)
+
+        calibration = model.calibrate({"K_d": [1000.0, 2000.0],
+                                       "L_d": [3000.0, 4000.0],
+                                       "L_s": 7000.0,
+                                       "w": 1.0,
+                                       "r": 1.0,
+                                       "P": [1.0, 1.0]})
+        result = model.simulate(initial_state=calibration,
+                                final_delta_pct={"K_s": 1.2},
+                                n_iter_euler=100,
+                                progressbar=False,
+                                verbose=False)
+
+        fig = cm.plot_bar(result, model, var_names=["Y", "P"])
+
+    Put scalar variables in one panel with ``plot_together``, one bar per variable:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+            Y = cm.Variable("Y", dims="sector", description="Output")
+            C = cm.Variable("C", dims="sector", description="Household consumption")
+            K_d = cm.Variable("K_d", dims="sector", description="Capital demand")
+            L_d = cm.Variable("L_d", dims="sector", description="Labor demand")
+            P = cm.Variable("P", dims="sector", description="Price of output")
+            r = cm.Variable("r", description="Rental rate of capital")
+            income = cm.Variable("income", description="Household income")
+            resid = cm.Variable("resid", description="Walras residual")
+            w = cm.Parameter("w", description="Wage, the numeraire")
+            alpha = cm.Parameter("alpha", dims="sector", description="Capital share")
+            A = cm.Parameter("A", dims="sector", description="Total factor productivity")
+            beta = cm.Parameter("beta", dims="sector", description="Consumption share")
+            K_s = cm.Parameter("K_s", description="Capital supply")
+            L_s = cm.Parameter("L_s", description="Labor supply")
+
+            cm.Equation("Production", Y, A * K_d**alpha * L_d ** (1 - alpha))
+            cm.Equation("Capital demand", r * K_d, alpha * P * Y)
+            cm.Equation("Labor demand", w * L_d, (1 - alpha) * P * Y)
+            cm.Equation("Household income", income, w * L_s + r * K_s)
+            cm.Equation("Consumption", P * C, beta * income)
+            cm.Equation("Goods market clearing", Y, C)
+            cm.Equation("Capital market clearing", K_s, K_d.sum("sector"))
+            cm.Equation("Labor market clearing", L_s, L_d.sum("sector") + resid)
+
+        calibration = model.calibrate({"K_d": [1000.0, 2000.0],
+                                       "L_d": [3000.0, 4000.0],
+                                       "L_s": 7000.0,
+                                       "w": 1.0,
+                                       "r": 1.0,
+                                       "P": [1.0, 1.0]})
+        result = model.simulate(initial_state=calibration,
+                                final_delta_pct={"K_s": 1.2},
+                                n_iter_euler=100,
+                                progressbar=False,
+                                verbose=False)
+
+        fig = cm.plot_bar(result, model, var_names=["r", "income"], plot_together=True)
+    """
     if var_names is None:
         var_names = mod.variable_names
     coords = coords if coords is not None else {}

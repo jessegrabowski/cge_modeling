@@ -125,7 +125,7 @@ def CobbDouglas(
     model: "CGEModel | None" = None,
 ) -> tuple[XTensorEquation, ...]:
     r"""
-    Register a Cobb-Douglas production block on ``model``, or on the active :class:`CGEModel`.
+    Register a Cobb-Douglas production block on ``model``, or on the active :class:`~cge_modeling.base.cge.CGEModel`.
 
     The block is the technology and one cost-minimizing demand per factor:
 
@@ -147,12 +147,43 @@ def CobbDouglas(
     tfp : XTensorVariable or float
         Total factor productivity :math:`A`.
     model : CGEModel, optional
-        Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
+        Model to register the equations on. Default is None, which uses the model of the enclosing ``with`` block.
 
     Returns
     -------
     equations : tuple of XTensorEquation
         The production equation, then one demand equation per factor, in factor order.
+
+    Examples
+    --------
+    Register a two-factor Cobb-Douglas technology, which adds the production equation and one demand per factor:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        from cge_modeling.production_functions import CobbDouglas
+
+        with cm.CGEModel() as model:
+            Y = cm.Variable("Y", description="Output")
+            P = cm.Variable("P", description="Output price")
+            K = cm.Variable("K", description="Capital demand")
+            L = cm.Variable("L", description="Labor demand")
+            r = cm.Parameter("r", description="Rental rate of capital")
+            w = cm.Parameter("w", description="Wage")
+            alpha = cm.Parameter("alpha", description="Capital share")
+            A = cm.Parameter("A", description="Total factor productivity")
+
+            CobbDouglas("Production",
+                        output=Y,
+                        output_price=P,
+                        factors=[K, L],
+                        factor_prices=[r, w],
+                        factor_shares=[alpha],
+                        tfp=A)
+
+        print(model.equation_names)
+        # ['Production', 'Production: demand for K', 'Production: demand for L']
     """
     model = modelcontext(model)
     _check_factors_named(factors)
@@ -187,7 +218,7 @@ def CES(
     model: "CGEModel | None" = None,
 ) -> tuple[XTensorEquation, ...]:
     r"""
-    Register a CES production block on ``model``, or on the active :class:`CGEModel`.
+    Register a CES production block on ``model``, or on the active :class:`~cge_modeling.base.cge.CGEModel`.
 
     The block is the zero-profit condition and one cost-minimizing demand per factor:
 
@@ -215,12 +246,46 @@ def CES(
     epsilon : XTensorVariable or float
         Elasticity of substitution :math:`\epsilon`.
     model : CGEModel, optional
-        Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
+        Model to register the equations on. Default is None, which uses the model of the enclosing ``with`` block.
 
     Returns
     -------
     equations : tuple of XTensorEquation
         The zero-profit equation, then one demand equation per factor, in factor order.
+
+    Examples
+    --------
+    Register value added in every sector as a CES aggregate of capital and labor. A ``<dim:sector>`` tag in the
+    name gives each sector's equation its own label:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        from cge_modeling.production_functions import CES
+
+        with cm.CGEModel(coords={"sector": ["Agr", "Ind"]}) as model:
+            VA = cm.Variable("VA", "sector", description="Value added")
+            P_VA = cm.Variable("P_VA", "sector", description="Price of value added")
+            K = cm.Variable("K", "sector", description="Capital demand")
+            L = cm.Variable("L", "sector", description="Labor demand")
+            r = cm.Parameter("r", description="Rental rate of capital")
+            w = cm.Parameter("w", description="Wage")
+            alpha = cm.Parameter("alpha", "sector", description="Capital share")
+            A = cm.Parameter("A", "sector", description="Total factor productivity")
+            sigma = cm.Parameter("sigma", "sector", description="Elasticity of substitution")
+
+            CES("Value added in <dim:sector>",
+                output=VA,
+                output_price=P_VA,
+                factors=[K, L],
+                factor_prices=[r, w],
+                factor_shares=[alpha],
+                tfp=A,
+                epsilon=sigma)
+
+        print(model.unpacked_equation_names[:2])
+        # ['Value added in Agr', 'Value added in Ind']
     """
     model = modelcontext(model)
     _check_factors_named(factors)
@@ -256,7 +321,7 @@ def CET(
     model: "CGEModel | None" = None,
 ) -> tuple[XTensorEquation, ...]:
     r"""
-    Register a CET transformation block on ``model``, or on the active :class:`CGEModel`.
+    Register a CET transformation block on ``model``, or on the active :class:`~cge_modeling.base.cge.CGEModel`.
 
     The aggregate output :math:`X` is transformed into products :math:`X_i`, such as exports and domestic sales. The
     block is the zero-profit condition and one revenue-maximizing supply per product:
@@ -286,12 +351,45 @@ def CET(
     omega : XTensorVariable or float
         Elasticity of transformation :math:`\Omega`, which is positive.
     model : CGEModel, optional
-        Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
+        Model to register the equations on. Default is None, which uses the model of the enclosing ``with`` block.
 
     Returns
     -------
     equations : tuple of XTensorEquation
         The zero-profit equation, then one supply equation per product, in product order.
+
+    Examples
+    --------
+    Split domestic output between exports and domestic sales with a CET frontier:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        from cge_modeling.production_functions import CET
+
+        with cm.CGEModel() as model:
+            X = cm.Variable("X", description="Domestic output")
+            P_X = cm.Variable("P_X", description="Price of domestic output")
+            E = cm.Variable("E", description="Exports")
+            D = cm.Variable("D", description="Domestic sales")
+            P_E = cm.Parameter("P_E", description="Export price")
+            P_D = cm.Variable("P_D", description="Domestic price")
+            beta = cm.Parameter("beta", description="Export share")
+            B = cm.Parameter("B", description="Scale of the frontier")
+            omega = cm.Parameter("omega", description="Elasticity of transformation")
+
+            CET("Transformation",
+                output=X,
+                output_price=P_X,
+                products=[E, D],
+                product_prices=[P_E, P_D],
+                product_shares=[beta],
+                tfp=B,
+                omega=omega)
+
+        print(model.equation_names)
+        # ['Transformation', 'Transformation: supply of E', 'Transformation: supply of D']
     """
     model = modelcontext(model)
     _check_factors_named(products)
@@ -328,7 +426,7 @@ def DixitStiglitz(
     model: "CGEModel | None" = None,
 ) -> tuple[XTensorEquation, ...]:
     r"""
-    Register a Dixit-Stiglitz aggregate on ``model``, or on the active :class:`CGEModel`.
+    Register a Dixit-Stiglitz aggregate on ``model``, or on the active :class:`~cge_modeling.base.cge.CGEModel`.
 
     The varieties are the entries of ``factor`` along ``factor_dim``. The block is the zero-profit condition and the
     demand for each variety:
@@ -358,12 +456,40 @@ def DixitStiglitz(
     tfp : XTensorVariable or float, optional
         Total factor productivity :math:`A`. Default is 1.
     model : CGEModel, optional
-        Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
+        Model to register the equations on. Default is None, which uses the model of the enclosing ``with`` block.
 
     Returns
     -------
     equations : tuple of XTensorEquation
         The zero-profit equation, then the demand equation.
+
+    Examples
+    --------
+    Aggregate three varieties of a good, indexed by ``variety``, into one composite with a common elasticity:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        from cge_modeling.production_functions import DixitStiglitz
+
+        with cm.CGEModel(coords={"variety": ["a", "b", "c"]}) as model:
+            Y = cm.Variable("Y", description="Composite good")
+            P_Y = cm.Variable("P_Y", description="Price index of the composite")
+            X = cm.Variable("X", "variety", description="Demand for each variety")
+            P_X = cm.Parameter("P_X", "variety", description="Price of each variety")
+            epsilon = cm.Parameter("epsilon", description="Elasticity of substitution")
+
+            DixitStiglitz("Composite good",
+                          output=Y,
+                          output_price=P_Y,
+                          factor=X,
+                          factor_price=P_X,
+                          factor_dim="variety",
+                          epsilon=epsilon)
+
+        print(model.equation_names)
+        # ['Composite good', 'Composite good: demand for X']
     """
     model = modelcontext(model)
     _check_factors_named([factor])
@@ -396,7 +522,7 @@ def Leontief(
     model: "CGEModel | None" = None,
 ) -> tuple[XTensorEquation, ...]:
     r"""
-    Register a Leontief production block on ``model``, or on the active :class:`CGEModel`.
+    Register a Leontief production block on ``model``, or on the active :class:`~cge_modeling.base.cge.CGEModel`.
 
     The block is the zero-profit condition and one demand per factor:
 
@@ -419,17 +545,47 @@ def Leontief(
     factor_dim : str, sequence of str or None, or None, optional
         The dim of each factor that indexes its inputs, summed over in the zero-profit condition. For an
         input-output matrix ``X(i, j)`` with output ``Y(j)``, pass ``factors=[X]`` and ``factor_dim="i"``. A
-        single str or None applies to every factor; a sequence gives one entry per factor, so goods inputs
+        single str or None applies to every factor. A sequence gives one entry per factor, so goods inputs
         ``X(i, j)`` and energy inputs ``X_E(k, j)`` enter one block as ``factors=[X, X_E]`` and
         ``factor_dim=["i", "k"]``. Every dim of a factor cost that is not summed must be a dim of the output.
         Default is None, for factors that each enter as one input.
     model : CGEModel, optional
-        Model to register the equations on. Defaults to the model of the enclosing ``with`` block.
+        Model to register the equations on. Default is None, which uses the model of the enclosing ``with`` block.
 
     Returns
     -------
     equations : tuple of XTensorEquation
         The zero-profit equation, then one demand equation per factor, in factor order.
+
+    Examples
+    --------
+    Register the intermediate input block of an input-output table, where ``X(i, j)`` is the input of good ``i``
+    used by sector ``j``. Passing ``factor_dim="i"`` sums the input costs over ``i`` in the zero-profit condition:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        from cge_modeling.production_functions import Leontief
+
+        goods = ["Agr", "Ind"]
+        with cm.CGEModel(coords={"i": goods, "j": goods}) as model:
+            Z = cm.Variable("Z", "j", description="Intermediate input bundle of each sector")
+            P_Z = cm.Variable("P_Z", "j", description="Price of the bundle")
+            X = cm.Variable("X", ["i", "j"], description="Input of good i used by sector j")
+            P = cm.Parameter("P", "i", description="Price of each good")
+            a = cm.Parameter("a", ["i", "j"], description="Input-output coefficients")
+
+            Leontief("Intermediate bundle in <dim:j>",
+                     output=Z,
+                     output_price=P_Z,
+                     factors=[X],
+                     factor_prices=[P],
+                     factor_shares=[a],
+                     factor_dim="i")
+
+        print(model.equation_names)
+        # ['Intermediate bundle in <dim:j>', 'Intermediate bundle in <dim:j>: demand for X']
     """
     model = modelcontext(model)
     _check_factors_named(factors)

@@ -37,6 +37,33 @@ class LineSearchSolver:
     globalization : GlobalizationStrategy, optional
         Line search strategy, implementing ``search(fun, x, phi, proposal, args)``. Defaults to
         :class:`~cge_modeling.solvers.sparse_root.globalization.ArmijoBacktracking`.
+
+    Examples
+    --------
+    Compose a solver from a direction and a line search strategy, here a Newton direction with a nonmonotone search
+    that remembers five merit values:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import (
+            LineSearchSolver,
+            NewtonDirection,
+            NonmonotoneBacktracking,
+            sparse_root,
+        )
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        solver = LineSearchSolver(direction=NewtonDirection(),
+                                  globalization=NonmonotoneBacktracking(memory=5))
+        result = sparse_root(fun, np.array([2.0, 3.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
 
     direction: DirectionStrategy = field(default_factory=NewtonDirection)
@@ -127,6 +154,26 @@ def newton_armijo(
     -------
     solver : LineSearchSolver
         Solver composing the two strategies.
+
+    Examples
+    --------
+    Pass the Newton solver to ``sparse_root`` with a gentler backtracking factor than the default:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import ArmijoBacktracking, newton_armijo, sparse_root
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        solver = newton_armijo(globalization=ArmijoBacktracking(beta=0.8))
+        result = sparse_root(fun, np.array([2.0, 3.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
     return LineSearchSolver(
         direction=direction if direction is not None else NewtonDirection(),
@@ -153,6 +200,27 @@ def chord(
     -------
     solver : LineSearchSolver
         Solver composing the two strategies.
+
+    Examples
+    --------
+    Reuse one Jacobian factorization for several steps, which pays off when factorizing costs far more than evaluating
+    the residuals:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import chord, sparse_root
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        solver = chord()
+        result = sparse_root(fun, np.array([2.0, 3.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
     return LineSearchSolver(
         direction=direction if direction is not None else ChordDirection(),
@@ -179,6 +247,26 @@ def inexact_newton_krylov(
     -------
     solver : LineSearchSolver
         Solver composing the two strategies.
+
+    Examples
+    --------
+    Solve each Newton system with GMRES instead of a direct factorization:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import inexact_newton_krylov, sparse_root
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        solver = inexact_newton_krylov()
+        result = sparse_root(fun, np.array([2.0, 3.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
     return LineSearchSolver(
         direction=direction if direction is not None else KrylovDirection(),
@@ -205,6 +293,26 @@ def newton_nonmonotone(
     -------
     solver : LineSearchSolver
         Solver composing the two strategies.
+
+    Examples
+    --------
+    Let the merit function rise now and then, which helps when a monotone line search stalls in a narrow valley:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import newton_nonmonotone, sparse_root
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        solver = newton_nonmonotone()
+        result = sparse_root(fun, np.array([2.0, 3.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
     return LineSearchSolver(
         direction=direction if direction is not None else NewtonDirection(),

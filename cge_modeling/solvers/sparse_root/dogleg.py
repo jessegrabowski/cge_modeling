@@ -46,6 +46,28 @@ class SparseDogleg:
     linear_solver : callable, optional
         Sparse linear solver for the Newton step, called as ``linear_solver(A, b)``. None uses
         :func:`scipy.sparse.linalg.spsolve`. Defaults to None.
+
+    Examples
+    --------
+    Take dogleg steps inside a trust region, starting from a small radius:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import SparseDogleg, sparse_root
+
+
+        def fun(x):
+            res = np.array([x[0] + x[1] - 3.0, x[0] * x[1] - 2.0])
+            jac = sp.csc_matrix([[1.0, 1.0], [x[1], x[0]]])
+            return res, jac
+
+
+        solver = SparseDogleg(delta0=0.5)
+        result = sparse_root(fun, np.array([1.0, 1.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
 
     delta0: float = 1.0
