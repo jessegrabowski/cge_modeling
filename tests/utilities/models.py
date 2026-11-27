@@ -941,18 +941,7 @@ def load_and_cache_model(model_id: Literal[1, 2], **compile_kwargs) -> CGEModel:
 
     Callers share the returned model, so a test that mutates it, by recompiling it or reassigning roles, builds its own.
     """
-    hashable_kwargs = tuple(
-        sorted(
-            (name, tuple(value) if isinstance(value, list) else value)
-            for name, value in compile_kwargs.items()
-        )
-    )
-    return _compiled_model(model_id, hashable_kwargs)
-
-
-@cache
-def _compiled_model(model_id: Literal[1, 2], compile_kwargs: tuple) -> CGEModel:
     builders = {1: build_model_1, 2: build_model_2}
     if model_id not in builders:
         raise ValueError("Invalid model_id. Use 1 or 2.")
-    return builders[model_id]().compile(**dict(compile_kwargs))
+    return builders[model_id]().compile(**compile_kwargs)
