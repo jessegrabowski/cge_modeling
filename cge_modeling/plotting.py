@@ -455,7 +455,7 @@ def plot_bar(
                 xlabel_rotation=xlabel_rotation,
             )
             axis.set(title=var)
-            if metric == "final_initial":
+            if metric == "both":
                 legend = axis.legend()
                 for text in legend.get_texts():
                     new_text = text.get_text().split("_")[-1].capitalize()

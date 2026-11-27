@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import pytest
+import xarray as xr
 
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -260,6 +262,20 @@ def test_plot_bar_with_group_dict(cge_model):
         metric="final",
     )
     assert isinstance(fig, Figure)
+
+
+@pytest.mark.usefixtures("auto_close_all_figures")
+def test_plot_bar_both_metric_legend_labels():
+    variables = xr.Dataset(
+        {"Y": (("step", "i"), np.array([[1.0, 2.0], [1.5, 1.8]]))},
+        coords={"step": [0, 1], "i": ["a", "b"]},
+    )
+    idata = xr.DataTree.from_dict({"optimizer/variables": variables})
+
+    fig = plot_bar(idata, mod=None, var_names=["Y"], metric="both")
+
+    legend = fig.axes[0].get_legend()
+    assert [t.get_text() for t in legend.get_texts()] == ["Final", "Initial"]
 
 
 @pytest.mark.usefixtures("auto_close_all_figures")
