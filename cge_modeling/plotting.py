@@ -339,7 +339,7 @@ def _plot_one_bar(
         "pct_change", "change", "abs_change", "final", "initial", "both"
     ] = "pct_change",
     legend=True,
-    threshhold=1e-6,
+    threshold=1e-6,
     labelsize=12,
     xlabel_rotation=0,
 ):
@@ -366,7 +366,7 @@ def _plot_one_bar(
             data = data.groupby("group").sum()
             initial_data = initial_data.groupby("group").sum()
 
-    to_plot = _compute_bar_data(data, initial_data, metric, threshhold)
+    to_plot = _compute_bar_data(data, initial_data, metric, threshold)
 
     if orientation == "v":
         to_plot.plot.bar(ax=ax, legend=legend)
@@ -399,7 +399,7 @@ def plot_bar(
     metric: Literal[
         "pct_change", "change", "abs_change", "final", "initial", "both"
     ] = "pct_change",
-    threshhold=1e-6,
+    threshold=1e-6,
     labelsize=12,
     xlabel_rotation=0,
     legend=True,
@@ -450,7 +450,7 @@ def plot_bar(
                 orientation=orientation,
                 metric=metric,
                 legend=legend,
-                threshhold=threshhold,
+                threshold=threshold,
                 labelsize=labelsize,
                 xlabel_rotation=xlabel_rotation,
             )
@@ -487,7 +487,7 @@ def plot_bar(
             legend=legend,
             labelsize=labelsize,
             xlabel_rotation=xlabel_rotation,
-            threshhold=threshhold,
+            threshold=threshold,
         )
 
     return fig
