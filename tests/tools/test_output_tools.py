@@ -69,18 +69,24 @@ def test_index_by_parameter_rejects_a_parameter_that_cannot_index_the_path(labor
         index_by_parameter(path_tree(labor_supply), "L_s")
 
 
-def test_make_table_typesets_each_cell_as_its_own_math_block():
+def test_make_table_typesets_each_cell_as_math():
     table = make_table(
-        {"": [1], "Name": ["Price_of & i"], "Equation": [Latex(r"P_{i} < \bar{P}")]},
+        {
+            "": [1, 2],
+            "Name": ["Price_of & i", "Wage"],
+            "Equation": [Latex(r"P_{i} < \bar{P}"), Latex("W = 1")],
+        },
         column_widths=["4%", "22%", "74%"],
     )
 
+    assert "<table class='mathjax_process'" in table
     assert "table-layout: fixed; font-size: 14px" in table
     assert "width: 74%" in table
     assert r"\(\textbf{Equation}\)" in table
     assert r"\(1\)" in table
-    assert r"\(\text{Price\_of \&amp; i}\)" in table
+    assert r"\(\text{Price\_of}\) \(\text{\&amp;}\) \(\text{i}\)" in table
     assert r"\(P_{i} &lt; \bar{P}\)" in table
+    assert table.count("<tr style='background") == 1
 
 
 def test_make_table_rejects_one_width_per_heading_instead_of_per_column():

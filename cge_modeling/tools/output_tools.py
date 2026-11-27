@@ -224,39 +224,43 @@ def build_tree(d, tree=None, parent=None):
 
 
 TEXT_SPECIAL_CHARACTERS = {char: "\\" + char for char in "_%&#$"}
-CELL_STYLE = "text-align: left; vertical-align: middle"
+CELL_STYLE = "text-align: left; vertical-align: middle; padding: 0.5em"
+STRIPE_STYLE = "background: rgba(128, 128, 128, 0.1)"
 
 
-def text_to_latex(text: str) -> str:
-    return r"\text{" + text.translate(str.maketrans(TEXT_SPECIAL_CHARACTERS)) + "}"
+def text_to_latex(text: str, command: str = r"\text") -> list[str]:
+    """
+    Return one LaTeX block per word of ``text``.
+
+    MathJax never breaks a line inside a single text block, so separate blocks let the browser wrap long text
+    between words.
+    """
+    escaped = text.translate(str.maketrans(TEXT_SPECIAL_CHARACTERS))
+    return [command + "{" + word + "}" for word in escaped.split()]
 
 
-def heading_to_latex(s):
-    return r"\textbf{" + s + "}"
-
-
-def parse_data(x) -> str:
+def parse_data(x) -> list[str]:
     if isinstance(x, ModelObject):
-        return str(x._full_latex_name)
+        return [str(x._full_latex_name)]
     if isinstance(x, Latex):
-        return str(x.data)
+        return [str(x.data)]
     if isinstance(x, numbers.Integral):
-        return str(x)
+        return [str(x)]
     if isinstance(x, numbers.Real):
-        return f"{x:.3f}"
+        return [f"{x:.3f}"]
     if isinstance(x, str):
-        return x if x.isnumeric() else text_to_latex(x)
+        return [x] if x.isnumeric() else text_to_latex(x)
     raise ValueError(f"Unexpected type {type(x)} in table data")
 
 
-def math_cell(latex: str, tag: str = "td", width: str | None = None) -> str:
+def math_cell(latex_blocks: list[str], tag: str = "td", width: str | None = None) -> str:
     """
-    Return an HTML table cell whose content MathJax typesets as one inline math block.
+    Return an HTML table cell whose content MathJax typesets as separate inline math blocks.
 
-    Each cell is its own block, so no table outgrows the size limit MathJax puts on a single block.
+    Each block is typeset on its own, so no table outgrows the size limit MathJax puts on a single block.
     """
     style = CELL_STYLE if width is None else f"{CELL_STYLE}; width: {width}"
-    content = f"\\({html.escape(latex)}\\)" if latex else ""
+    content = " ".join(f"\\({html.escape(latex)}\\)" for latex in latex_blocks)
     return f"<{tag} style='{style}'>{content}</{tag}>"
 
 
@@ -287,7 +291,7 @@ def make_table(info_dict, column_widths: Sequence[str] | None = None) -> str:
     heading_rows = [
         "".join(
             math_cell(
-                heading_to_latex(heading) if heading else "",
+                text_to_latex(heading, command=r"\textbf") if heading else [],
                 tag="th",
                 width=width if level == 0 else None,
             )
@@ -302,8 +306,11 @@ def make_table(info_dict, column_widths: Sequence[str] | None = None) -> str:
     layout = "width: auto" if column_widths is None else "width: 100%; table-layout: fixed"
     table_style = f"{layout}; font-size: 14px"
     head = "".join(f"<tr>{row}</tr>" for row in heading_rows)
-    body = "\n".join(f"<tr>{row}</tr>" for row in data_rows)
-    return f"<table style='{table_style}'><thead>{head}</thead><tbody>{body}</tbody></table>"
+    body = "\n".join(
+        f"<tr style='{STRIPE_STYLE}'>{row}</tr>" if index % 2 == 0 else f"<tr>{row}</tr>"
+        for index, row in enumerate(data_rows)
+    )
+    return f"<table class='mathjax_process' style='{table_style}'><thead>{head}</thead><tbody>{body}</tbody></table>"
 
 
 def display_latex_table(info_dict, column_widths: Sequence[str] | None = None) -> None:
