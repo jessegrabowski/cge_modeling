@@ -34,7 +34,8 @@ def pytensor_euler_function_with_python_loop(
     progress: ToggleableProgress,
     step_statistics: Callable[[np.ndarray, np.ndarray], dict[str, float]],
 ) -> list[np.ndarray]:
-    trajectory = np.empty((n_steps, x.shape[0] + theta.shape[0]))
+    trajectory = np.empty((n_steps + 1, x.shape[0] + theta.shape[0]))
+    trajectory[0] = np.concatenate([x, theta])
     theta_initial = theta
 
     if not progress.is_enabled:
@@ -42,7 +43,7 @@ def pytensor_euler_function_with_python_loop(
 
     with progress:
         task = progress.add_task("Euler", total=n_steps, **step_statistics(x, theta))
-        for t in range(n_steps):
+        for t in range(1, n_steps + 1):
             x, theta = f_step(x, theta, theta_initial, theta_final, n_steps)
             trajectory[t] = np.concatenate([x, theta])
             progress.update(task, advance=1, **step_statistics(x, theta))
@@ -54,7 +55,7 @@ def pytensor_euler_function_with_python_loop(
     for obj in cge_model.variables + cge_model.parameters:
         shape = infer_object_shape_from_coords(obj, cge_model.coords)
         size = int(np.prod(shape))
-        results.append(trajectory[:, cursor : cursor + size].reshape(n_steps, *shape))
+        results.append(trajectory[:, cursor : cursor + size].reshape(n_steps + 1, *shape))
         cursor += size
 
     return results

@@ -266,12 +266,12 @@ def test_scan_euler_matches_python_loop_euler():
         calibrated_data, theta_final, n_steps=500
     )
 
-    np.testing.assert_allclose(
-        scan_result["variables"].dataset.isel(step=-1).to_array().values,
-        loop_result["variables"].dataset.isel(step=-1).to_array().values,
-        rtol=1e-10,
-        atol=1e-8,
-    )
+    scan_path = scan_result["variables"].dataset.to_array().values
+    loop_path = loop_result["variables"].dataset.to_array().values
+    initial_point = np.array([calibrated_data[name] for name in loop_model.variable_names])
+
+    np.testing.assert_allclose(scan_path, loop_path, rtol=1e-10, atol=1e-8)
+    np.testing.assert_allclose(loop_path[:, 0], initial_point)
 
 
 def test_simulate_with_scan_euler_reports_no_nans(caplog):
