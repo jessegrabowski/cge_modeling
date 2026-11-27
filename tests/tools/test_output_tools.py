@@ -2,7 +2,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from cge_modeling.tools.output_tools import datatree_to_value_dict, index_by_parameter
+from IPython.display import Latex
+
+from cge_modeling.tools.output_tools import datatree_to_value_dict, index_by_parameter, make_table
 
 
 def test_datatree_to_value_dict_merges_variables_and_parameters():
@@ -65,3 +67,25 @@ def test_index_by_parameter_replaces_step_with_the_parameter_values():
 def test_index_by_parameter_rejects_a_parameter_that_cannot_index_the_path(labor_supply, message):
     with pytest.raises(ValueError, match=message):
         index_by_parameter(path_tree(labor_supply), "L_s")
+
+
+def test_make_table_typesets_each_cell_as_its_own_math_block():
+    table = make_table(
+        {"": [1], "Name": ["Price_of & i"], "Equation": [Latex(r"P_{i} < \bar{P}")]},
+        column_widths=["4%", "22%", "74%"],
+    )
+
+    assert "table-layout: fixed; font-size: 14px" in table
+    assert "width: 74%" in table
+    assert r"\(\textbf{Equation}\)" in table
+    assert r"\(1\)" in table
+    assert r"\(\text{Price\_of \&amp; i}\)" in table
+    assert r"\(P_{i} &lt; \bar{P}\)" in table
+
+
+def test_make_table_rejects_one_width_per_heading_instead_of_per_column():
+    with pytest.raises(ValueError, match="Expected 3 column widths"):
+        make_table(
+            {"Symbol": ["x"], "run": {"Initial": [1.0], "Final": [2.0]}},
+            column_widths=["50%", "50%"],
+        )

@@ -686,7 +686,7 @@ class CGEModel:
             info_dict["Name"].append(_replace_dim_marker_with_dim_name(equation.name))
             info_dict["Equation"].append(Latex(equation_to_latex(equation, model=self)))
 
-        display_latex_table(info_dict)
+        display_latex_table(info_dict, column_widths=["4%", "22%", "74%"])
 
     def calibrate(
         self,
