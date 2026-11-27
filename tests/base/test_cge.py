@@ -18,7 +18,6 @@ from tests.utilities.models import (
     calibrate_model_1,
     calibrate_model_2,
     load_and_cache_model,
-    load_model_1,
     model_1_data,
     model_2_data,
 )
@@ -246,8 +245,8 @@ def test_root_reports_failure_when_it_stops_short_of_equilibrium():
 
 
 def test_scan_euler_matches_python_loop_euler():
-    scan_model = load_model_1(functions_to_compile=("euler",), use_scan_euler=True)
-    loop_model = load_model_1(functions_to_compile=("euler",))
+    scan_model = load_and_cache_model(1, functions_to_compile=("euler",), use_scan_euler=True)
+    loop_model = load_and_cache_model(1, functions_to_compile=("euler",))
     calibrated_data = calibrate_model_1(**model_1_data)
     _, theta_final = variable_dict_to_flat_array(
         {**calibrated_data, "L_s": 10_000}, scan_model.variables, scan_model.parameters
@@ -269,7 +268,7 @@ def test_scan_euler_matches_python_loop_euler():
 
 
 def test_simulate_with_scan_euler_reports_no_nans(caplog):
-    mod = load_model_1(functions_to_compile=("euler", "root"), use_scan_euler=True)
+    mod = load_and_cache_model(1, functions_to_compile=("euler", "root"), use_scan_euler=True)
     initial_state = calibrate_model_1(**model_1_data)
 
     with caplog.at_level(logging.WARNING, logger="cge_modeling"):
@@ -297,7 +296,9 @@ def equilibrium_residual_norms(mod, euler, steps):
 
 @pytest.mark.parametrize("use_scan_euler", [False, True], ids=["loop", "scan"])
 def test_solve_every_puts_the_euler_path_back_on_the_equilibrium_at_each_checkpoint(use_scan_euler):
-    mod = load_model_1(functions_to_compile=("euler", "root"), use_scan_euler=use_scan_euler)
+    mod = load_and_cache_model(
+        1, functions_to_compile=("euler", "root"), use_scan_euler=use_scan_euler
+    )
     initial_state = calibrate_model_1(**model_1_data)
     scenario = {"final_delta_pct": {"L_s": 3.0}, "n_iter_euler": 40, "use_optimizer": False}
 
@@ -325,7 +326,7 @@ def test_solve_every_puts_the_euler_path_back_on_the_equilibrium_at_each_checkpo
     ids=["result", "optimizer_group", "solved_euler_group", "optimizer_only_result"],
 )
 def test_simulate_continues_from_an_earlier_simulation(first_run, select_start):
-    mod = load_model_1(functions_to_compile=("euler", "root"))
+    mod = load_and_cache_model(1, functions_to_compile=("euler", "root"))
     initial_state = calibrate_model_1(**model_1_data)
     labor_supply = initial_state["L_s"]
 
@@ -366,7 +367,7 @@ def test_simulate_continues_from_an_earlier_simulation(first_run, select_start):
     ids=["result", "euler_group"],
 )
 def test_simulate_rejects_an_earlier_simulation_that_ended_off_the_equilibrium(select_start):
-    mod = load_model_1(functions_to_compile=("euler", "root"))
+    mod = load_and_cache_model(1, functions_to_compile=("euler", "root"))
     initial_state = calibrate_model_1(**model_1_data)
 
     unsolved = mod.simulate(
@@ -382,7 +383,7 @@ def test_simulate_rejects_an_earlier_simulation_that_ended_off_the_equilibrium(s
 
 
 def test_solve_every_with_minimize_solves_each_checkpoint():
-    mod = load_model_1(functions_to_compile=("euler", "minimize"))
+    mod = load_and_cache_model(1, functions_to_compile=("euler", "minimize"))
     initial_state = calibrate_model_1(**model_1_data)
 
     euler = mod.simulate(
@@ -402,7 +403,7 @@ def test_solve_every_with_minimize_solves_each_checkpoint():
 
 
 def test_solve_every_leaves_the_last_step_to_the_optimizer_when_it_runs():
-    mod = load_model_1(functions_to_compile=("euler", "root"))
+    mod = load_and_cache_model(1, functions_to_compile=("euler", "root"))
     initial_state = calibrate_model_1(**model_1_data)
     scenario = {"final_delta_pct": {"L_s": 3.0}, "n_iter_euler": 40, "progressbar": False}
 
@@ -419,7 +420,7 @@ def test_solve_every_leaves_the_last_step_to_the_optimizer_when_it_runs():
 
 
 def test_solve_every_stores_the_parameters_each_checkpoint_was_solved_at():
-    mod = load_model_1(functions_to_compile=("euler", "root"))
+    mod = load_and_cache_model(1, functions_to_compile=("euler", "root"))
     initial_state = calibrate_model_1(**model_1_data)
     labor_supply = initial_state["L_s"]
 
@@ -442,7 +443,7 @@ def test_solve_every_stores_the_parameters_each_checkpoint_was_solved_at():
 
 
 def test_solve_every_continues_from_the_euler_point_after_a_failed_checkpoint():
-    mod = load_model_1(functions_to_compile=("euler", "root"))
+    mod = load_and_cache_model(1, functions_to_compile=("euler", "root"))
     initial_state = calibrate_model_1(**model_1_data)
     scenario = {"final_delta_pct": {"L_s": 1.5}, "n_iter_euler": 30, "use_optimizer": False}
 
@@ -461,7 +462,7 @@ def test_solve_every_continues_from_the_euler_point_after_a_failed_checkpoint():
 
 
 def test_solve_every_accepts_a_numpy_integer():
-    mod = load_model_1(functions_to_compile=("euler", "root"))
+    mod = load_and_cache_model(1, functions_to_compile=("euler", "root"))
     initial_state = calibrate_model_1(**model_1_data)
 
     euler = mod.simulate(
@@ -477,7 +478,7 @@ def test_solve_every_accepts_a_numpy_integer():
 
 
 def test_solve_every_with_root_warns_about_use_hess_only_for_the_final_solve(caplog):
-    mod = load_model_1(functions_to_compile=("euler", "root"))
+    mod = load_and_cache_model(1, functions_to_compile=("euler", "root"))
     initial_state = calibrate_model_1(**model_1_data)
 
     with caplog.at_level(logging.WARNING, logger="cge_modeling"):
@@ -494,7 +495,7 @@ def test_solve_every_with_root_warns_about_use_hess_only_for_the_final_solve(cap
 
 
 def test_saved_simulation_names_record_checkpoints_and_the_optimizer_that_solves_them(tmp_path):
-    mod = load_model_1(functions_to_compile=("euler", "root"))
+    mod = load_and_cache_model(1, functions_to_compile=("euler", "root"))
     initial_state = calibrate_model_1(**model_1_data)
     scenario = {
         "final_delta_pct": {"L_s": 1.5},
@@ -514,7 +515,7 @@ def test_saved_simulation_names_record_checkpoints_and_the_optimizer_that_solves
 
 
 def test_euler_approximation_rejects_an_unknown_keyword_argument():
-    mod = load_model_1(functions_to_compile=("euler",))
+    mod = load_and_cache_model(1, functions_to_compile=("euler",))
     initial_state = calibrate_model_1(**model_1_data)
     _, theta_final = variable_dict_to_flat_array(initial_state, mod.variables, mod.parameters)
 
