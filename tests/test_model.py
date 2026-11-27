@@ -517,6 +517,51 @@ def test_simulate_starts_from_the_calibration_of_an_indexed_model():
     np.testing.assert_allclose(result["optimizer"]["variables"]["Y"].isel(step=-1), [110.0, 220.0])
 
 
+def test_simulate_compiles_the_functions_a_later_call_needs():
+    with CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+        Y = cm.Variable("Y", dims="sector")
+        L = cm.Parameter("L", dims="sector")
+        A = cm.Parameter("A", dims="sector")
+        cm.Equation("Production", Y, A * L)
+    state = {"Y": np.array([100.0, 200.0]), "L": np.array([50.0, 40.0]), "A": np.array([2.0, 5.0])}
+
+    model.simulate(
+        initial_state=state,
+        final_delta_pct={"A": 1.1},
+        use_euler_approximation=False,
+        progressbar=False,
+    )
+    result = model.simulate(
+        initial_state=state,
+        final_delta_pct={"A": 1.1},
+        use_optimizer=False,
+        n_iter_euler=10,
+        progressbar=False,
+    )
+
+    np.testing.assert_allclose(result["euler"]["variables"]["Y"].isel(step=-1), [110.0, 220.0])
+
+
+def test_simulate_keeps_the_settings_of_the_last_compile():
+    with CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+        Y = cm.Variable("Y", dims="sector")
+        L = cm.Parameter("L", dims="sector")
+        A = cm.Parameter("A", dims="sector")
+        cm.Equation("Production", Y, A * L)
+    state = {"Y": np.array([100.0, 200.0]), "L": np.array([50.0, 40.0]), "A": np.array([2.0, 5.0])}
+    model.compile(functions_to_compile="root", use_sparse_matrices=True)
+
+    model.simulate(
+        initial_state=state,
+        final_delta_pct={"A": 1.1},
+        n_iter_euler=10,
+        progressbar=False,
+    )
+
+    assert model.f_sparse_system_and_jac is not None
+    assert model.f_euler is not None
+
+
 def test_calibrate_without_data_names_the_entries_no_equation_determines():
     model = build_model_1()
 

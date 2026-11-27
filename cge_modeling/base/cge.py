@@ -146,7 +146,8 @@ class CGEModel:
         self._xtensor_equations: dict[str, XTensorEquation] = {}
         self._context_tokens: list = []
 
-        self._compiled: Sequence[str] = []
+        self._compiled: Sequence[CompiledFunctions] = []
+        self._compile_settings: dict[str, Any] = {}
         self.mode: Mode | str | None = None
 
         self.f_system: Callable | None = None
@@ -489,9 +490,27 @@ class CGEModel:
             use_sparse_matrices=use_sparse_matrices,
         )
         self._compiled = compile_list
+        self._compile_settings = {
+            "mode": mode,
+            "use_scan_euler": use_scan_euler,
+            "use_rk4": use_rk4,
+            "use_sparse_matrices": use_sparse_matrices,
+        }
         self.mode = compile_mode
 
         return self
+
+    def _compile_missing(
+        self, needed: set[CompiledFunctions], compile_kwargs: dict[str, Any] | None
+    ) -> None:
+        """Compile the ``needed`` functions the model lacks, or recompile with ``compile_kwargs`` when given."""
+        if compile_kwargs is None and self.f_system is not None and needed <= set(self._compiled):
+            return
+        settings = {**self._compile_settings, **(compile_kwargs or {})}
+        requested = _parse_compile_kwarg(settings.pop("functions_to_compile", None)) or []
+        # Compiling replaces every function, so the ones compiled earlier are compiled again with the rest.
+        functions: list[CompiledFunctions] = sorted({*self._compiled, *needed, *requested})
+        self.compile(**settings, functions_to_compile=functions)
 
     def check_initialization(self):
         if self.n_variables != self.n_equations:
@@ -1253,7 +1272,8 @@ class CGEModel:
             False.
 
         compile_kwargs: dict, optional
-            Additional keyword arguments to pass to the compile method. See the docstring for compile for details.
+            Passed to :meth:`compile`, which then runs on every call. Without it, the functions this call needs and
+            the model lacks are compiled with the settings of the model's last compile.
 
         optimizer_kwargs: dict, optional
             Additional keyword arguments to pass to the optimizer. See the docstring for scipy.optimize.root or
@@ -1302,17 +1322,10 @@ class CGEModel:
             res = read_results(output_path, simulation_name, verbose=verbose)
             return res
 
-        if not self._compiled:
-            if compile_kwargs is None:
-                to_compile = []
-                if use_euler_approximation:
-                    to_compile.append("euler")
-                if solves_with_optimizer:
-                    to_compile.append(optimizer_mode)
-
-                compile_kwargs = {"functions_to_compile": to_compile}
-
-            self.compile(**compile_kwargs)
+        needed: set[CompiledFunctions] = {"euler"} if use_euler_approximation else set()
+        if solves_with_optimizer:
+            needed.add(optimizer_mode)
+        self._compile_missing(needed, compile_kwargs)
 
         from_tree = isinstance(initial_state, xr.DataTree) or (
             isinstance(initial_state, dict)
