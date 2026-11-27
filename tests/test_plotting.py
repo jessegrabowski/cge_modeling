@@ -172,14 +172,23 @@ def test_compute_bar_data(metric, initial_vals, final_vals, expected_vals, thres
     pd.testing.assert_series_equal(result_df["data"], expected_s, check_dtype=False)
 
 
-def test_compute_bar_data_both():
-    initial_df = pd.DataFrame({"data": [10.0, 20.0]}, index=["A", "B"])
-    final_df = pd.DataFrame({"data": [12.0, 18.0]}, index=["A", "B"])
+@pytest.mark.parametrize(
+    "columns, expected_columns",
+    [
+        (["Y"], ["Final", "Initial"]),
+        (["Y", "C"], ["Y (final)", "C (final)", "Y (initial)", "C (initial)"]),
+    ],
+    ids=["one_variable", "several_variables"],
+)
+def test_compute_bar_data_both_labels_final_and_initial(columns, expected_columns):
+    initial_df = pd.DataFrame({key: [10.0, 20.0] for key in columns}, index=["A", "B"])
+    final_df = pd.DataFrame({key: [12.0, 18.0] for key in columns}, index=["A", "B"])
+
     result_df = _compute_bar_data(final_df, initial_df, metric="both")
-    expected_df = pd.DataFrame(
-        {"data_final": [12.0, 18.0], "data_initial": [10.0, 20.0]}, index=["A", "B"]
-    )
-    pd.testing.assert_frame_equal(result_df, expected_df, check_dtype=False)
+
+    assert list(result_df.columns) == expected_columns
+    np.testing.assert_allclose(result_df[expected_columns[0]], [12.0, 18.0])
+    np.testing.assert_allclose(result_df[expected_columns[-1]], [10.0, 20.0])
 
 
 def test_compute_bar_data_invalid_metric():
@@ -194,14 +203,13 @@ def test_plot_one_bar_vertical(cge_model):
     _model, _initial_calib_data, idata = cge_model
     var_name = "Y"
 
-    data_xr = idata["optimizer"].isel(step=-1)["variables"][var_name]
-    initial_data_xr = idata["optimizer"].isel(step=0)["variables"][var_name]
+    data = idata["optimizer"]["variables"][var_name].isel(step=-1).to_dataframe()[[var_name]]
+    initial_data = idata["optimizer"]["variables"][var_name].isel(step=0).to_dataframe()[[var_name]]
 
     _fig, ax = plt.subplots()
-    ax_out = _plot_one_bar(
-        data_xr, initial_data_xr, ax, drop_vars=[], metric="pct_change", orientation="v"
-    )
+    ax_out = _plot_one_bar(data, initial_data, ax, metric="pct_change", orientation="v")
     assert isinstance(ax_out, Axes)
+    assert len(ax_out.patches) == 3
 
 
 @pytest.mark.usefixtures("auto_close_all_figures")
@@ -209,19 +217,13 @@ def test_plot_one_bar_horizontal(cge_model):
     _model, _initial_calib_data, idata = cge_model
     var_name = "Y"
 
-    data_xr = idata["optimizer"].isel(step=-1)["variables"][var_name]
-    initial_data_xr = idata["optimizer"].isel(step=0)["variables"][var_name]
+    data = idata["optimizer"]["variables"][var_name].isel(step=-1).to_dataframe()[[var_name]]
+    initial_data = idata["optimizer"]["variables"][var_name].isel(step=0).to_dataframe()[[var_name]]
 
     _fig, ax = plt.subplots()
-    ax_out_h = _plot_one_bar(
-        data_xr,
-        initial_data_xr,
-        ax,
-        drop_vars=[],
-        orientation="h",
-        metric="final",
-    )
+    ax_out_h = _plot_one_bar(data, initial_data, ax, orientation="h", metric="final")
     assert isinstance(ax_out_h, Axes)
+    np.testing.assert_allclose([bar.get_width() for bar in ax_out_h.patches], data[var_name])
 
 
 @pytest.mark.usefixtures("auto_close_all_figures")
@@ -250,25 +252,80 @@ def test_plot_bar_together_horizontal_metric_change(cge_model):
 
 
 @pytest.mark.usefixtures("auto_close_all_figures")
-def test_plot_bar_with_group_dict(cge_model):
+def test_plot_bar_draws_each_scalar_variable_in_its_own_panel(cge_model):
     model, _, idata = cge_model
-    var_names = ["Y", "C"]
-    fig = plot_bar(
-        idata,
-        model,
-        var_names,
-        group_dict={"some_coord": {"A": "Group1"}},  # 'some_coord' won't match index name
-        metric="final",
-    )
-    assert isinstance(fig, Figure)
+
+    fig = plot_bar(idata, model, var_names=["r", "w", "income"])
+
+    assert [[label.get_text() for label in axis.get_xticklabels()] for axis in fig.axes] == [
+        ["r"],
+        ["w"],
+        ["income"],
+    ]
 
 
 @pytest.mark.usefixtures("auto_close_all_figures")
-def test_plot_bar_no_initial_values_uses_idata(cge_model):
+def test_plot_bar_draws_scalar_variables_together_as_one_bar_each(cge_model):
     model, _, idata = cge_model
-    var_names = ["Y", "C"]
-    fig = plot_bar(idata, model, var_names)
-    assert isinstance(fig, Figure)
+
+    fig = plot_bar(idata, model, var_names=["r", "w", "income"], plot_together=True)
+
+    assert [label.get_text() for label in fig.axes[0].get_xticklabels()] == ["r", "w", "income"]
+
+
+@pytest.mark.usefixtures("auto_close_all_figures")
+def test_plot_bar_sums_labels_into_the_groups_of_group_dict(cge_model):
+    model, _, idata = cge_model
+    groups = {"i": {"0": "Primary", "1": "Primary", "2": "Other"}}
+
+    fig = plot_bar(idata, model, var_names=["Y"], group_dict=groups, metric="final")
+
+    final_output = idata["optimizer"]["variables"]["Y"].isel(step=-1).values
+    assert [label.get_text() for label in fig.axes[0].get_xticklabels()] == ["Other", "Primary"]
+    np.testing.assert_allclose(
+        [bar.get_height() for bar in fig.axes[0].patches],
+        [final_output[2], final_output[0] + final_output[1]],
+    )
+
+
+@pytest.mark.usefixtures("auto_close_all_figures")
+def test_plot_bar_compares_against_the_given_initial_values(cge_model):
+    model, _, idata = cge_model
+    baseline = idata["optimizer"]["variables"].dataset.isel(step=-1) * 2
+
+    fig = plot_bar(idata, model, var_names=["Y"], initial_values=baseline, metric="pct_change")
+
+    np.testing.assert_allclose([bar.get_height() for bar in fig.axes[0].patches], -0.5)
+
+
+@pytest.mark.usefixtures("auto_close_all_figures")
+def test_plot_bar_defaults_to_every_variable(cge_model):
+    model, _, idata = cge_model
+
+    fig = plot_bar(idata, model)
+
+    assert [axis.get_title() for axis in fig.axes] == model.variable_names
+
+
+@pytest.mark.usefixtures("auto_close_all_figures")
+def test_plot_bar_both_labels_the_legend_final_and_initial(cge_model):
+    model, _, idata = cge_model
+
+    fig = plot_bar(idata, model, var_names=["Y"], metric="both")
+
+    assert [text.get_text() for text in fig.axes[0].get_legend().get_texts()] == [
+        "Final",
+        "Initial",
+    ]
+
+
+@pytest.mark.usefixtures("auto_close_all_figures")
+def test_plot_bar_selects_one_label_of_a_dim(cge_model):
+    model, _, idata = cge_model
+
+    fig = plot_bar(idata, model, var_names=["X"], coords={"i": "0"})
+
+    assert [label.get_text() for label in fig.axes[0].get_xticklabels()] == ["0", "1", "2"]
 
 
 @pytest.mark.usefixtures("auto_close_all_figures")

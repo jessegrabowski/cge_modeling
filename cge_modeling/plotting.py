@@ -1,7 +1,9 @@
+from functools import partial
 from typing import Literal, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from matplotlib.axes import Axes
@@ -300,6 +302,19 @@ def plot_areas(
     return fig
 
 
+def _bar_frame(selection: xr.Dataset) -> pd.DataFrame:
+    """
+    Return the values of ``selection`` as a frame of bars.
+
+    Variables with dims become columns, with a row per label. Scalar variables become rows of one ``value`` column, so
+    each gets its own bar.
+    """
+    if not selection.sizes:
+        values = {name: value.item() for name, value in selection.data_vars.items()}
+        return pd.DataFrame({"value": values}).rename_axis("variable")
+    return selection.to_dataframe()[list(selection.data_vars)]
+
+
 def _compute_bar_data(data, initial_data, metric, threshold=1e-6):
     if metric == "pct_change":
         pct_change = np.divide(
@@ -318,16 +333,19 @@ def _compute_bar_data(data, initial_data, metric, threshold=1e-6):
     elif metric == "initial":
         return initial_data
     elif metric == "both":
-        return data.join(initial_data, lsuffix="_final", rsuffix="_initial")
+        if data.shape[1] == 1:
+            return pd.DataFrame({"Final": data.iloc[:, 0], "Initial": initial_data.iloc[:, 0]})
+        return pd.concat(
+            [data.add_suffix(" (final)"), initial_data.add_suffix(" (initial)")], axis=1
+        )
     else:
         raise ValueError(f"Invalid value type: {metric}")
 
 
 def _plot_one_bar(
-    data,
-    initial_data,
+    data: pd.DataFrame,
+    initial_data: pd.DataFrame,
     ax,
-    drop_vars,
     group_dict=None,
     orientation="v",
     metric: Literal[
@@ -338,28 +356,11 @@ def _plot_one_bar(
     labelsize=12,
     xlabel_rotation=0,
 ):
-    try:
-        data = data.to_dataframe().droplevel(level=drop_vars, axis=0)
-        initial_data = initial_data.to_dataframe().droplevel(level=drop_vars, axis=0)
-    except ValueError:
-        data = data.to_dataarray().to_dataframe(name="data")
-        data.index.name = "name"
-        initial_data = (
-            initial_data.to_dataarray().to_dataframe(name="data").droplevel(level=drop_vars, axis=0)
-        )
-
-    if "step" in data.columns:
-        data = data.drop(columns=["step"])
-    if "step" in initial_data.columns:
-        initial_data = initial_data.drop(columns=["step"])
     if group_dict is not None:
         coord_dict = group_dict.get(data.index.name)
         if coord_dict is not None:
-            data["group"] = data.index.map(lambda x: coord_dict[x])
-            initial_data["group"] = initial_data.index.map(lambda x: coord_dict[x])
-
-            data = data.groupby("group").sum()
-            initial_data = initial_data.groupby("group").sum()
+            data = data.groupby(data.index.map(coord_dict)).sum()
+            initial_data = initial_data.groupby(initial_data.index.map(coord_dict)).sum()
 
     to_plot = _compute_bar_data(data, initial_data, metric, threshold)
 
@@ -384,7 +385,7 @@ def _plot_one_bar(
 def plot_bar(
     idata,
     mod,
-    var_names,
+    var_names=None,
     initial_values=None,
     plot_together=False,
     group_dict=None,
@@ -400,89 +401,65 @@ def plot_bar(
     legend=True,
     **figure_kwargs,
 ):
-    data = None
-    coords = coords if coords is not None else {}
-    coords = {key: value if isinstance(value, list) else [value] for key, value in coords.items()}
-    drop_vars = [var for var in coords.keys() if len(coords[var]) == 1]
-
-    def select_variables_at_step(tree: xr.DataTree, step: int) -> xr.Dataset:
-        variables = tree["variables"].dataset.isel(step=step)[var_names]
-        return variables.sel(**coords).drop_vars(drop_vars)
-
-    if "optimizer" in idata:
-        data = select_variables_at_step(idata["optimizer"], step=-1)
-        if initial_values is None:
-            initial_values = select_variables_at_step(idata["optimizer"], step=0)
-
-    if "euler" in idata:
-        if data is None:
-            data = select_variables_at_step(idata["euler"], step=-1)
-        if initial_values is None:
-            initial_values = select_variables_at_step(idata["euler"], step=0)
-
-    if data is None:
-        raise ValueError("No data found in DataTree.")
-
-    dpi = figure_kwargs.pop("dpi", 144)
-    figsize = figure_kwargs.pop("figsize", (15, 9))
-
     if var_names is None:
         var_names = mod.variable_names
+    coords = coords if coords is not None else {}
+    # A single label selects a scalar, so its dim drops out of the plot instead of becoming an axis of one bar.
+    indexers = {
+        dim: labels[0] if isinstance(labels, list) and len(labels) == 1 else labels
+        for dim, labels in coords.items()
+    }
 
-    n_vars = len(var_names)
-    if not plot_together:
-        n_cols = min(n_cols, n_vars)
-        gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=n_vars)
-        fig = plt.figure(dpi=dpi, figsize=figsize, **figure_kwargs)
-        for idx, var in enumerate(var_names):
-            axis = fig.add_subplot(gs[plot_locs[idx]])
-            axis = _plot_one_bar(
-                data[var],
-                initial_values[var],
-                cast(Axes, axis),
-                group_dict=group_dict,
-                drop_vars=drop_vars,
-                orientation=orientation,
-                metric=metric,
-                legend=legend,
-                threshold=threshold,
-                labelsize=labelsize,
-                xlabel_rotation=xlabel_rotation,
-            )
-            axis.set(title=var)
-            if metric == "final_initial":
-                legend = axis.legend()
-                for text in legend.get_texts():
-                    new_text = text.get_text().split("_")[-1].capitalize()
-                    text.set_text(new_text)
-
-    else:
-        var_dims = [
-            [dim for dim in mod.get(var_name).dims if dim not in drop_vars]
-            for var_name in var_names
-        ]
-        if not all([dim == var_dims[0] for dim in var_dims]):
-            msg = "All variables must have the same dimensions to plot together. Found the following: \n"
-            msg += "\n".join(f"{var_name}: {dim}" for var_name, dim in zip(var_names, var_dims))
-            msg += (
-                "\nUse the `coords` argument to select values for dimensions that are not shared across variables, "
-                "or set plot_together=False to plot separately."
-            )
-            raise ValueError(msg)
-        fig, ax = plt.subplots(dpi=dpi, figsize=figsize, **figure_kwargs)
-
-        _ = _plot_one_bar(
-            data,
-            initial_values,
-            ax,
-            group_dict=group_dict,
-            drop_vars=drop_vars,
-            orientation=orientation,
-            metric=metric,
-            legend=legend,
-            labelsize=labelsize,
-            xlabel_rotation=xlabel_rotation,
-            threshold=threshold,
+    def select(variables: xr.Dataset) -> xr.Dataset:
+        selection = variables[var_names].sel(indexers)
+        return selection.drop_vars(
+            [name for name in selection.coords if name not in selection.dims]
         )
+
+    group = idata.get("optimizer", idata.get("euler"))
+    if group is None:
+        raise ValueError('idata has neither an "optimizer" nor an "euler" group.')
+    data = select(group["variables"].dataset.isel(step=-1))
+    if initial_values is None:
+        initial_values = group["variables"].dataset.isel(step=0)
+    initial_values = select(initial_values)
+
+    figure_kwargs.setdefault("figsize", (15, 9))
+    figure_kwargs.setdefault("dpi", 144)
+    plot_one_bar = partial(
+        _plot_one_bar,
+        group_dict=group_dict,
+        orientation=orientation,
+        metric=metric,
+        legend=legend,
+        threshold=threshold,
+        labelsize=labelsize,
+        xlabel_rotation=xlabel_rotation,
+    )
+
+    if not plot_together:
+        n_cols = min(n_cols, len(var_names))
+        gs, plot_locs = prepare_gridspec_figure(n_cols=n_cols, n_plots=len(var_names))
+        fig = plt.figure(**figure_kwargs)
+        for idx, var in enumerate(var_names):
+            axis = cast(Axes, fig.add_subplot(gs[plot_locs[idx]]))
+            plot_one_bar(_bar_frame(data[[var]]), _bar_frame(initial_values[[var]]), axis)
+            axis.set(title=var)
+        return fig
+
+    var_dims = [data[var_name].dims for var_name in var_names]
+    if not all(dims == var_dims[0] for dims in var_dims):
+        msg = (
+            "All variables must have the same dimensions to plot together. Found the following: \n"
+        )
+        msg += "\n".join(f"{var_name}: {list(dims)}" for var_name, dims in zip(var_names, var_dims))
+        msg += (
+            "\nUse the `coords` argument to select values for dimensions that are not shared across variables, "
+            "or set plot_together=False to plot separately."
+        )
+        raise ValueError(msg)
+
+    fig, ax = plt.subplots(**figure_kwargs)
+    plot_one_bar(_bar_frame(data), _bar_frame(initial_values), ax)
 
     return fig
