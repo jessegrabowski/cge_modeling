@@ -331,6 +331,49 @@ def datatree_to_value_dict(tree: xr.DataTree) -> dict[str, np.ndarray]:
     }
 
 
+def index_by_parameter(tree: xr.DataTree, parameter: str) -> xr.DataTree:
+    """
+    Index a simulation group by the values of one scalar parameter instead of by ``step``.
+
+    Parameters
+    ----------
+    tree : xr.DataTree
+        A group of a ``CGEModel.simulate`` result, such as ``result["euler"]``, whose ``variables`` and
+        ``parameters`` children are indexed by ``step``.
+    parameter : str
+        Name of a scalar parameter whose value changes strictly monotonically along ``step``.
+
+    Returns
+    -------
+    indexed : xr.DataTree
+        The same tree with ``parameter`` as the dimension of both children. ``step`` stays as a coordinate, and the
+        parameter itself moves from the ``parameters`` data variables to the index.
+    """
+    variables = tree.children["variables"].to_dataset(inherit=False)
+    parameters = tree.children["parameters"].to_dataset(inherit=False)
+    values = parameters[parameter]
+    if values.dims != ("step",):
+        raise ValueError(f"{parameter} must be a scalar parameter, but it has dims {values.dims}.")
+    increments = np.diff(values.to_numpy())
+    if not (np.all(increments > 0) or np.all(increments < 0)):
+        raise ValueError(
+            f"{parameter} must change strictly monotonically along step to index by it."
+        )
+
+    def reindex(group: xr.Dataset) -> xr.Dataset:
+        return group.assign_coords({parameter: ("step", values.to_numpy())}).swap_dims(
+            step=parameter
+        )
+
+    return xr.DataTree.from_dict(
+        {
+            "/": tree.to_dataset(inherit=False),
+            "variables": reindex(variables),
+            "parameters": reindex(parameters.drop_vars(parameter)),
+        }
+    )
+
+
 def list_of_array_to_idata(list_of_arrays: list, cge_model):
     """
     Convert a list of arrays to an xarray dataset
