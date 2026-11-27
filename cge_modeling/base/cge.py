@@ -1474,9 +1474,8 @@ class CGEModel:
     def check_for_equilibrium(
         self,
         data: dict[str, float | np.ndarray] | xr.DataTree | xr.Dataset | OptimizeResult,
-        tol=1e-6,
-        print_equations=True,
-    ):
+        tol: float = 1e-6,
+    ) -> None:
         """
         Verify if a given state of the model is an equilibrium.
 
@@ -1486,9 +1485,6 @@ class CGEModel:
             The state of the model to check. Must contain values for all variables and parameters in the model.
         tol: float
             The tolerance for the squared error of the system of equations. Defaults to 1e-6.
-        print_equations: bool
-            If true, prints the symbolic equation along with the name and residuls for each equations that exceeds
-            the tolerance.
 
         Notes
         -----
