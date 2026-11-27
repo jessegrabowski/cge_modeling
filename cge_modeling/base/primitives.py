@@ -1,13 +1,9 @@
 import re
-import time
 
 from abc import ABC
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
 from typing import cast
-
-import pandas as pd
 
 greeks = [
     "alpha",
@@ -280,39 +276,3 @@ class Variable(ModelObject):
 @dataclass(order=True, frozen=False, repr=False)
 class Parameter(ModelObject):
     pass
-
-
-class Result:
-    def __init__(
-        self,
-        name,
-        variables,
-        parameters,
-        initial_values,
-        fitted_values,
-        success,
-        meta=None,
-    ):
-        self.name = name
-        self.variables = variables
-        self.parameters = parameters
-        self.initial_values = initial_values
-        self.fitted_values = fitted_values
-        self.success = success
-        self.fit_time = datetime.now()
-        self.meta = meta if meta is not None else {}
-
-    def to_dict(self):
-        all_names = self.variables + self.parameters
-        return {
-            "initial": dict(zip(all_names, self.initial_values)),
-            "fitted": dict(zip(all_names, self.fitted_values)),
-        }
-
-    def to_frame(self):
-        return pd.DataFrame(self.to_dict())
-
-    def format_datetime(self):
-        local_timezone = time.tzname[0]
-        formatted_date = self.fit_time.strftime("%A, %B %d, %Y %I:%M %p")
-        return " ".join([formatted_date, local_timezone])

@@ -11,6 +11,7 @@ from pytensor.graph.traversal import explicit_graph_inputs
 from cge_modeling import CGEModel
 from cge_modeling import model as cm
 from cge_modeling.base.utilities import variable_dict_to_flat_array
+from cge_modeling.tools.output_tools import datatree_to_value_dict
 from tests.utilities.models import (
     build_model_1,
     build_model_2,
@@ -481,24 +482,84 @@ def test_calibrate_recovers_the_hand_written_calibration(build, calibrate, data,
         if name not in unknown
     }
 
-    result = model.calibrate(data=given)
+    state = model.calibrate(data=given)
 
-    assert result.success
-    np.testing.assert_allclose(
-        result.fitted_values,
-        np.concatenate(variable_dict_to_flat_array(expected, model.variables, model.parameters)),
-        rtol=1e-10,
-        atol=1e-12,
-    )
+    assert state["converged"].item()
+    calibrated = datatree_to_value_dict(state)
+    for name, value in calibrated.items():
+        np.testing.assert_allclose(value, expected[name], rtol=1e-10, atol=1e-12)
 
 
 def test_calibrate_flags_data_that_disagree_with_the_model():
     model = build_model_1()
     expected = calibrate_model_1(**model_1_data)
 
-    result = model.calibrate(data={**model_1_data, "w": 1.0, "C": 1.1 * expected["C"]})
+    state = model.calibrate(data={**model_1_data, "w": 1.0, "C": 1.1 * expected["C"]})
 
-    assert not result.success
+    assert not state["converged"].item()
+
+
+def test_simulate_starts_from_the_calibration_of_an_indexed_model():
+    with CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+        Y = cm.Variable("Y", dims="sector")
+        L = cm.Parameter("L", dims="sector")
+        A = cm.Parameter("A", dims="sector")
+        cm.Equation("Production", Y, A * L)
+
+    state = model.calibrate({"Y": np.array([100.0, 200.0]), "L": np.array([50.0, 40.0])})
+    result = model.simulate(
+        initial_state=state,
+        final_delta_pct={"A": 1.1},
+        use_euler_approximation=False,
+        progressbar=False,
+    )
+
+    np.testing.assert_allclose(result["optimizer"]["variables"]["Y"].isel(step=-1), [110.0, 220.0])
+
+
+def test_simulate_compiles_the_functions_a_later_call_needs():
+    with CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+        Y = cm.Variable("Y", dims="sector")
+        L = cm.Parameter("L", dims="sector")
+        A = cm.Parameter("A", dims="sector")
+        cm.Equation("Production", Y, A * L)
+    state = {"Y": np.array([100.0, 200.0]), "L": np.array([50.0, 40.0]), "A": np.array([2.0, 5.0])}
+
+    model.simulate(
+        initial_state=state,
+        final_delta_pct={"A": 1.1},
+        use_euler_approximation=False,
+        progressbar=False,
+    )
+    result = model.simulate(
+        initial_state=state,
+        final_delta_pct={"A": 1.1},
+        use_optimizer=False,
+        n_iter_euler=10,
+        progressbar=False,
+    )
+
+    np.testing.assert_allclose(result["euler"]["variables"]["Y"].isel(step=-1), [110.0, 220.0])
+
+
+def test_simulate_keeps_the_settings_of_the_last_compile():
+    with CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+        Y = cm.Variable("Y", dims="sector")
+        L = cm.Parameter("L", dims="sector")
+        A = cm.Parameter("A", dims="sector")
+        cm.Equation("Production", Y, A * L)
+    state = {"Y": np.array([100.0, 200.0]), "L": np.array([50.0, 40.0]), "A": np.array([2.0, 5.0])}
+    model.compile(functions_to_compile="root", use_sparse_matrices=True)
+
+    model.simulate(
+        initial_state=state,
+        final_delta_pct={"A": 1.1},
+        n_iter_euler=10,
+        progressbar=False,
+    )
+
+    assert model.f_sparse_system_and_jac is not None
+    assert model.f_euler is not None
 
 
 def test_calibrate_without_data_names_the_entries_no_equation_determines():
