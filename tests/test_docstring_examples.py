@@ -4,11 +4,14 @@ import pkgutil
 import re
 import textwrap
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import pytest
 
 import cge_modeling
 
+API_PAGES = Path(__file__).parent.parent / "docs" / "source" / "api"
 EXAMPLES_SECTION = re.compile(
     r"^Examples\n-{8,}\n(?P<body>.*?)(?=^\S[^\n]*\n-{3,}\n|\Z)", re.M | re.S
 )
@@ -56,3 +59,23 @@ def test_docstring_example_runs(code):
         exec(compile(code, "<docstring example>", "exec"), {"__name__": "__main__"})
     finally:
         plt.close("all")
+
+
+def documented_api():
+    """Yield the defining module and name of every object an autosummary on the API pages lists."""
+    for page in sorted(API_PAGES.glob("*.rst")):
+        module = None
+        for line in page.read_text().splitlines():
+            if line.startswith(".. currentmodule::"):
+                module = importlib.import_module(line.split("::")[1].strip())
+            elif line.startswith("    ") and module and not line.strip().startswith(":"):
+                member = getattr(module, line.strip())
+                yield f"{member.__module__}.{member.__name__}"
+
+
+def test_every_documented_api_object_has_an_example():
+    documented = set(documented_api())
+    examples = {example.id.rsplit("[", 1)[0] for example in docstring_examples()}
+
+    assert len(documented) > 30
+    assert documented <= examples, sorted(documented - examples)
