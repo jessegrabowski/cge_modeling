@@ -46,6 +46,28 @@ class GaussNewtonTrustRegion:
         Positive relative tolerance on the conjugate gradient residual, measured against the norm of the model
         gradient. The trust region ratio test checks the resulting step, so the subproblem does not need solving to
         machine precision. Defaults to 1e-6.
+
+    Examples
+    --------
+    Solve each trust region subproblem with conjugate gradients, which never factorizes the Jacobian:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import GaussNewtonTrustRegion, sparse_root
+
+
+        def fun(x):
+            res = np.array([x[0] + x[1] - 3.0, x[0] * x[1] - 2.0])
+            jac = sp.csc_matrix([[1.0, 1.0], [x[1], x[0]]])
+            return res, jac
+
+
+        solver = GaussNewtonTrustRegion(cg_rtol=1e-8)
+        result = sparse_root(fun, np.array([1.0, 1.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
 
     delta0: float = 1.0

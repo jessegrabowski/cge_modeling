@@ -71,6 +71,38 @@ class NewtonDirection:
     linear_solver : callable, optional
         Sparse linear solver called as ``linear_solver(A, b)``. None uses :func:`scipy.sparse.linalg.spsolve`.
         Defaults to None.
+
+    Examples
+    --------
+    Give the Newton direction its own sparse linear solver and compose it into a ``LineSearchSolver``:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from scipy.sparse.linalg import splu
+
+        from cge_modeling.solvers.sparse_root import (
+            ArmijoBacktracking,
+            LineSearchSolver,
+            NewtonDirection,
+            sparse_root,
+        )
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        def lu_solve(A, b):
+            return splu(A.tocsc()).solve(b)
+
+
+        solver = LineSearchSolver(direction=NewtonDirection(linear_solver=lu_solve),
+                                  globalization=ArmijoBacktracking())
+        result = sparse_root(fun, np.array([2.0, 3.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
 
     linear_solver: Callable | None = None
@@ -173,6 +205,32 @@ class ChordDirection:
         Whether :meth:`reset` keeps the factorization, so the next solve starts with the last one. Defaults to False.
     permc_spec : str, optional
         Column ordering :func:`scipy.sparse.linalg.splu` factorizes in. None uses ``"COLAMD"``. Defaults to None.
+
+    Examples
+    --------
+    Refactorize every three steps, or sooner when the residual falls by less than half, inside a ``LineSearchSolver``:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import (
+            ArmijoBacktracking,
+            ChordDirection,
+            LineSearchSolver,
+            sparse_root,
+        )
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        direction = ChordDirection(recompute_every=3, refresh_ratio=0.5)
+        solver = LineSearchSolver(direction=direction, globalization=ArmijoBacktracking())
+        result = sparse_root(fun, np.array([2.0, 3.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
 
     recompute_every: int | None = 5
@@ -286,6 +344,32 @@ class KrylovDirection:
         Number of direction computations between refreshes of the LU factorization used as the preconditioner, at
         least 1. ``None`` turns the factorization off, for systems too large to factorize. Ignored when
         ``preconditioner`` is given. Defaults to 5.
+
+    Examples
+    --------
+    Use BiCGSTAB without the LU preconditioner, for a system too large to factorize, inside a ``LineSearchSolver``:
+
+    .. code-block:: python
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        from cge_modeling.solvers.sparse_root import (
+            ArmijoBacktracking,
+            KrylovDirection,
+            LineSearchSolver,
+            sparse_root,
+        )
+
+
+        def fun(x):
+            return x**2 - np.array([1.0, 4.0]), sp.diags(2 * x, format="csc")
+
+
+        direction = KrylovDirection(krylov_method="bicgstab", recompute_every=None)
+        solver = LineSearchSolver(direction=direction, globalization=ArmijoBacktracking())
+        result = sparse_root(fun, np.array([2.0, 3.0]), solver=solver, progressbar=False)
+        print(result.x)
     """
 
     krylov_method: str = "gmres"
