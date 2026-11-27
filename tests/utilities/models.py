@@ -935,11 +935,13 @@ def build_model_5() -> CGEModel:
 
 
 @cache
-def load_and_cache_model(model_id: Literal[1, 2], mode="FAST_RUN", functions_to_compile="all"):
-    match model_id:
-        case 1:
-            return load_model_1(mode=mode, functions_to_compile=functions_to_compile)
-        case 2:
-            return load_model_2(mode=mode, functions_to_compile=functions_to_compile)
-        case _:
-            raise ValueError("Invalid model_id. Use 1 or 2.")
+def load_and_cache_model(model_id: Literal[1, 2], **compile_kwargs) -> CGEModel:
+    """
+    Return model ``model_id`` compiled with ``compile_kwargs``, compiling it only on the first request in a session.
+
+    Callers share the returned model, so a test that mutates it, by recompiling it or reassigning roles, builds its own.
+    """
+    builders = {1: build_model_1, 2: build_model_2}
+    if model_id not in builders:
+        raise ValueError("Invalid model_id. Use 1 or 2.")
+    return builders[model_id]().compile(**compile_kwargs)
