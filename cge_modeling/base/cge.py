@@ -7,7 +7,7 @@ import re
 import warnings
 
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
 from numbers import Integral
@@ -106,33 +106,38 @@ def _final_state(tree: xr.DataTree) -> dict[str, np.ndarray]:
 
 
 class CGEModel:
+    """
+    A computable general equilibrium model: named variables, parameters and equations over labeled dimensions.
+
+    Declare the model's objects with :func:`~cge_modeling.model.Variable`, :func:`~cge_modeling.model.Parameter` and
+    :func:`~cge_modeling.model.Equation` inside a ``with model:`` block, or by passing ``model=model``. Variables are
+    solved for, and parameters are held fixed. A model can be solved only when it is square, meaning it has as many
+    variable entries as equation entries once every object is unpacked along its dims.
+
+    Parameters
+    ----------
+    coords : dict of str to list of str, optional
+        Labels of each dimension, keyed by dimension name, such as ``{"sector": ["Agriculture", "Industry"]}``.
+        Default is None, which gives a model with no dimensions.
+
+    Examples
+    --------
+    Declare a two-sector model in which each sector's output is its labor productivity times its labor:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+            Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+            L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+            A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+            cm.Equation("Production", Y, A * L)
+
+        model.n_variables, model.n_equations  # (2, 2)
+    """
+
     def __init__(self, coords: dict[str, list[str]] | None = None):
-        """
-        Main interface for interacting with a CGE model.
-
-        Parameters
-        ----------
-        coords: dict[str, Sequence[str]], optional
-            A dictionary of dimension names and labels associated with each dimension. For example, if certain objects in
-            the model are indexed by "sector", then coords should contain a key "sector" with a list of sector labels as
-            values: {"sector": ["Agriculture", "Industry", "Service"]}.
-
-        Notes
-        -----
-        Computable General Equilibrium models are used to study the change in economic equilibria following shifts in model
-        parameters. The purpose of this class is to provide an organized framework for declaring and studying this class
-        of models.
-
-        A model is built from pytensor xtensor expressions: create it with ``coords``, then declare variables,
-        parameters, and equations with :mod:`cge_modeling.model` inside ``with model:`` or with ``model=model``.
-        Distinction between variables and parameters is enforced to check that the model is square (there are as many
-        equations as there are variables), and to determine which objects to solve for during simulation.
-
-        Variables and parameters are declared with abstract indices, called dims, which ``coords`` makes concrete. When
-        considering the "squareness" of a model, the "unpacked" dimensions of the variables and equations are
-        considered. Therefore, it may not be the case that the number of variables declared is equal to the number of
-        equations declared.
-        """
         self.coords: dict[str, list[str]] = {} if coords is None else coords
 
         self._variables: dict[str, Variable] = {}
@@ -161,14 +166,17 @@ class CGEModel:
 
     @property
     def n_variables(self) -> int:
+        """The number of variable entries once every variable is unpacked along its dims."""
         return len(self.unpacked_variable_names)
 
     @property
     def n_parameters(self) -> int:
+        """The number of parameter entries once every parameter is unpacked along its dims."""
         return len(self.unpacked_parameter_names)
 
     @property
     def n_equations(self) -> int:
+        """The number of equation entries once every equation is unpacked along its dims."""
         return len(self.unpacked_equation_names)
 
     def __enter__(self) -> "CGEModel":
@@ -188,7 +196,38 @@ class CGEModel:
             ) from None
 
     def label_positions(self, dim: str, labels: Any) -> int | list[int]:
-        """Map one label, or a list of labels, of ``dim`` to positions along it."""
+        """
+        Map one label, or a list of labels, of ``dim`` to positions along it.
+
+        Parameters
+        ----------
+        dim : str
+            Name of a dimension in :attr:`coords`.
+        labels : str or sequence of str
+            One label of ``dim``, or several.
+
+        Returns
+        -------
+        positions : int or list of int
+            The position of ``labels`` along ``dim``, or a list of positions when ``labels`` is a sequence.
+
+        Examples
+        --------
+        Find where a sector sits along the ``sector`` dimension, for indexing a flat array of results:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.label_positions("sector", "Industry")  # 1
+            model.label_positions("sector", ["Industry", "Agriculture"])  # [1, 0]
+        """
         if dim not in self.coords:
             raise ValueError(f"Unknown dimension {dim!r}. Model dims are {list(self.coords)}.")
 
@@ -215,6 +254,32 @@ class CGEModel:
 
         The copy's objects are retrieved by name, as ``copy["name"]``. Changes to the copy, such as new equations or
         :meth:`reassign_roles`, leave this model unchanged.
+
+        Returns
+        -------
+        copy : CGEModel
+            An uncompiled model with the same coords, variables, parameters and equations.
+
+        Examples
+        --------
+        Extend a copy with a new equation while the original keeps its own:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            extended = model.copy()
+            with extended:
+                cm.Variable("wage_bill", description="Total labor employed")
+                cm.Equation("Wage bill", extended["wage_bill"], extended["L"].sum("sector"))
+
+            extended.n_equations, model.n_equations  # (3, 2)
         """
         clone = CGEModel(coords={dim: list(labels) for dim, labels in self.coords.items()})
 
@@ -260,6 +325,23 @@ class CGEModel:
         -------
         model : CGEModel
             This model, with the new roles.
+
+        Examples
+        --------
+        Calibrate productivity from observed output by making ``A`` a variable and ``Y`` a parameter:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.reassign_roles(to_parameters="Y", to_variables="A")
+            model.variable_names, model.parameter_names  # (['A'], ['L', 'Y'])
         """
         to_parameters = list(ensure_input_is_sequence(to_parameters))
         to_variables = list(ensure_input_is_sequence(to_variables))
@@ -456,6 +538,22 @@ class CGEModel:
         -------
         model : CGEModel
             This model, with its compiled functions set.
+
+        Examples
+        --------
+        Compile only the root-finding functions, which is all :meth:`simulate` needs when it skips the Euler approximation:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.compile(functions_to_compile="root")
         """
         # cge_modeling.compile.pytensor imports this module, so it can only be imported here.
         from cge_modeling.compile.pytensor import compile_pytensor_cge_functions
@@ -512,7 +610,26 @@ class CGEModel:
         functions: list[CompiledFunctions] = sorted({*self._compiled, *needed, *requested})
         self.compile(**settings, functions_to_compile=functions)
 
-    def check_initialization(self):
+    def check_initialization(self) -> None:
+        """
+        Check that the model is square, with as many variable entries as equation entries.
+
+        Examples
+        --------
+        Check a model before compiling it. A model with a missing equation fails here:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.check_initialization()
+        """
         if self.n_variables != self.n_equations:
             raise ValueError(
                 f"Found {self.n_variables} variables but {self.n_equations} equations. "
@@ -521,18 +638,22 @@ class CGEModel:
 
     @property
     def variable_names(self) -> list[str]:
+        """The names of the model's variables, in declaration order."""
         return list(self._variables.keys())
 
     @property
     def variables(self) -> list[Variable]:
+        """The model's variables, in declaration order."""
         return list(self._variables.values())
 
     @property
     def unpacked_variable_names(self) -> list[str]:
+        """The names of the variable entries, one per label combination, such as ``"Y_Agriculture"``."""
         return list(self._unpacked_variables.keys())
 
     @property
     def unpacked_variables(self) -> list[Variable]:
+        """The variable entries, one per label combination."""
         return [
             self._unpacked_variables[var_name]["modelobj"]
             for var_name in self.unpacked_variable_names
@@ -540,18 +661,22 @@ class CGEModel:
 
     @property
     def parameter_names(self) -> list[str]:
+        """The names of the model's parameters, in declaration order."""
         return list(self._parameters.keys())
 
     @property
     def parameters(self) -> list[Parameter]:
+        """The model's parameters, in declaration order."""
         return list(self._parameters.values())
 
     @property
     def unpacked_parameter_names(self) -> list[str]:
+        """The names of the parameter entries, one per label combination, such as ``"A_Industry"``."""
         return list(self._unpacked_parameters.keys())
 
     @property
     def unpacked_parameters(self) -> list[Parameter]:
+        """The parameter entries, one per label combination."""
         return [
             self._unpacked_parameters[param_name]["modelobj"]
             for param_name in self.unpacked_parameter_names
@@ -559,15 +684,17 @@ class CGEModel:
 
     @property
     def equation_names(self) -> list[str]:
+        """The names of the model's equations, in declaration order."""
         return list(self._xtensor_equations)
 
     @property
     def equations(self) -> list[XTensorEquation]:
-        """The records :func:`cge_modeling.model.Equation` registered on the model."""
+        """The equations :func:`~cge_modeling.model.Equation` registered on the model, in declaration order."""
         return list(self._xtensor_equations.values())
 
     @property
-    def unpacked_equation_names(self):
+    def unpacked_equation_names(self) -> list[str]:
+        """The names of the equation entries, one per label combination of each equation's dims."""
         return list(self._unpacked_equations.keys())
 
     def _unpack_objects(self, objs: Sequence[Variable | Parameter]):
@@ -597,18 +724,114 @@ class CGEModel:
     def _get_object(self, obj_name: str, group: Literal["variables", "parameters"]):
         return getattr(self, f"_{group}")[obj_name]
 
-    def get_parameter(self, param_name: str):
+    def get_parameter(self, param_name: str) -> Parameter:
+        """
+        Return the parameter named ``param_name``.
+
+        Examples
+        --------
+        Read a parameter's dims and description:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.get_parameter("A").dims  # ('sector',)
+        """
         return self._get_object(param_name, "parameters")
 
-    def get_parameters(self, param_names: str | list[str] | None = None):
+    def get_parameters(self, param_names: str | list[str] | None = None) -> list[Parameter]:
+        """
+        Return the parameters named in ``param_names``.
+
+        Parameters
+        ----------
+        param_names : str or list of str, optional
+            Names of the parameters to return. Default is None, which returns every parameter.
+
+        Returns
+        -------
+        parameters : list of Parameter
+            The requested parameters, in the order of ``param_names``.
+
+        Examples
+        --------
+        List every parameter's name:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            [parameter.name for parameter in model.get_parameters()]  # ['L', 'A']
+        """
         if param_names is None:
             param_names = self.parameter_names
         return [self.get_parameter(name) for name in ensure_input_is_sequence(param_names)]
 
-    def get_variable(self, var_name: str):
+    def get_variable(self, var_name: str) -> Variable:
+        """
+        Return the variable named ``var_name``.
+
+        Examples
+        --------
+        Read a variable's description:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.get_variable("Y").description  # 'Output of each sector'
+        """
         return self._get_object(var_name, "variables")
 
-    def get_variables(self, var_names: str | list[str] | None = None):
+    def get_variables(self, var_names: str | list[str] | None = None) -> list[Variable]:
+        """
+        Return the variables named in ``var_names``.
+
+        Parameters
+        ----------
+        var_names : str or list of str, optional
+            Names of the variables to return. Default is None, which returns every variable.
+
+        Returns
+        -------
+        variables : list of Variable
+            The requested variables, in the order of ``var_names``.
+
+        Examples
+        --------
+        List every variable's name:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            [variable.name for variable in model.get_variables()]  # ['Y']
+        """
         if var_names is None:
             var_names = self.variable_names
         return [self.get_variable(name) for name in ensure_input_is_sequence(var_names)]
@@ -617,17 +840,33 @@ class CGEModel:
         self, names: str | list[str] | None = None
     ) -> Variable | Parameter | list[Variable | Parameter]:
         """
-        Retrieve model objects (variables or parameters) from the model by name.
+        Return variables or parameters by name.
 
         Parameters
         ----------
-        names: str or list of str, optional
-            Variable or parameter names to retrieve from the model. If None, return all model variables and parameters.
+        names : str or list of str, optional
+            Names of variables or parameters. Default is None, which returns every parameter and variable.
 
         Returns
         -------
-        out: Variable, Parameter, or list of Variable or Parameter
-            The requested model object when one name matches, otherwise the list of requested objects.
+        out : Variable, Parameter, or list of Variable and Parameter
+            The requested object when one name is given, otherwise the list of requested objects.
+
+        Examples
+        --------
+        Fetch a variable and a parameter in one call:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            output, productivity = model.get(["Y", "A"])
         """
         if names is None:
             names = self.parameter_names + self.variable_names
@@ -647,7 +886,26 @@ class CGEModel:
 
         return out
 
-    def get_shape(self, name):
+    def get_shape(self, name: str) -> Iterator[int]:
+        """
+        Yield the length of each dim of the variable or parameter named ``name``.
+
+        Examples
+        --------
+        Find the shape an array of values for ``Y`` must have:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            tuple(model.get_shape("Y"))  # (2,)
+        """
         obj = self.get(name)
         return (len(self.coords[dim]) for dim in obj.dims)
 
@@ -655,7 +913,30 @@ class CGEModel:
         self,
         variables: Literal["all", "variables", "parameters"] | list[str] = "all",
     ) -> None:
-        """Display a table of the symbols and descriptions of ``variables``."""
+        """
+        Display a table of the symbols and descriptions of model objects.
+
+        Parameters
+        ----------
+        variables : {"all", "variables", "parameters"} or list of str, optional
+            The objects to list. Default is ``"all"``, which lists every variable and parameter.
+
+        Examples
+        --------
+        Show every object of a model with its description:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.summary()
+        """
 
         if variables == "all":
             variables = [
@@ -687,7 +968,25 @@ class CGEModel:
         display_table(info_dict)
 
     def equation_table(self) -> None:
-        """Display a table of the model's equations, numbered, with their names and LaTeX forms."""
+        """
+        Display a table of the model's equations, numbered, with their names and LaTeX forms.
+
+        Examples
+        --------
+        Typeset the equations of a model:
+
+        .. code-block:: python
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.equation_table()
+        """
         info_dict: dict[str, list[Any]] = {"": [], "Name": [], "Equation": []}
         for number, equation in enumerate(self._xtensor_equations.values(), start=1):
             info_dict[""].append(number)
@@ -719,6 +1018,25 @@ class CGEModel:
         state : xr.DataTree
             The given and solved values in ``variables`` and ``parameters`` children, which :meth:`simulate` accepts
             as its ``initial_state``. The root holds ``converged``, which is True when every equation holds.
+
+        Examples
+        --------
+        Calibrate productivity from observed output and labor:
+
+        .. code-block:: python
+
+            import numpy as np
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            state = model.calibrate({"Y": np.array([100.0, 200.0]), "L": np.array([50.0, 40.0])})
+            state["parameters"]["A"]  # [2., 5.]
         """
         # cge_modeling.tools.calibration imports the compile modules, which import this module.
         from cge_modeling.tools.calibration import (
@@ -1075,61 +1393,57 @@ class CGEModel:
         **solver_kwargs,
     ) -> dict[str, np.ndarray]:
         """
-        Generate a Social Accounting Matrix (SAM) from the model parameters.
+        Solve for the variable values implied by a set of parameter values, which together form a balanced SAM.
+
+        Market clearing makes every solution a closed system of transactions, but a model usually has infinitely many,
+        so the solver returns the one nearest ``initial_variable_guess``. The guess pins down the level of the economy.
 
         Parameters
         ----------
-        param_dict: dict[str, np.ndarray]
-            A dictionary of parameter values. The keys should be the names of the parameters, and the values should be
-            numpy arrays of the same shape as the parameter.
-
-        initial_variable_guess: dict[str, np.ndarray]
-            A dictionary of initial values for the model variables. The keys should be the names of the variables, and
-            the values should be numpy arrays of the same shape as the variable.
-
-        fixed_values: dict[str, np.ndarray], optional
-            Values at which to hold a subset of model variables while solving for the rest. The keys are variable
-            names, and the values are numpy arrays of the same shape as the variable. Only supported with
-            solve_method='minimize', because fixing variables leaves more equations than unknowns.
-
-        solve_method: str
-            The method to use to solve the model. One of 'root', 'minimize', or 'euler'. Defaults to 'root'.
-
-            Note that Euler is not recommended for generating a SAM, because it assumes the initial point is itself a
-            SAM (in which case you don't need this function). It is included for testing purposes only.
-
-        use_jac: bool
-            Whether to use the Jacobian of the system of equations when solving with the root or minimize methods.
-            Defaults to True.
-
-        use_hess: bool
-            Whether to use the Hessian of the loss function when solving with the minimize method. Ignored if method
-            is not 'minimize'. Defaults to True.
-
-        n_steps: int
-            The number of steps to use when solving with the Euler method. Ignored if method is not 'euler'. Defaults
-            to 100.
-
-        **solver_kwargs: dict
-            Additional keyword arguments to pass to the solver, either scipy.optimize.root or scipy.optimize.minimize,
-            depending on the chosen method. See those docstrings for details.
+        param_dict : dict of str to ndarray
+            Value of every parameter, keyed by name.
+        initial_variable_guess : dict of str to ndarray
+            Starting value of every variable, keyed by name.
+        solve_method : {"root", "minimize", "euler"}, optional
+            How to solve the system. ``"euler"`` assumes the starting point is already an equilibrium, so it is only
+            useful for testing. Default is ``"root"``.
+        fixed_values : dict of str to ndarray, optional
+            Values at which to hold some variables while solving for the rest. Requires ``solve_method="minimize"``,
+            because fixing variables leaves more equations than unknowns. Default is None.
+        use_jac : bool, optional
+            Use the Jacobian of the system with the root and minimize methods. Default is True.
+        use_hess : bool, optional
+            Use the Hessian of the loss with the minimize method. Default is True.
+        n_steps : int, optional
+            Number of steps of the Euler method. Default is 100.
+        **solver_kwargs
+            Passed to the solver of ``solve_method``, such as ``progressbar=False``.
 
         Returns
         -------
-        variable_dict: dict[str, np.ndarray]
-            A dictionary of variable values, including any fixed values. The keys are the names of the variables, and
-            the values are numpy arrays of the same shape as the variable.
+        variable_dict : dict of str to ndarray
+            The solved value of every variable, including the fixed ones, keyed by name.
 
-        Notes
-        -----
-        This function generates a "SAM" by solving for the values of the model variables that are implied by the
-        provided parameter values. This mapping is valid by construction, because the structure of a correctly specified
-        CGE model will ensure all markets clear, resulting in a closed system of economic transactions between model
-        agents.
+        Examples
+        --------
+        Solve for the output that a given productivity and labor imply:
 
-        Initial variables need to be provided in order to pin down the **level** of the economy. In general, an infinite
-        number of solutions exist for a given set of parameter values. What is returned is just one solution, which is
-        close to the provided initial values.
+        .. code-block:: python
+
+            import numpy as np
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.compile(functions_to_compile="root")
+            model.generate_SAM(param_dict={"A": np.array([2.0, 5.0]), "L": np.array([50.0, 40.0])},
+                               initial_variable_guess={"Y": np.ones(2)},
+                               progressbar=False)
         """
         fixed_values = {} if fixed_values is None else fixed_values
 
@@ -1206,97 +1520,106 @@ class CGEModel:
         **optimizer_kwargs,
     ):
         """
-        Simulate a shock to the model economy by computing the equilibrium state of the economy at the provided
-        post-shock values.
+        Simulate a shock: move some parameters from their values in ``initial_state`` to new ones, and solve for the
+        equilibrium at the new values.
 
         Parameters
         ----------
-        initial_state: dict[str, np.ndarray], dict of str to xr.DataTree, or xr.DataTree
-            A dictionary of initial values for the model variables and parameters. The keys should be the names of the
-            variables and parameters, and the values should be numpy arrays of the same shape as the variable or
-            parameter.
-
-            The result of an earlier call to ``simulate`` is also accepted, and the simulation starts from its final
-            state: the optimizer's solution if it ran, otherwise the last step of the Euler approximation. So is one
-            of its groups, such as ``result["euler"]``. The last Euler step is an equilibrium only when the optimizer
-            or a ``solve_every`` checkpoint solved it.
-
-            .. warning:: The initial state **must** represent a model equilibrium. A state taken from an earlier
-               simulation is checked, and a ValueError is raised if it is not an equilibrium.
-
-        final_values: dict[str, np.ndarray], optional
-            A dictionary of exact final values for a subset of model parameters. The keys should be the names of the
-            parameters to be changed, and the values should be numpy arrays of the same shape as the parameter.
-
-            Exactly one of final_values, final_delta, or final_delta_pct must be provided.
-
-        final_delta: dict[str, np.ndarray], optional
-            A dictionary of changes to be applied to a subset of the model parameters. Changes are added to the initial
-            values, so that positive values increase the parameter value and negative values decrease the parameter.
-            The keys should be the names of the parameters to be changed, and the values should be numpy arrays of the
-            same shape as the parameter.
-
-            Exactly one of final_values, final_delta, or final_delta_pct must be provided.
-
-        final_delta_pct: dict[str, np.ndarray], optional
-            A dictionary of percentage changes to be applied to a subset of the model parameters. Values provided are
-            multipled by the initial values, so that values greater than 1.00 represent precentage increases, and values
-            less than 1.00 represent percentage decreases. The keys should be the names of the parameters to be changed,
-            and the values should be numpy arrays of the same shape as the parameter.
-
-            Exactly one of final_values, final_delta, or final_delta_pct must be provided.
-
-        use_euler_approximation: bool, optional
-            Whether to use the Euler approximation to compute the final state of the economy. Defaults to True. If
-            use_optimizer is also true, the Euler approximation will be used as the initial guess for the optimizer.
-
-        use_optimizer: bool, optional
-            Whether to use a numerical optimizer to compute the final state of the economy. Defaults to True. If
-            use_euler_approximation is also true, the Euler approximation will be used as the initial guess for the
-            optimizer.
-
-        optimizer_mode: str, optional
-            The type of optimizer to use. One of 'root' or 'minimize'. Ignored if use_optimizer is False. Defaults to
-            'root'.
-
-        n_iter_euler: int
-            The number of iterations to use when computing the Euler approximation. Defaults to 10,000. Ignored if
-            use_euler_approximation is False.
-
-        solve_every: int, optional
-            If given, solve for the equilibrium exactly every ``solve_every`` Euler steps with the optimizer selected by
-            ``optimizer_mode``, and continue the Euler approximation from the solution. This keeps the error of the
-            Euler path from growing along it. The Euler result then has a ``converged`` variable along a
-            ``checkpoint`` dimension, whose coordinate holds the step of each solve. The final step is solved by the
-            optimizer when use_optimizer is True, and as a checkpoint otherwise. Ignored if use_euler_approximation is
-            False.
-
-        compile_kwargs: dict, optional
-            Passed to :meth:`compile`, which then runs on every call. Without it, the functions this call needs and
-            the model lacks are compiled with the settings of the model's last compile.
-
-        optimizer_kwargs: dict, optional
-            Additional keyword arguments to pass to the optimizer. See the docstring for scipy.optimize.root or
-            scipy.optimize.minimize for details.
-
-        save_results: bool, optional
-            If True, result object will be pickled and saved. Defaults to True.
-
-        output_path: str, optional
-            The path to save the result object. Defaults to 'results'.
-
-        simulation_name: str, optional
-            The name of the simulation. Defaults to '{date}-{time}'. Used to name the saved result object.
-
-        verbose: bool, default True
-            If True, display status messages about the simulation.
+        initial_state : dict of str to ndarray or xr.DataTree
+            An equilibrium of the model: the value of every variable and parameter, keyed by name. The state that
+            :meth:`calibrate` returns, the result of an earlier call to ``simulate``, or one of its groups such as
+            ``result["euler"]``, is also accepted, and the simulation starts from its final state. A ``DataTree`` state
+            is checked, and a ValueError is raised if it is not an equilibrium.
+        final_values : dict of str to ndarray, optional
+            Final values of the shocked parameters. Exactly one of ``final_values``, ``final_delta`` and
+            ``final_delta_pct`` must be given.
+        final_delta : dict of str to ndarray, optional
+            Changes added to the initial values of the shocked parameters.
+        final_delta_pct : dict of str to ndarray, optional
+            Factors that multiply the initial values of the shocked parameters, so that 1.1 is a 10% increase.
+        use_euler_approximation : bool, optional
+            Trace the path to the new equilibrium with the Euler approximation. When ``use_optimizer`` is also True,
+            the last Euler step is the optimizer's starting point. Default is True.
+        use_optimizer : bool, optional
+            Solve for the new equilibrium with a numerical optimizer. Default is True.
+        optimizer_mode : {"root", "minimize"}, optional
+            Find a root of the system, or minimize its squared residuals. Default is ``"root"``.
+        n_iter_euler : int, optional
+            Number of Euler steps. Default is 10,000.
+        solve_every : int, optional
+            Solve for the equilibrium exactly every ``solve_every`` Euler steps with the optimizer of
+            ``optimizer_mode``, and continue the Euler approximation from the solution, so the error of the path does
+            not grow along it. The Euler result then has a ``converged`` variable along a ``checkpoint`` dimension,
+            whose coordinate holds the step of each solve. Default is None, which never solves along the path.
+        compile_kwargs : dict, optional
+            Passed to :meth:`compile`, which then runs on every call. Default is None, which compiles the functions
+            this call needs and the model lacks, with the settings of the model's last compile.
+        save_results : bool, optional
+            Pickle the result to ``output_path``. Default is False.
+        overwrite : bool, optional
+            Overwrite a saved result with the same name. When False and one exists, it is loaded and returned instead
+            of simulating. Default is False.
+        output_path : str, optional
+            Directory of saved results. Default is ``"results/"``.
+        simulation_name : str, optional
+            File name of the saved result. Default is None, which builds one from the date and the solver settings.
+        verbose : bool, optional
+            Log status messages. Default is True.
+        **optimizer_kwargs
+            Passed to the optimizer, such as ``method``, ``use_jac`` or ``progressbar=False``.
 
         Returns
         -------
-        result: Result or InferenceData
-            A Result object containing the initial and final values of the model variables and parameters. If
-            use_euler_approximation is True, an InferenceData object containing the Euler approximation will be returned
-            instead.
+        result : dict
+            ``"euler"``, the Euler path as an ``xr.DataTree`` with ``variables`` and ``parameters`` children indexed by
+            ``step``, when the Euler approximation ran. ``"optimizer"``, the initial and solved states as an
+            ``xr.DataTree``, and ``"optim_res"``, the optimizer's raw result, when the optimizer ran.
+
+        Examples
+        --------
+        Raise productivity in both sectors by 10% and solve for the new output:
+
+        .. code-block:: python
+
+            import numpy as np
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            values = {"Y": np.array([100.0, 200.0]), "L": np.array([50.0, 40.0]), "A": np.array([2.0, 5.0])}
+
+            result = model.simulate(initial_state=values,
+                                    final_delta_pct={"A": 1.1},
+                                    use_euler_approximation=False,
+                                    progressbar=False)
+            result["optimizer"]["variables"]["Y"]
+
+        Trace the path between the two equilibria with the Euler approximation, solving exactly every 25 steps:
+
+        .. code-block:: python
+
+            import numpy as np
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+            values = {"Y": np.array([100.0, 200.0]), "L": np.array([50.0, 40.0]), "A": np.array([2.0, 5.0])}
+
+            result = model.simulate(initial_state=values,
+                                    final_delta_pct={"A": 1.1},
+                                    n_iter_euler=100,
+                                    solve_every=25,
+                                    progressbar=False)
+            result["euler"]["variables"]["Y"].sel(sector="Industry")
         """
         if optimizer_mode not in ("root", "minimize"):
             raise ValueError(f"Unknown optimizer mode {optimizer_mode}")
@@ -1477,18 +1800,36 @@ class CGEModel:
         tol: float = 1e-6,
     ) -> None:
         """
-        Verify if a given state of the model is an equilibrium.
+        Log whether a state of the model is an equilibrium, and the residual of every equation that misses it.
 
         Parameters
         ----------
-        data: dict, xr.DataTree, or xr.Dataset
-            The state of the model to check. Must contain values for all variables and parameters in the model.
-        tol: float
-            The tolerance for the squared error of the system of equations. Defaults to 1e-6.
+        data : dict of str to ndarray, xr.DataTree, xr.Dataset, or OptimizeResult
+            The value of every variable and parameter, keyed by name, or a result that holds them. A ``DataTree`` is
+            read at its last step.
+        tol : float, optional
+            Largest sum of squared residuals that counts as an equilibrium. Default is 1e-6.
 
-        Notes
-        -----
-        The data argument is expected to be either a dictionary of variable and parameter values.
+        Examples
+        --------
+        Check that a calibrated state solves the model:
+
+        .. code-block:: python
+
+            import numpy as np
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            values = {"Y": np.array([100.0, 200.0]), "L": np.array([50.0, 40.0]), "A": np.array([2.0, 5.0])}
+
+            model.compile(functions_to_compile="root")
+            model.check_for_equilibrium(values)  # Equilibrium found! Total squared error: 0.000000
         """
 
         if isinstance(data, xr.DataTree):
@@ -1525,7 +1866,40 @@ class CGEModel:
                 if abs(resid) > tol:
                     _log.info(f"{eq_name:<{longest_name + 10}}{pad}{resid:0.6f}")
 
-    def check_shape(self, data, name):
+    def check_shape(self, data: Any, name: str) -> np.ndarray:
+        """
+        Convert ``data`` to an array for the variable or parameter ``name``, printing a message if its shape is wrong.
+
+        Parameters
+        ----------
+        data : array_like
+            Values for ``name``. A one-element array for a scalar object is squeezed to a scalar.
+        name : str
+            Name of a variable or parameter.
+
+        Returns
+        -------
+        data : ndarray
+            ``data`` as an array.
+
+        Examples
+        --------
+        Convert a list of sector outputs to an array:
+
+        .. code-block:: python
+
+            import numpy as np
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.check_shape([100.0, 200.0], "Y")  # array([100., 200.])
+        """
         obj = self.get(name)
         dims = obj.dims
         shape = tuple([len(self.coords[i]) for i in dims])
@@ -1537,7 +1911,42 @@ class CGEModel:
             print(f"{name} has shape {data.shape}, expected {shape}")
         return data
 
-    def finalize_calibration(self):
+    def finalize_calibration(self) -> dict[str, np.ndarray]:
+        """
+        Collect the calibrated value of every variable and parameter from the calling scope's local names.
+
+        Call it at the end of a calibration function that assigns each model object to a local variable of the same
+        name. Each value is converted with :meth:`check_shape`, and every object without a local value is printed.
+
+        Returns
+        -------
+        values : dict of str to ndarray
+            The value of every variable and parameter found, keyed by name.
+
+        Examples
+        --------
+        Calibrate productivity in a function whose local names match the model's objects:
+
+        .. code-block:: python
+
+            import numpy as np
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            def calibrate(model, Y, L):
+                A = Y / L
+                return model.finalize_calibration()
+
+
+            values = calibrate(model, Y=np.array([100.0, 200.0]), L=np.array([50.0, 40.0]))
+            values["A"]  # array([2., 5.])
+        """
         d = {}
         caller_locals = inspect.currentframe().f_back.f_locals
 
@@ -1551,7 +1960,40 @@ class CGEModel:
                 print(f"{obj.name} not found in model variables")
         return d
 
-    def initialize_parameter(self, name, value=5.0):
+    def initialize_parameter(self, name: str, value: float = 5.0) -> np.ndarray:
+        """
+        Return an array of ``value`` with the shape of the variable or parameter ``name``.
+
+        Parameters
+        ----------
+        name : str
+            Name of a variable or parameter.
+        value : float, optional
+            The fill value. Default is 5.0.
+
+        Returns
+        -------
+        values : ndarray
+            An array of ``value`` with one axis per dim of ``name``.
+
+        Examples
+        --------
+        Start every sector's productivity at one:
+
+        .. code-block:: python
+
+            import numpy as np
+
+            import cge_modeling as cm
+
+            with cm.CGEModel(coords={"sector": ["Agriculture", "Industry"]}) as model:
+                Y = cm.Variable("Y", dims="sector", description="Output of each sector")
+                L = cm.Parameter("L", dims="sector", description="Labor employed in each sector")
+                A = cm.Parameter("A", dims="sector", description="Labor productivity of each sector")
+                cm.Equation("Production", Y, A * L)
+
+            model.initialize_parameter("A", value=1.0)  # array([1., 1.])
+        """
         dims = self.get(name).dims
         size = [len(self.coords[dim]) for dim in dims]
         return np.full(size, value)

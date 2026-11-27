@@ -6,4 +6,8 @@ API Reference
 .. toctree::
     :maxdepth: 1
 
-    api/base
+    api/model
+    api/production_functions
+    api/sam_estimation
+    api/results
+    api/solvers
