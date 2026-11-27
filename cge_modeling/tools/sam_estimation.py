@@ -245,6 +245,40 @@ class Constraint:
     A residual with dims is one constraint per position. Positions where the residual's constant part is NaN, as from a
     Series with missing values, are dropped. An equality with a ``penalty`` is a measurement with error, which adds the
     penalty of its residual to the objective in place of holding exactly.
+
+    Comparing a :class:`SAMExpression` with ``==``, ``<=`` or ``>=`` returns a constraint, so it is rarely built
+    directly.
+
+    Attributes
+    ----------
+    is_equality : bool
+        True for ``residual == 0``, False for ``residual <= 0``.
+    residual : SAMExpression
+        The expression the constraint restricts.
+    penalty : Penalty, optional
+        The error distribution of a measurement with error. None for a constraint that holds exactly.
+
+    Examples
+    --------
+    Fix the wage bill at 100 by comparing a selected cell with a number:
+
+    .. code-block:: python
+
+        import pandas as pd
+
+        import cge_modeling as cm
+
+        accounts = ["Labor", "Firms", "Households"]
+        prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                              [0.0, 0.0, 120.0],
+                              [90.0, 15.0, 0.0]],
+                             index=accounts,
+                             columns=accounts)
+
+        sam = cm.SymbolicSAM(prior)
+        wages = sam.sel(row="Labor", col="Firms") == 100.0
+        sam.subject_to(wages=wages)
+        estimate = sam.fit()
     """
 
     is_equality: bool
@@ -265,6 +299,32 @@ class Constraint:
         sigma : float, pandas.Series, pandas.DataFrame or xarray.DataArray
             Positive standard deviation of the error, in the prior's units. Labeled data aligns with the constraint's
             positions, like the right-hand side of a comparison.
+
+        Returns
+        -------
+        constraint : Constraint
+            A copy of this equality with the error distribution attached.
+
+        Examples
+        --------
+        Treat a wage bill of 100 as a survey figure with a standard error of 5, which the estimate may miss:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            sam = cm.SymbolicSAM(prior)
+            sam.subject_to(wages=(sam.sel(row="Labor", col="Firms") == 100.0).normal(sigma=5.0))
+            estimate = sam.fit(objective=cm.KL(dispersion=1.0))
         """
         return self._with_penalty(NormalPenalty(sigma))
 
@@ -278,6 +338,32 @@ class Constraint:
         scale : float, pandas.Series, pandas.DataFrame or xarray.DataArray
             Positive scale :math:`b` of the error, in the prior's units. Labeled data aligns with the constraint's
             positions, like the right-hand side of a comparison.
+
+        Returns
+        -------
+        constraint : Constraint
+            A copy of this equality with the error distribution attached.
+
+        Examples
+        --------
+        Treat a wage bill of 100 as a measurement with Laplace error, which penalizes large misses less than normal error:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            sam = cm.SymbolicSAM(prior)
+            sam.subject_to(wages=(sam.sel(row="Labor", col="Firms") == 100.0).laplace(scale=5.0))
+            estimate = sam.fit(objective=cm.KL(dispersion=1.0))
         """
         return self._with_penalty(LaplacePenalty(scale))
 
@@ -295,6 +381,32 @@ class Constraint:
             like the right-hand side of a comparison.
         threshold : float
             Positive :math:`k`, the standardized residual where the penalty turns from quadratic to linear.
+
+        Returns
+        -------
+        constraint : Constraint
+            A copy of this equality with the error distribution attached.
+
+        Examples
+        --------
+        Treat a wage bill of 100 as a measurement that is normal within 1.5 standard errors and Laplace beyond:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            sam = cm.SymbolicSAM(prior)
+            sam.subject_to(wages=(sam.sel(row="Labor", col="Firms") == 100.0).huber(sigma=5.0, threshold=1.5))
+            estimate = sam.fit(objective=cm.KL(dispersion=1.0))
         """
         if not threshold > 0.0:
             raise ValueError(f"The Huber threshold must be positive, not {threshold}")
@@ -338,6 +450,27 @@ class SAMEstimate:
         The objective value at the estimate, including the penalties of measurements with error.
     status : str
         The solver status, in cvxpy's vocabulary.
+
+    Examples
+    --------
+    Read the balanced SAM, the objective value and the solver status from a fit:
+
+    .. code-block:: python
+
+        import pandas as pd
+
+        import cge_modeling as cm
+
+        accounts = ["Labor", "Firms", "Households"]
+        prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                              [0.0, 0.0, 120.0],
+                              [90.0, 15.0, 0.0]],
+                             index=accounts,
+                             columns=accounts)
+
+        estimate = cm.SymbolicSAM(prior).fit()
+        estimate.sam
+        estimate.status
     """
 
     sam: IntoDataFrame | xr.DataArray
@@ -373,6 +506,26 @@ class SAMEstimate:
         covariance : pandas.DataFrame
             Covariance of the requested cells, in the prior's units squared, indexed on both axes by the row and column
             account of each cell.
+
+        Examples
+        --------
+        Fit under least squares, then ask for the joint uncertainty of two cells:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            estimate = cm.SymbolicSAM(prior).fit(objective=cm.LeastSquares())
+            estimate.covariance(cells=[("Labor", "Firms"), ("Firms", "Households")])
         """
         selected = _cell_indices(self._symbolic_sam, cells)
         labels = _cell_labels(self._symbolic_sam, selected)
@@ -391,6 +544,26 @@ class SAMEstimate:
         variance : pandas.Series
             Variance of each nonzero cell of the prior, in the prior's units squared, indexed by the row and column
             account of each cell.
+
+        Examples
+        --------
+        Fit under least squares, then read the variance of every cell:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            estimate = cm.SymbolicSAM(prior).fit(objective=cm.LeastSquares())
+            estimate.variance()
         """
         every_cell = np.arange(self._symbolic_sam.n_cells)
         return pd.Series(
@@ -503,6 +676,28 @@ class KL(Divergence):
     dispersion : float, optional
         Positive :math:`\phi`, in the prior's units, which sets how the objective trades off against measurements with
         error. Default is None, which uses 1.0 and warns when a measurement with error is present.
+
+    Examples
+    --------
+    Weight the wage bill ten times as heavily as the other cells, so the estimate moves it least:
+
+    .. code-block:: python
+
+        import pandas as pd
+
+        import cge_modeling as cm
+
+        accounts = ["Labor", "Firms", "Households"]
+        prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                              [0.0, 0.0, 120.0],
+                              [90.0, 15.0, 0.0]],
+                             index=accounts,
+                             columns=accounts)
+
+        weights = pd.DataFrame(1.0, index=accounts, columns=accounts)
+        weights.loc["Labor", "Firms"] = 10.0
+
+        estimate = cm.SymbolicSAM(prior).fit(objective=cm.KL(weights=weights))
     """
 
     weights: CellData | None = None
@@ -531,6 +726,25 @@ class LeastSquares(Objective):
     sigma : float, numpy.ndarray, pandas.DataFrame or xarray.DataArray, optional
         Positive standard error of each cell, in the prior's units, as a number or laid out like the prior. A smaller
         sigma holds a cell closer to its prior value. Default is None, which uses the magnitude of each prior cell.
+
+    Examples
+    --------
+    Balance under least squares, with each cell's standard error equal to its prior magnitude:
+
+    .. code-block:: python
+
+        import pandas as pd
+
+        import cge_modeling as cm
+
+        accounts = ["Labor", "Firms", "Households"]
+        prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                              [0.0, 0.0, 120.0],
+                              [90.0, 15.0, 0.0]],
+                             index=accounts,
+                             columns=accounts)
+
+        estimate = cm.SymbolicSAM(prior).fit(objective=cm.LeastSquares())
     """
 
     sigma: CellData | None = None
@@ -560,6 +774,25 @@ class ReverseKL(Divergence):
     dispersion : float, optional
         Positive :math:`\phi`, in the prior's units, which sets how the objective trades off against measurements with
         error. Default is None, which uses 1.0 and warns when a measurement with error is present.
+
+    Examples
+    --------
+    Balance with the reverse KL divergence in place of the default :class:`KL`:
+
+    .. code-block:: python
+
+        import pandas as pd
+
+        import cge_modeling as cm
+
+        accounts = ["Labor", "Firms", "Households"]
+        prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                              [0.0, 0.0, 120.0],
+                              [90.0, 15.0, 0.0]],
+                             index=accounts,
+                             columns=accounts)
+
+        estimate = cm.SymbolicSAM(prior).fit(objective=cm.ReverseKL())
     """
 
     dispersion: float | None = None
@@ -585,6 +818,25 @@ class Pearson(Divergence):
     dispersion : float, optional
         Positive :math:`\phi`, in the prior's units, which sets how the objective trades off against measurements with
         error. Default is None, which uses 1.0 and warns when a measurement with error is present.
+
+    Examples
+    --------
+    Balance with the Pearson chi-squared distance, a quadratic approximation of :class:`KL`:
+
+    .. code-block:: python
+
+        import pandas as pd
+
+        import cge_modeling as cm
+
+        accounts = ["Labor", "Firms", "Households"]
+        prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                              [0.0, 0.0, 120.0],
+                              [90.0, 15.0, 0.0]],
+                             index=accounts,
+                             columns=accounts)
+
+        estimate = cm.SymbolicSAM(prior).fit(objective=cm.Pearson())
     """
 
     dispersion: float | None = None
@@ -614,6 +866,27 @@ class SymbolicSAM:
     index_column : str, optional
         The column of a frame prior that holds the row labels, and the name of the row dim. The column dim is
         ``"col"``. Required for a frame without an index. Default is None, which uses a pandas DataFrame's index.
+
+    Examples
+    --------
+    Balance a three-account SAM whose receipts and payments disagree, so that every account's receipts equal its payments:
+
+    .. code-block:: python
+
+        import pandas as pd
+
+        import cge_modeling as cm
+
+        accounts = ["Labor", "Firms", "Households"]
+        prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                              [0.0, 0.0, 120.0],
+                              [90.0, 15.0, 0.0]],
+                             index=accounts,
+                             columns=accounts)
+
+        sam = cm.SymbolicSAM(prior)
+        estimate = sam.fit()
+        estimate.sam
     """
 
     def __init__(self, prior: IntoDataFrame | xr.DataArray, index_column: str | None = None):
@@ -673,6 +946,38 @@ class SymbolicSAM:
         Each selection is a label, a leading part of a MultiIndex label such as ``"Factor"`` or ``("Factor", "Labor")``
         (selecting every account under it), or a list of those. A single account drops its dim, as in xarray. A dim
         without a selection, or with ``None``, keeps every account.
+
+        Parameters
+        ----------
+        **selections
+            Account labels to select, keyed by dim name.
+
+        Returns
+        -------
+        expression : SAMExpression
+            The selected cells, over the dims that kept more than one account.
+
+        Examples
+        --------
+        Constrain the total income of households, the sum of the ``Households`` row:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            sam = cm.SymbolicSAM(prior)
+            sam.subject_to(household_income=sam.sel(row="Households").sum() == 110.0)
+            estimate = sam.fit()
+
         """
         unknown_dims = set(selections) - set(self.dims)
         if unknown_dims:
@@ -704,11 +1009,75 @@ class SymbolicSAM:
         )
 
     def sum(self, dim: str | None = None) -> SAMExpression:
-        """Sum the whole SAM over ``dim``: the column dim gives row sums and the row dim gives column sums."""
+        """
+        Sum the whole SAM over ``dim``: the column dim gives row sums and the row dim gives column sums.
+
+        Parameters
+        ----------
+        dim : str, optional
+            The dim to sum over. Default is None, which sums every cell.
+
+        Returns
+        -------
+        expression : SAMExpression
+            The sums, over the dim that was not summed.
+
+        Examples
+        --------
+        Fix the row total of ``Households`` with a Series, whose missing labels impose nothing:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            sam = cm.SymbolicSAM(prior)
+            sam.subject_to(household_income=sam.sum("col") == pd.Series({"Households": 110.0}))
+            estimate = sam.fit()
+
+        """
         return self._matrix.sum(dim)
 
     def subject_to(self, **constraints: Constraint) -> None:
-        """Add constraints, each named by its keyword."""
+        """
+        Add constraints, each named by its keyword.
+
+        Parameters
+        ----------
+        **constraints : Constraint
+            Constraints on this SAM's cells, each named by its keyword. The name ``"accounting identity"`` is reserved.
+
+        Examples
+        --------
+        Fix the wage bill and put a floor under dividends, then fit under both constraints:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            sam = cm.SymbolicSAM(prior)
+            sam.subject_to(wages=sam.sel(row="Labor", col="Firms") == 100.0,
+                           dividends=sam.sel(row="Households", col="Firms") >= 10.0)
+            estimate = sam.fit()
+
+        """
         for name, constraint in constraints.items():
             if not isinstance(constraint, Constraint) or constraint.sam is not self:
                 raise TypeError(f"Constraint {name!r} must compare expressions of this SymbolicSAM")
@@ -756,6 +1125,30 @@ class SymbolicSAM:
         -------
         estimate : SAMEstimate
             The estimated SAM, the objective value, and the solver status.
+
+        Examples
+        --------
+        Balance under least squares with tighter CLARABEL tolerances:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            sam = cm.SymbolicSAM(prior)
+            estimate = sam.fit(objective=cm.LeastSquares(),
+                               tol_gap_abs=1e-10,
+                               tol_gap_rel=1e-10,
+                               tol_feas=1e-10)
+
         """
         forced_to_zero = cells_forced_to_zero(self)
         if forced_to_zero:
@@ -847,6 +1240,30 @@ class SymbolicSAM:
         -------
         value : float
             The objective at ``candidate``.
+
+        Examples
+        --------
+        Compare the objective at the prior, which is zero, with its value at the estimate:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            sam = cm.SymbolicSAM(prior)
+            estimate = sam.fit()
+
+            sam.objective_value(prior)
+            sam.objective_value(estimate.sam)
+
         """
         if objective is None:
             objective = KL()
@@ -897,7 +1314,40 @@ class SymbolicSAM:
         return cp.sum(cp.hstack(terms))
 
     def like_prior(self, cell_values: np.ndarray) -> IntoDataFrame | xr.DataArray:
-        """Return a SAM in the prior's type and layout, with ``cell_values`` in the prior's nonzero cells."""
+        """
+        Return a SAM in the prior's type and layout, with ``cell_values`` in the prior's nonzero cells.
+
+        Parameters
+        ----------
+        cell_values : numpy.ndarray
+            One value per nonzero cell of the prior, in row-major order.
+
+        Returns
+        -------
+        sam : pandas.DataFrame, xarray.DataArray or native frame
+            The SAM with ``cell_values`` in the prior's nonzero cells and zero elsewhere.
+
+        Examples
+        --------
+        Lay out the signs of the prior's cells as a SAM:
+
+        .. code-block:: python
+
+            import pandas as pd
+
+            import cge_modeling as cm
+
+            accounts = ["Labor", "Firms", "Households"]
+            prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                                  [0.0, 0.0, 120.0],
+                                  [90.0, 15.0, 0.0]],
+                                 index=accounts,
+                                 columns=accounts)
+
+            sam = cm.SymbolicSAM(prior)
+            sam.like_prior(sam.signs)
+
+        """
         values = np.zeros(self.prior.shape)
         values[self.rows, self.columns] = cell_values
 
@@ -938,6 +1388,29 @@ def linear_constraints(
     -------
     linear : LinearConstraints
         The equality rows, then the inequality rows, in the order of ``constraints``.
+
+    Examples
+    --------
+    Read the coefficient row and value of a constraint that fixes the wage bill:
+
+    .. code-block:: python
+
+        import pandas as pd
+
+        import cge_modeling as cm
+
+        accounts = ["Labor", "Firms", "Households"]
+        prior = pd.DataFrame([[0.0, 100.0, 0.0],
+                              [0.0, 0.0, 120.0],
+                              [90.0, 15.0, 0.0]],
+                             index=accounts,
+                             columns=accounts)
+
+        sam = cm.SymbolicSAM(prior)
+        linear = cm.linear_constraints(sam, {"wages": sam.sel(row="Labor", col="Firms") == 100.0})
+        linear.equality_operator.toarray()
+        linear.equality_values
+
     """
     named = (
         constraints
@@ -964,6 +1437,38 @@ def cells_forced_to_zero(sam: SymbolicSAM) -> list[Cell]:
     A balanced SAM with this pattern decomposes into flows around directed cycles of the account graph, where a positive
     cell ``(i, j)`` is an edge from ``i`` to ``j`` and a negative cell an edge from ``j`` to ``i``. A cell whose edge
     joins two strongly connected components lies on no cycle.
+
+    Parameters
+    ----------
+    sam : SymbolicSAM
+        The SAM whose pattern of nonzero cells to check.
+
+    Returns
+    -------
+    cells : list of tuple
+        The row and column account label of each cell forced to zero, empty when :meth:`SymbolicSAM.fit` can keep
+        every cell.
+
+    Examples
+    --------
+    Find the tax payment that :meth:`SymbolicSAM.fit` would have to zero, because the government spends nothing:
+
+    .. code-block:: python
+
+        import pandas as pd
+
+        import cge_modeling as cm
+
+        accounts = ["Labor", "Firms", "Households", "Government"]
+        prior = pd.DataFrame([[0.0, 100.0, 0.0, 0.0],
+                              [0.0, 0.0, 120.0, 0.0],
+                              [90.0, 15.0, 0.0, 0.0],
+                              [0.0, 0.0, 10.0, 0.0]],
+                             index=accounts,
+                             columns=accounts)
+
+        cm.cells_forced_to_zero(cm.SymbolicSAM(prior))
+
     """
     positive = sam.signs > 0
     sources = np.where(positive, sam.rows, sam.columns)

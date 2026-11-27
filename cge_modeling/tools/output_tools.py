@@ -313,6 +313,29 @@ def display_table(info_dict: dict[str, Any], column_widths: Sequence[str] | None
 
 
 def display_info_as_table(variable_info: list[dict[str, str]]) -> None:
+    """
+    Display an HTML table of the symbol and description of each model object.
+
+    Parameters
+    ----------
+    variable_info : list of dict
+        One dict per row, with the LaTeX symbol under ``"latex_name"`` and the text under ``"description"``, as
+        ``Variable.to_dict`` and ``Parameter.to_dict`` return them.
+
+    Examples
+    --------
+    List a model's parameters with their symbols, as :meth:`~cge_modeling.base.cge.CGEModel.summary` does:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        with cm.CGEModel() as model:
+            cm.Parameter("alpha", description="Capital share")
+            cm.Parameter("A", description="Total factor productivity")
+
+        cm.display_info_as_table([parameter.to_dict() for parameter in model.parameters])
+    """
     display_table(
         {
             "Symbol": [Latex(info["latex_name"]) for info in variable_info],
@@ -346,6 +369,42 @@ def index_by_parameter(tree: xr.DataTree, parameter: str) -> xr.DataTree:
     indexed : xr.DataTree
         The same tree with ``parameter`` as the dimension of both children. ``step`` stays as a coordinate, and the
         parameter itself moves from the ``parameters`` data variables to the index.
+
+    Examples
+    --------
+    Raise labor supply by 50 percent and read output along the Euler path as a function of labor supply:
+
+    .. code-block:: python
+
+        import cge_modeling as cm
+
+        with cm.CGEModel() as model:
+            Y = cm.Variable("Y", description="Output")
+            K_d = cm.Variable("K_d", description="Capital demand")
+            L_d = cm.Variable("L_d", description="Labor demand")
+            r = cm.Variable("r", description="Rental rate of capital")
+            P = cm.Variable("P", description="Price of output")
+            w = cm.Parameter("w", description="Wage, the numeraire")
+            alpha = cm.Parameter("alpha", description="Capital share")
+            A = cm.Parameter("A", description="Total factor productivity")
+            K_s = cm.Parameter("K_s", description="Capital supply")
+            L_s = cm.Parameter("L_s", description="Labor supply")
+
+            cm.Equation("Production", Y, A * K_d**alpha * L_d ** (1 - alpha))
+            cm.Equation("Capital demand", r * K_d, alpha * P * Y)
+            cm.Equation("Labor demand", w * L_d, (1 - alpha) * P * Y)
+            cm.Equation("Capital market clearing", K_d, K_s)
+            cm.Equation("Labor market clearing", L_d, L_s)
+
+        calibration = model.calibrate({"K_s": 3000.0, "L_s": 7000.0, "w": 1.0, "r": 1.0, "P": 1.0})
+        result = model.simulate(initial_state=calibration,
+                                final_delta_pct={"L_s": 1.5},
+                                n_iter_euler=100,
+                                progressbar=False,
+                                verbose=False)
+
+        by_labor_supply = cm.index_by_parameter(result["euler"], "L_s")
+        by_labor_supply["variables"]["Y"].plot()
     """
     variables = tree.children["variables"].to_dataset(inherit=False)
     parameters = tree.children["parameters"].to_dataset(inherit=False)
