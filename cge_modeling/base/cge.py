@@ -1,6 +1,7 @@
 import functools as ft
 import inspect
 import logging
+import math
 import os.path
 import re
 import warnings
@@ -9,6 +10,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
+from numbers import Integral
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -769,27 +771,22 @@ class CGEModel:
         has_jacobian = self.f_jac is not None or self.f_sparse_system_and_jac is not None
         return ROOT_STATISTICS if has_jacobian else {"f_value": ROOT_STATISTICS["f_value"]}
 
-    def _solve_with_euler_approximation(
+    def _euler_trajectory(
         self,
-        data,
-        theta_final,
-        n_steps,
-        progressbar: bool | ToggleableProgress = True,
-        optimizer_mode: Literal["root", "minimize"] = "root",
-    ):
-        x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
+        x0: np.ndarray,
+        theta0: np.ndarray,
+        theta_final: np.ndarray,
+        n_steps: int,
+        progress: ToggleableProgress,
+        optimizer_mode: Literal["root", "minimize"],
+    ) -> list[np.ndarray]:
         f_euler = self._compiled_function("f_euler")
 
         # The scan Euler approximation is one compiled graph with no Python loop to report progress from.
         if not isinstance(f_euler, ft.partial):
-            return list_of_array_to_idata(f_euler(x0, theta0, theta_final, n_steps), self)
+            return f_euler(x0, theta0, theta_final, n_steps)
 
-        progress = (
-            simulation_progress(self._statistic_headings(optimizer_mode), enabled=progressbar)
-            if isinstance(progressbar, bool)
-            else progressbar
-        )
-        result = f_euler(
+        return f_euler(
             x0,
             theta0,
             theta_final,
@@ -797,7 +794,132 @@ class CGEModel:
             progress=progress,
             step_statistics=self._step_statistics(optimizer_mode),
         )
-        return list_of_array_to_idata(result, self)
+
+    def _solve_with_euler_approximation(
+        self,
+        data,
+        theta_final,
+        n_steps,
+        progressbar: bool | ToggleableProgress = True,
+        optimizer_mode: Literal["root", "minimize"] = "root",
+        solve_every: int | None = None,
+        solve_last_step: bool = False,
+        optimizer_kwargs: dict[str, Any] | None = None,
+    ):
+        x0, theta0 = variable_dict_to_flat_array(data, self.variables, self.parameters)
+        progress = (
+            simulation_progress(self._statistic_headings(optimizer_mode), enabled=progressbar)
+            if isinstance(progressbar, bool)
+            else progressbar
+        )
+
+        if solve_every is None:
+            trajectory = self._euler_trajectory(
+                x0, theta0, theta_final, n_steps, progress, optimizer_mode
+            )
+            return list_of_array_to_idata(trajectory, self)
+
+        return self._solve_with_euler_checkpoints(
+            x0,
+            theta0,
+            theta_final,
+            n_steps=n_steps,
+            solve_every=solve_every,
+            solve_last_step=solve_last_step,
+            progress=progress,
+            optimizer_mode=optimizer_mode,
+            optimizer_kwargs={} if optimizer_kwargs is None else optimizer_kwargs,
+        )
+
+    def _solve_with_euler_checkpoints(
+        self,
+        x0: np.ndarray,
+        theta0: np.ndarray,
+        theta_final: np.ndarray,
+        n_steps: int,
+        solve_every: int,
+        solve_last_step: bool,
+        progress: ToggleableProgress,
+        optimizer_mode: Literal["root", "minimize"],
+        optimizer_kwargs: dict[str, Any],
+    ) -> xr.DataTree:
+        """Run the Euler approximation in segments of ``solve_every`` steps, solving exactly at the end of each one."""
+        solve = self._solve_with_root if optimizer_mode == "root" else self._solve_with_minimize
+        objects = self.variables + self.parameters
+        segment_ends = [*range(solve_every, n_steps, solve_every), n_steps]
+        checkpoint_steps = segment_ends if solve_last_step else segment_ends[:-1]
+        segments: list[list[np.ndarray]] = []
+        converged: list[bool] = []
+        worst_residual = 0.0
+        x, start = x0, 0
+
+        with progress:
+            checkpoint_row = progress.add_task("Checkpoints", total=len(checkpoint_steps))
+            for end in segment_ends:
+                theta_start = theta0 + (theta_final - theta0) * start / n_steps
+                theta_end = theta0 + (theta_final - theta0) * end / n_steps
+                segment = [
+                    np.array(values)
+                    for values in self._euler_trajectory(
+                        x, theta_start, theta_end, end - start, progress, optimizer_mode
+                    )
+                ]
+                # Each segment after the first starts at the previous checkpoint, which the segment before it ends on.
+                segments.append([values[1:] for values in segment] if segments else segment)
+
+                if end == n_steps and not solve_last_step:
+                    break
+
+                euler_point = {obj.name: values[-1] for obj, values in zip(objects, segments[-1])}
+                res = solve(euler_point, theta_end, progressbar=progress, **optimizer_kwargs)
+                converged.append(bool(res.success))
+                if res.success:
+                    x = res.x
+                else:
+                    x, _ = variable_dict_to_flat_array(euler_point, self.variables, self.parameters)
+
+                # The row holds the parameters the point was solved at, not the sum of the Euler steps toward them.
+                checkpoint = flat_array_to_variable_dict(np.r_[x, theta_end], objects, self.coords)
+                for obj, values in zip(objects, segments[-1]):
+                    values[-1] = checkpoint[obj.name]
+
+                if res.fun is None:
+                    residual = np.inf
+                elif optimizer_mode == "root":
+                    residual = float(np.linalg.norm(res.fun))
+                else:
+                    residual = float(res.fun)
+                # A NaN residual stays the worst one, because no later comparison with it is true.
+                if math.isnan(residual) or residual > worst_residual:
+                    worst_residual = residual
+                n_failed = converged.count(False)
+                progress.update(
+                    checkpoint_row,
+                    advance=1,
+                    description=f"Checkpoints ({n_failed} failed)" if n_failed else "Checkpoints",
+                    f_value=worst_residual,
+                )
+                start = end
+
+        failed_steps = [step for step, success in zip(checkpoint_steps, converged) if not success]
+        if failed_steps:
+            warnings.warn(
+                f"The optimizer did not converge at Euler steps {', '.join(map(str, failed_steps))}. The Euler path "
+                f"continued from the unsolved point after each of them."
+            )
+
+        trajectory = [np.concatenate(parts) for parts in zip(*segments)]
+        idata = list_of_array_to_idata(trajectory, self)
+        return xr.DataTree.from_dict(
+            {
+                "/": xr.Dataset(
+                    {"converged": ("checkpoint", np.array(converged, dtype=bool))},
+                    coords={"checkpoint": np.array(checkpoint_steps, dtype=int)},
+                ),
+                "variables": idata["variables"].to_dataset(),
+                "parameters": idata["parameters"].to_dataset(),
+            }
+        )
 
     def _solve_with_root(
         self,
@@ -1058,6 +1180,7 @@ class CGEModel:
         use_optimizer: bool = True,
         optimizer_mode: Literal["root", "minimize"] = "root",
         n_iter_euler=10_000,
+        solve_every: int | None = None,
         compile_kwargs=None,
         save_results: bool = False,
         overwrite: bool = False,
@@ -1119,6 +1242,14 @@ class CGEModel:
             The number of iterations to use when computing the Euler approximation. Defaults to 10,000. Ignored if
             use_euler_approximation is False.
 
+        solve_every: int, optional
+            If given, solve for the equilibrium exactly every ``solve_every`` Euler steps with the optimizer selected by
+            ``optimizer_mode``, and continue the Euler approximation from the solution. This keeps the error of the
+            Euler path from growing along it. The Euler result then has a ``converged`` variable along a
+            ``checkpoint`` dimension, whose coordinate holds the step of each solve. The final step is solved by the
+            optimizer when use_optimizer is True, and as a checkpoint otherwise. Ignored if use_euler_approximation is
+            False.
+
         compile_kwargs: dict, optional
             Additional keyword arguments to pass to the compile method. See the docstring for compile for details.
 
@@ -1145,12 +1276,25 @@ class CGEModel:
             use_euler_approximation is True, an InferenceData object containing the Euler approximation will be returned
             instead.
         """
+        if optimizer_mode not in ("root", "minimize"):
+            raise ValueError(f"Unknown optimizer mode {optimizer_mode}")
+        if solve_every is not None and (
+            not isinstance(solve_every, Integral)
+            or isinstance(solve_every, bool)
+            or solve_every < 1
+        ):
+            raise ValueError(f"solve_every must be a positive number of steps, got {solve_every}.")
+
+        solves_with_optimizer = use_optimizer or (
+            use_euler_approximation and solve_every is not None
+        )
         if simulation_name is None:
             today_str = datetime.now().strftime("%Y-%m-%d")
             simulation_name = f"Simulation_{today_str}"
             if use_euler_approximation:
-                simulation_name += f"_Euler[steps={n_iter_euler}]"
-            if use_optimizer:
+                checkpoints = "" if solve_every is None else f",solve_every={solve_every}"
+                simulation_name += f"_Euler[steps={n_iter_euler}{checkpoints}]"
+            if solves_with_optimizer:
                 simulation_name += f"_{optimizer_mode}[{','.join([f'{k}={v}' for k, v in optimizer_kwargs.items()])}]"
         if not overwrite and os.path.exists(os.path.join(output_path, simulation_name + ".pkl")):
             res = read_results(output_path, simulation_name, verbose=verbose)
@@ -1161,7 +1305,7 @@ class CGEModel:
                 to_compile = []
                 if use_euler_approximation:
                     to_compile.append("euler")
-                if use_optimizer:
+                if solves_with_optimizer:
                     to_compile.append(optimizer_mode)
 
                 compile_kwargs = {"functions_to_compile": to_compile}
@@ -1207,7 +1351,7 @@ class CGEModel:
 
         return_values = {}
 
-        statistics_mode = optimizer_mode if use_optimizer else "root"
+        statistics_mode = optimizer_mode if solves_with_optimizer else "root"
         progress = simulation_progress(
             self._statistic_headings(statistics_mode),
             enabled=optimizer_kwargs.pop("progressbar", True),
@@ -1220,6 +1364,14 @@ class CGEModel:
                     n_steps=n_iter_euler,
                     progressbar=progress,
                     optimizer_mode=statistics_mode,
+                    solve_every=solve_every,
+                    solve_last_step=not use_optimizer,
+                    # The root solver warns that it ignores use_hess, which would repeat at every checkpoint.
+                    optimizer_kwargs={
+                        key: value
+                        for key, value in optimizer_kwargs.items()
+                        if not (statistics_mode == "root" and key == "use_hess")
+                    },
                 )
                 return_values["euler"] = idata_euler
                 final_step = idata_euler["variables"].sizes["step"] - 1
@@ -1247,7 +1399,7 @@ class CGEModel:
                         progressbar=progress,
                         **optimizer_kwargs,
                     )
-                elif optimizer_mode == "minimize":
+                else:
                     use_jac = optimizer_kwargs.pop("use_jac", True)
                     use_hess = optimizer_kwargs.pop("use_hess", True)
                     res = self._solve_with_minimize(
@@ -1258,8 +1410,6 @@ class CGEModel:
                         progressbar=progress,
                         **optimizer_kwargs,
                     )
-                else:
-                    raise ValueError(f"Unknown optimizer mode {optimizer_mode}")
 
                 if not res.success:
                     warnings.warn(
