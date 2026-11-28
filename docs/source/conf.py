@@ -73,6 +73,8 @@ html_theme = "pydata_sphinx_theme"
 html_title = project
 html_short_title = project
 html_last_updated_fmt = ""
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]
 
 rtd_version = os.environ.get("READTHEDOCS_VERSION", "")
 sitemap_url_scheme = f"{{lang}}{rtd_version}/{{link}}"
