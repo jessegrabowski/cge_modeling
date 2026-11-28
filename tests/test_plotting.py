@@ -33,7 +33,7 @@ def cge_model():
     sim_results_idata = model.simulate(
         initial_state=initial_calib_data,
         final_delta_pct={"L_s": 0.1},
-        n_iter_euler=5,  # Keep low for speed
+        n_path_steps=5,  # Keep low for speed
     )
 
     return model, initial_calib_data, sim_results_idata
@@ -105,14 +105,14 @@ def test_plot_lines_default(cge_model):
 
 
 @pytest.mark.usefixtures("auto_close_all_figures")
-def test_plot_lines_no_euler_with_rename_legend_cmap(cge_model):
+def test_plot_lines_no_path_with_rename_legend_cmap(cge_model):
     model, _, idata = cge_model
     var_names = ["Y", "C"]
     fig = plot_lines(
         idata,
         model,
         var_names=var_names,
-        plot_euler=False,
+        plot_path=False,
         rename_dict={"Y": "Output"},
         legends=True,
         cmap="viridis",

@@ -84,38 +84,31 @@ def test_sparse_jacobian_matches_the_dense_jacobian(build, calibrated_values):
 )
 def test_sparse_simulation_matches_the_dense_simulation(model_id, build, calibrated_values):
     dense = load_and_cache_model(model_id)
-    sparse = build().compile(functions_to_compile=["root", "euler"], use_sparse_matrices=True)
+    sparse = build().compile(functions_to_compile=["root", "path"], use_sparse_matrices=True)
     initial_state = calibrated_values()
     shock = {"L_s": 0.1}
 
     dense_result = dense.simulate(
-        initial_state, final_delta_pct=shock, n_iter_euler=20, progressbar=False
+        initial_state, final_delta_pct=shock, n_path_steps=20, progressbar=False
     )
     sparse_result = sparse.simulate(
-        initial_state, final_delta_pct=shock, n_iter_euler=20, progressbar=False
+        initial_state, final_delta_pct=shock, n_path_steps=20, progressbar=False
     )
 
     assert sparse_result["optim_res"].success
-    for stage in ("euler", "optimizer"):
+    for stage in ("path", "optimizer"):
         for name, values in dense_result[stage]["variables"].dataset.data_vars.items():
             np.testing.assert_allclose(
                 sparse_result[stage]["variables"][name].values, values.values, rtol=1e-8, atol=1e-8
             )
 
 
-def test_sparse_matrices_reject_the_scan_euler_approximation():
-    with pytest.raises(ValueError, match="use_scan_euler=False"):
+def test_sparse_matrices_reject_the_scan_path():
+    with pytest.raises(ValueError, match="use_scan_path=False"):
         build_model_1().compile(
-            functions_to_compile=["euler"],
-            use_scan_euler=True,
+            functions_to_compile=["path"],
+            use_scan_path=True,
             use_sparse_matrices=True,
-        )
-
-
-def test_sparse_matrices_reject_rk4_euler_steps():
-    with pytest.raises(NotImplementedError, match="RK4"):
-        build_model_1().compile(
-            functions_to_compile=["euler"], use_rk4=True, use_sparse_matrices=True
         )
 
 
@@ -128,7 +121,7 @@ def test_sparse_root_rejects_any_scipy_method(method):
         model.simulate(
             initial_state,
             final_delta_pct={"L_s": 0.1},
-            use_euler_approximation=False,
+            use_path_approximation=False,
             method=method,
             progressbar=False,
         )

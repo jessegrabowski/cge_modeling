@@ -11,26 +11,19 @@ from pytensor.compile import Function
 from pytensor.graph import rewrite_graph
 
 from cge_modeling import CGEModel
-from cge_modeling.compile.constants import CompiledFunctions
-from cge_modeling.compile.euler import (
-    _make_euler_matrices,
-    pytensor_euler_function_with_python_loop,
-    symbolic_euler_approximation,
-)
+from cge_modeling.compile.constants import CompiledFunctions, StepMethod
+from cge_modeling.compile.path import follow_path_with_python_loop, path_tangent, symbolic_path
 from cge_modeling.compile.pytensor_tools import (
     compile_with_packed_inputs,
-    flat_tensor_to_ragged_list,
     flatten_equations,
     make_jacobian,
-    pushforward,
     rewrite_pregrad,
 )
 from cge_modeling.compile.sparse import (
-    compile_sparse_euler_step,
+    compile_sparse_path_tangent,
     compile_sparse_system_and_jacobian,
     compressed_jacobian,
 )
-from cge_modeling.tools.utils import at_least_list
 
 _log = logging.getLogger(__name__)
 
@@ -181,70 +174,18 @@ def compile_pytensor_hessp_function(
     return hessp, f_hessp
 
 
-def pytensor_euler_step(
-    system, variables, parameters, jacobian=None, grad=None, use_rk4=False
-) -> tuple[list, list[pt.TensorVariable]]:
-    if use_rk4:
-        raise NotImplementedError("RK4 not yet implemented for Pytensor")
-
-    A, B = _make_euler_matrices(system, variables, parameters, jacobian)
-
-    x_list = at_least_list(variables)
-    x_shapes = [x.type.shape for x in x_list]
-
-    theta_list = at_least_list(parameters)
-
-    n_steps = pt.iscalar("n_steps")
-    theta_final = [x.clone(name=f"{x.name}_final") for x in theta_list]
-    theta0 = [x.clone(name=f"{x.name}_initial") for x in theta_list]
-
-    step_size = [(x - y) / n_steps for x, y in zip(theta_final, theta0)]
-
-    try:
-        [Bv] = pushforward([system], parameters, step_size)
-    except NotImplementedError:
-        _log.warning(
-            "Tried to compute jvp of model with respect to parameters but failed; an Op in your model does not "
-            "have an implemented pushforward. Falling back to direct computation via jacobian. This is slow and "
-            "memory intensive for large models."
-        )
-        v = flatten_equations(step_size)
-        Bv = B @ v
-
-    step = -pt.linalg.solve(A, Bv)
-    step.name = "euler_step"
-
-    delta_x = flat_tensor_to_ragged_list(step, x_shapes)
-    x_next = [x + dx for x, dx in zip(x_list, delta_x)]
-
-    theta_next = [theta + dtheta for theta, dtheta in zip(theta_list, step_size)]
-
-    inputs = [
-        ("x", x_list),
-        ("theta", theta_list),
-        ("theta_initial", theta0),
-        ("theta_final", theta_final),
-        n_steps,
-    ]
-    outputs = [flatten_equations(x_next), flatten_equations(theta_next)]
-
-    return inputs, outputs
-
-
 def compile_pytensor_cge_functions(
     cge_model: CGEModel,
     functions_to_compile: Sequence[CompiledFunctions],
+    step_method: StepMethod,
     mode: str | None = None,
-    use_scan_euler: bool = False,
-    use_rk4: bool = False,
+    use_scan_path: bool = False,
     use_sparse_matrices: bool = False,
 ) -> tuple[Callable[..., Any] | None, ...]:
-    if use_sparse_matrices and use_scan_euler and "euler" in functions_to_compile:
+    if use_sparse_matrices and use_scan_path and "path" in functions_to_compile:
         raise ValueError(
-            "use_sparse_matrices=True requires the Python-loop Euler approximation; set use_scan_euler=False."
+            "use_sparse_matrices=True requires the Python-loop path; set use_scan_path=False."
         )
-    if use_sparse_matrices and use_rk4 and "euler" in functions_to_compile:
-        raise NotImplementedError("RK4 not yet implemented for Pytensor")
 
     system, variables, parameters = xtensor_cge_primitives_to_pytensor(cge_model)
     if use_sparse_matrices:
@@ -261,12 +202,11 @@ def compile_pytensor_cge_functions(
     f_grad = None
     f_hess = None
     f_hessp = None
-    f_euler: Callable[..., Any] | None = None
+    f_path: Callable[..., Any] | None = None
     f_sparse_system_and_jac = None
 
-    # jac and grad can be reused if both root/minimize and euler are requested
+    # The Jacobian is reused by the path if both root and path are requested
     jac = None
-    grad = None
 
     if "root" in functions_to_compile and use_sparse_matrices:
         f_sparse_system_and_jac = compile_sparse_system_and_jacobian(
@@ -285,29 +225,25 @@ def compile_pytensor_cge_functions(
         _hess, f_hess = compile_pytensor_hess_function(grad, variables, parameters, mode=mode)
         _hessp, f_hessp = compile_pytensor_hessp_function(grad, variables, parameters, mode=mode)
 
-    if "euler" in functions_to_compile:
-        if not use_scan_euler:
-            if use_sparse_matrices:
-                f_step = compile_sparse_euler_step(
-                    system, variables, parameters, compressed=compressed, layout=layout, mode=mode
-                )
-            else:
-                inputs, outputs = pytensor_euler_step(
-                    system, variables, parameters, jacobian=jac, grad=grad, use_rk4=use_rk4
-                )
-                f_step = compile_with_packed_inputs(inputs, outputs, mode=mode)
-
-            f_euler = partial(
-                pytensor_euler_function_with_python_loop, cge_model=cge_model, f_step=f_step
+    if "path" in functions_to_compile and use_scan_path:
+        path_inputs, trajectory = symbolic_path(
+            system, variables, parameters, step_method=step_method, jacobian=jac
+        )
+        f_path = pytensor.function(path_inputs, trajectory, mode=mode)
+    elif "path" in functions_to_compile:
+        if use_sparse_matrices:
+            f_tangent = compile_sparse_path_tangent(
+                system, variables, parameters, compressed=compressed, layout=layout, mode=mode
             )
         else:
-            theta_final, n_steps, euler_output = symbolic_euler_approximation(
-                system, variables, parameters, jacobian=jac, use_rk4=use_rk4
-            )
-            f_euler = compile_with_packed_inputs(
-                [("x", variables), ("theta", parameters), theta_final, n_steps],
-                euler_output,
-                mode=mode,
-            )
+            *tangent_inputs, x_step = path_tangent(system, variables, parameters, jacobian=jac)
+            f_tangent = pytensor.function(tangent_inputs, x_step, mode=mode)
 
-    return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_euler, f_sparse_system_and_jac
+        f_path = partial(
+            follow_path_with_python_loop,
+            f_tangent=f_tangent,
+            step_method=step_method,
+            shapes=[obj.type.shape for obj in variables + parameters],
+        )
+
+    return f_system, f_jac, f_resid, f_grad, f_hess, f_hessp, f_path, f_sparse_system_and_jac

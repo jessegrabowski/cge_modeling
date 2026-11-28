@@ -81,7 +81,7 @@ def test_labor_supply_shock_reaches_an_equilibrium(
     result = model.simulate(
         calibrated,
         final_delta_pct={"L_s": 0.5},
-        n_iter_euler=100,
+        n_path_steps=100,
         optimizer_mode=optimizer_mode,
         verbose=False,
         **optimizer_kwargs,
@@ -98,19 +98,19 @@ def test_labor_supply_shock_reaches_an_equilibrium(
     np.testing.assert_allclose(model.f_system(x, theta), 0.0, atol=1e-8)
 
 
-def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_euler_path():
+def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_path_path():
     context_model = build_model_1()
     calibrated = calibrate_model_1(**model_1_data)
     scenario = {
         "final_delta_pct": {"L_s": 0.5},
-        "n_iter_euler": 25,
+        "n_path_steps": 25,
         "optimizer_mode": "root",
         "verbose": False,
     }
 
-    context_euler = context_model.simulate(calibrated, **scenario)["euler"]["variables"].dataset
+    context_path = context_model.simulate(calibrated, **scenario)["path"]["variables"].dataset
 
-    np.testing.assert_allclose(context_euler["resid"], 0.0, atol=1e-9)
+    np.testing.assert_allclose(context_path["resid"], 0.0, atol=1e-9)
 
 
 def test_model_3_is_square_and_holds_at_the_calibrated_point():
@@ -133,10 +133,10 @@ def test_model_3_labor_supply_shock_clears_every_market():
     calibrated = calibrate_model_3(**model_3_data)
 
     result = model.simulate(
-        calibrated, final_delta_pct={"L_s": 1.1}, n_iter_euler=200, verbose=False
+        calibrated, final_delta_pct={"L_s": 1.1}, n_path_steps=200, verbose=False
     )
     root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
-    euler = result["euler"]["variables"].dataset.isel(step=-1, drop=True)
+    path = result["path"]["variables"].dataset.isel(step=-1, drop=True)
 
     assert result["optim_res"].success
     np.testing.assert_allclose(float(root["resid"]), 0.0, atol=1e-8)
@@ -145,7 +145,7 @@ def test_model_3_labor_supply_shock_clears_every_market():
         float(root["L_d"].sum() + root["L_d_E"].sum()), 1.1 * calibrated["L_s"]
     )
     assert float(root["w"]) < 1.0 < float(root["r"])
-    xr_testing.assert_allclose(euler.drop_vars("resid"), root.drop_vars("resid"), rtol=1e-4)
+    xr_testing.assert_allclose(path.drop_vars("resid"), root.drop_vars("resid"), rtol=1e-4)
 
 
 @pytest.mark.parametrize("closure", ["savings_driven", "fixed_investment"])
@@ -193,7 +193,7 @@ def test_model_4_doubling_the_exchange_rate_doubles_prices_and_leaves_quantities
     calibrated = calibrate_model_4(**model_4_data)
 
     result = model.simulate(
-        calibrated, final_values={"Er": 2.0}, n_iter_euler=10, optimizer_mode="root", verbose=False
+        calibrated, final_values={"Er": 2.0}, n_path_steps=10, optimizer_mode="root", verbose=False
     )
     root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
 
@@ -229,7 +229,7 @@ def test_model_4_tariff_cut_reproduces_the_published_sales_tax_increase():
     }
 
     result = model.simulate(
-        calibrated, final_values={"tm": 0.05}, n_iter_euler=50, optimizer_mode="root", verbose=False
+        calibrated, final_values={"tm": 0.05}, n_path_steps=50, optimizer_mode="root", verbose=False
     )
     root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
 
@@ -404,12 +404,12 @@ def test_model_5_abolishing_the_manufactures_tax_clears_every_market():
     result = model.simulate(
         calibrated,
         final_values={"t": tax_rates},
-        n_iter_euler=20,
+        n_path_steps=20,
         optimizer_mode="root",
         verbose=False,
     )
     root = result["optimizer"]["variables"].dataset.isel(step=-1, drop=True)
-    euler = result["euler"]["variables"].dataset.isel(step=-1, drop=True)
+    path = result["path"]["variables"].dataset.isel(step=-1, drop=True)
     P = root["P"]
     price_index = float(
         (calibrated["theta"] * P).sum()
@@ -420,7 +420,7 @@ def test_model_5_abolishing_the_manufactures_tax_clears_every_market():
 
     assert result["optim_res"].success
     np.testing.assert_allclose(float(root["resid"]), 0.0, atol=1e-10)
-    np.testing.assert_allclose(float(euler["resid"]), 0.0, atol=1e-10)
+    np.testing.assert_allclose(float(path["resid"]), 0.0, atol=1e-10)
     np.testing.assert_allclose(price_index, 1.0)
     np.testing.assert_allclose(float(root["K_d"].sum()), calibrated["K_s"])
     assert float(P.sel(i="manufactures")) < min(
@@ -510,7 +510,7 @@ def test_simulate_starts_from_the_calibration_of_an_indexed_model():
     result = model.simulate(
         initial_state=state,
         final_delta_pct={"A": 1.1},
-        use_euler_approximation=False,
+        use_path_approximation=False,
         progressbar=False,
     )
 
@@ -528,18 +528,18 @@ def test_simulate_compiles_the_functions_a_later_call_needs():
     model.simulate(
         initial_state=state,
         final_delta_pct={"A": 1.1},
-        use_euler_approximation=False,
+        use_path_approximation=False,
         progressbar=False,
     )
     result = model.simulate(
         initial_state=state,
         final_delta_pct={"A": 1.1},
         use_optimizer=False,
-        n_iter_euler=10,
+        n_path_steps=10,
         progressbar=False,
     )
 
-    np.testing.assert_allclose(result["euler"]["variables"]["Y"].isel(step=-1), [110.0, 220.0])
+    np.testing.assert_allclose(result["path"]["variables"]["Y"].isel(step=-1), [110.0, 220.0])
 
 
 def test_simulate_keeps_the_settings_of_the_last_compile():
@@ -554,12 +554,12 @@ def test_simulate_keeps_the_settings_of_the_last_compile():
     model.simulate(
         initial_state=state,
         final_delta_pct={"A": 1.1},
-        n_iter_euler=10,
+        n_path_steps=10,
         progressbar=False,
     )
 
     assert model.f_sparse_system_and_jac is not None
-    assert model.f_euler is not None
+    assert model.f_path is not None
 
 
 def test_calibrate_without_data_names_the_entries_no_equation_determines():

@@ -14,13 +14,13 @@ def render_table(progress) -> str:
 
 def test_simulation_progress_puts_every_stage_in_one_table_with_step_last():
     progress = simulation_progress(ROOT_STATISTICS)
-    progress.add_task("Euler", total=100, f_value=0.5, grad_norm=0.25)
+    progress.add_task("Path (rk4)", total=100, f_value=0.5, grad_norm=0.25)
     progress.add_task("Finding Roots", total=5000, f_value=0.001)
 
     header, *rows = [line for line in render_table(progress).splitlines() if line.strip()]
 
     assert header.split()[-1] == "Step"
-    assert "Euler" in rows[1] and rows[1].rstrip().endswith("   0/ 100")
+    assert "Path (rk4)" in rows[1] and rows[1].rstrip().endswith("   0/ 100")
     assert "Finding Roots" in rows[2] and rows[2].rstrip().endswith("   0/5000")
 
 
@@ -52,6 +52,6 @@ def test_disabled_simulation_progress_adds_no_tasks():
     progress = simulation_progress(ROOT_STATISTICS, enabled=False)
 
     with progress:
-        task = progress.add_task("Euler", total=10, f_value=1.0)
+        task = progress.add_task("Path (rk4)", total=10, f_value=1.0)
 
     assert task is None
