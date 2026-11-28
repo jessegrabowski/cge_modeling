@@ -76,7 +76,7 @@ def _quantity_spec(
     Write the equation for ``quantity`` in value form, ``price * quantity = value``, named
     ``"{name}: {relation} {quantity}"``.
 
-    In value form each demand or supply enters Walras' law with a constant weight, so an Euler step, which holds
+    In value form each demand or supply enters Walras' law with a constant weight, so a path step, which holds
     every linearized residual at zero, also holds the Walrasian residual at zero when prices are variables.
     """
     return (f"{name}: {relation} {quantity.name}", price * quantity, value)

@@ -75,7 +75,7 @@ def plot_lines(
     Parameters
     ----------
     idata : dict of str to xr.DataTree
-        The result of :meth:`~cge_modeling.base.cge.CGEModel.simulate`, with an ``"path"`` group, an
+        The result of :meth:`~cge_modeling.base.cge.CGEModel.simulate`, with a ``"path"`` group, an
         ``"optimizer"`` group, or both.
     mod : CGEModel
         The model that produced ``idata``.
@@ -646,7 +646,7 @@ def plot_bar(
 
     group = idata.get("optimizer", idata.get("path"))
     if group is None:
-        raise ValueError('idata has neither an "optimizer" nor an "path" group.')
+        raise ValueError('idata has neither an "optimizer" nor a "path" group.')
     data = select(group["variables"].dataset.isel(step=-1))
     if initial_values is None:
         initial_values = group["variables"].dataset.isel(step=0)

@@ -98,7 +98,7 @@ def test_labor_supply_shock_reaches_an_equilibrium(
     np.testing.assert_allclose(model.f_system(x, theta), 0.0, atol=1e-8)
 
 
-def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_path_path():
+def test_value_form_demands_keep_the_walrasian_residual_at_zero_along_the_path():
     context_model = build_model_1()
     calibrated = calibrate_model_1(**model_1_data)
     scenario = {

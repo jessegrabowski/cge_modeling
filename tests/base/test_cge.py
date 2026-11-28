@@ -292,7 +292,7 @@ def equilibrium_residual_norms(mod, path, steps):
 
 
 @pytest.mark.parametrize("use_scan_path", [False, True], ids=["loop", "scan"])
-def test_solve_every_puts_the_path_path_back_on_the_equilibrium_at_each_checkpoint(use_scan_path):
+def test_solve_every_puts_the_path_back_on_the_equilibrium_at_each_checkpoint(use_scan_path):
     mod = load_and_cache_model(
         1, functions_to_compile=("path", "root"), use_scan_path=use_scan_path
     )
