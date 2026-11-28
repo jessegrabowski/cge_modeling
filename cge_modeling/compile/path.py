@@ -75,7 +75,8 @@ def path_tangent(
     parameters : list of TensorVariable
         Parameters of the system, packed into ``theta``.
     vectorize_jacobian : bool
-        Build the Jacobians here with one batched backward pass, as :func:`~cge_modeling.compile.pytensor_tools.make_jacobian` does with ``vectorize``.
+        Build the Jacobians here with one batched backward pass, as
+        :func:`~cge_modeling.compile.pytensor_tools.make_jacobian` does with ``vectorize``.
     jacobian : TensorVariable, optional
         The Jacobian of ``system`` with respect to ``variables``, if already built. Built here otherwise.
 
@@ -153,7 +154,8 @@ def follow_path_with_python_loop(
     """
     take_step = STEP_FUNCTIONS[step_method]
     theta_initial = theta
-    theta_step = (theta_final - theta_initial) / n_steps
+    theta_change = theta_final - theta_initial
+    theta_step = theta_change / n_steps
 
     trajectory = np.empty((n_steps + 1, x.shape[0] + theta.shape[0]))
     trajectory[0] = np.concatenate([x, theta])
@@ -167,7 +169,7 @@ def follow_path_with_python_loop(
         )
         for t in range(1, n_steps + 1):
             x = take_step(f_tangent, x, theta, theta_step)
-            theta = theta_initial + (theta_final - theta_initial) * (t / n_steps)
+            theta = theta_initial + theta_change * (t / n_steps)
             trajectory[t] = np.concatenate([x, theta])
             progress.update(task, advance=1, **step_statistics(x, theta))
 

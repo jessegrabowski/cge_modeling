@@ -40,30 +40,6 @@ def rewrite_pregrad(graph: pt.TensorVariable) -> pt.TensorVariable:
     return cast(pt.TensorVariable, rewrite_graph(graph, include=("canonicalize", "stabilize")))
 
 
-def clone_and_rename(x: pt.TensorVariable, suffix: str = "_next") -> pt.TensorVariable:
-    """
-    Clone a pytensor tensor and rename it by appending a suffix to its name.
-
-    Cloning variables is useful for creating intermediate "dummy" variables that can be replaced by graph rewrites,
-    mostly commonly in vectorization.
-
-    Parameters
-    ----------
-    x: pytensor.tensor.TensorVariable
-        The pytensor variable to clone
-    suffix: str
-        The suffix to append to the cloned variable's name
-
-    Returns
-    -------
-    x_new: pytensor.tensor.TensorVariable
-        The cloned variable with the new name
-    """
-    x_new = x.clone()
-    x_new.name = f"{x.name}{suffix}"
-    return x_new
-
-
 def flatten_equations(eqs: Sequence[pt.TensorLike]) -> pt.TensorVariable:
     """
     Flatten a list of pytensor vectors, each representing equations in a system of equations, into a single vector.
