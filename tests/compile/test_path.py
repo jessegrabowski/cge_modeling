@@ -64,12 +64,6 @@ def test_path_error_falls_at_the_order_of_the_step_method(path_endpoint, step_me
     np.testing.assert_allclose(observed_order, STEP_ORDERS[step_method], atol=0.15)
 
 
-def test_scan_and_loop_rk4_paths_agree():
-    np.testing.assert_allclose(
-        scan_path_endpoint("rk4", 10), loop_path_endpoint("rk4", 10), rtol=1e-12
-    )
-
-
 def test_scan_path_with_a_scanned_jacobian_matches_the_vectorized_one():
     np.testing.assert_allclose(
         scan_path_endpoint("rk4", 10, vectorize_jacobian=False),

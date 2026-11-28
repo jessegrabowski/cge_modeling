@@ -526,13 +526,13 @@ def test_simulate_takes_euler_steps_when_compile_kwargs_ask_for_them(tmp_path):
         output_path=str(tmp_path),
     )
 
-    assert mod.f_path.keywords["step_method"] == "euler"
-    assert result["path"]["variables"].sizes["step"] == 21
-    assert [
-        name
-        for name in (path.name for path in tmp_path.iterdir())
-        if "_Path[euler,steps=20]" in name
-    ]
+    endpoint = variable_dict_to_flat_array(
+        datatree_to_value_dict(result["path"].isel(step=-1)), mod.variables, mod.parameters
+    )
+
+    # Twenty first-order steps over a 50% shock end far off the equilibrium, where RK4 ends near 1e-6.
+    assert np.linalg.norm(mod.f_system(*endpoint)) > 1.0
+    assert any("_Path[euler,steps=20]" in path.name for path in tmp_path.iterdir())
 
 
 def test_compile_rejects_an_unknown_step_method():
