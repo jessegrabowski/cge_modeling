@@ -49,7 +49,7 @@ from cge_modeling.base.utilities import (
     unpack_equation_name,
     variable_dict_to_flat_array,
 )
-from cge_modeling.compile.constants import CompiledFunctions, StepMethod
+from cge_modeling.compile.constants import DEFAULT_STEP_METHOD, CompiledFunctions, StepMethod
 from cge_modeling.solvers.sparse_root import sparse_root
 from cge_modeling.tools.latex import equation_to_latex
 from cge_modeling.tools.output_tools import (
@@ -512,7 +512,7 @@ class CGEModel:
         self,
         mode: str | None = None,
         functions_to_compile: CompiledFunctions | Sequence[CompiledFunctions] | None = "all",
-        step_method: StepMethod = "rk4",
+        step_method: StepMethod = DEFAULT_STEP_METHOD,
         use_scan_path: bool = False,
         use_sparse_matrices: bool = False,
         vectorize_jacobian: bool = True,
@@ -608,13 +608,17 @@ class CGEModel:
 
         return self
 
+    def _merged_compile_settings(self, compile_kwargs: dict[str, Any] | None) -> dict[str, Any]:
+        """Return the settings of the model's last compile, overridden by ``compile_kwargs``."""
+        return {**self._compile_settings, **(compile_kwargs or {})}
+
     def _compile_missing(
         self, needed: set[CompiledFunctions], compile_kwargs: dict[str, Any] | None
     ) -> None:
         """Compile the ``needed`` functions the model lacks, or recompile with ``compile_kwargs`` when given."""
         if compile_kwargs is None and self.f_system is not None and needed <= set(self._compiled):
             return
-        settings = {**self._compile_settings, **(compile_kwargs or {})}
+        settings = self._merged_compile_settings(compile_kwargs)
         requested = _parse_compile_kwarg(settings.pop("functions_to_compile", None)) or []
         # Compiling replaces every function, so the ones compiled earlier are compiled again with the rest.
         functions: list[CompiledFunctions] = sorted({*self._compiled, *needed, *requested})
@@ -1643,6 +1647,14 @@ class CGEModel:
             or solve_every < 1
         ):
             raise ValueError(f"solve_every must be a positive number of steps, got {solve_every}.")
+        if use_path_approximation and (
+            not isinstance(n_path_steps, Integral)
+            or isinstance(n_path_steps, bool)
+            or n_path_steps < 1
+        ):
+            raise ValueError(
+                f"n_path_steps must be a positive number of steps, got {n_path_steps}."
+            )
 
         solves_with_optimizer = use_optimizer or (
             use_path_approximation and solve_every is not None
@@ -1652,8 +1664,8 @@ class CGEModel:
             simulation_name = f"Simulation_{today_str}"
             if use_path_approximation:
                 checkpoints = "" if solve_every is None else f",solve_every={solve_every}"
-                step_method = {**self._compile_settings, **(compile_kwargs or {})}.get(
-                    "step_method", "rk4"
+                step_method = self._merged_compile_settings(compile_kwargs).get(
+                    "step_method", DEFAULT_STEP_METHOD
                 )
                 simulation_name += f"_Path[{step_method},steps={n_path_steps}{checkpoints}]"
             if solves_with_optimizer:

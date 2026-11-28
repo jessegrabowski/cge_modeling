@@ -511,6 +511,35 @@ def test_saved_simulation_names_record_checkpoints_and_the_optimizer_that_solves
     assert any("_Path[rk4,steps=20,solve_every=10]_root[" in name for name in names)
 
 
+def test_simulate_takes_euler_steps_when_compile_kwargs_ask_for_them(tmp_path):
+    mod = build_model_1()
+    initial_state = calibrate_model_1(**model_1_data)
+
+    result = mod.simulate(
+        initial_state,
+        final_delta_pct={"L_s": 1.5},
+        n_path_steps=20,
+        use_optimizer=False,
+        compile_kwargs={"functions_to_compile": ["path"], "step_method": "euler"},
+        progressbar=False,
+        save_results=True,
+        output_path=str(tmp_path),
+    )
+
+    assert mod.f_path.keywords["step_method"] == "euler"
+    assert result["path"]["variables"].sizes["step"] == 21
+    assert [
+        name
+        for name in (path.name for path in tmp_path.iterdir())
+        if "_Path[euler,steps=20]" in name
+    ]
+
+
+def test_compile_rejects_an_unknown_step_method():
+    with pytest.raises(ValueError, match="Unknown step_method 'RK4'"):
+        build_model_1().compile(functions_to_compile=["path"], step_method="RK4")
+
+
 def test_path_approximation_rejects_an_unknown_keyword_argument():
     mod = load_and_cache_model(1, functions_to_compile=("path",))
     initial_state = calibrate_model_1(**model_1_data)
@@ -529,8 +558,9 @@ def test_path_approximation_rejects_an_unknown_keyword_argument():
         ({"solve_every": 2.5}, "solve_every must be a positive number of steps"),
         ({"solve_every": True}, "solve_every must be a positive number of steps"),
         ({"optimizer_mode": "Root"}, "Unknown optimizer mode Root"),
+        ({"n_path_steps": 0}, "n_path_steps must be a positive number of steps"),
     ],
-    ids=["zero_steps", "fractional_steps", "boolean_steps", "unknown_mode"],
+    ids=["zero_steps", "fractional_steps", "boolean_steps", "unknown_mode", "zero_path_steps"],
 )
 def test_simulate_rejects_invalid_checkpoint_options_before_compiling(options, message):
     mod = build_model_1()

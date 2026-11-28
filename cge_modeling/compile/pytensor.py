@@ -12,7 +12,12 @@ from pytensor.graph import rewrite_graph
 
 from cge_modeling import CGEModel
 from cge_modeling.compile.constants import CompiledFunctions, StepMethod
-from cge_modeling.compile.path import follow_path_with_python_loop, path_tangent, symbolic_path
+from cge_modeling.compile.path import (
+    STEP_FUNCTIONS,
+    follow_path_with_python_loop,
+    path_tangent,
+    symbolic_path,
+)
 from cge_modeling.compile.pytensor_tools import (
     compile_with_packed_inputs,
     flatten_equations,
@@ -186,6 +191,10 @@ def compile_pytensor_cge_functions(
     use_scan_path: bool = False,
     use_sparse_matrices: bool = False,
 ) -> tuple[Callable[..., Any] | None, ...]:
+    if step_method not in STEP_FUNCTIONS:
+        raise ValueError(
+            f"Unknown step_method {step_method!r}. Use one of {sorted(STEP_FUNCTIONS)}."
+        )
     if use_sparse_matrices and use_scan_path and "path" in functions_to_compile:
         raise ValueError(
             "use_sparse_matrices=True requires the Python-loop path; set use_scan_path=False."
