@@ -117,7 +117,7 @@ have is a chatty paragraph standing in for a short structured one:
         Parameters
         ----------
         tree : xr.DataTree
-            A group of a ``CGEModel.simulate`` result, such as ``result["euler"]``, whose ``variables`` and
+            A group of a ``CGEModel.simulate`` result, such as ``result["path"]``, whose ``variables`` and
             ``parameters`` children are indexed by ``step``.
         parameter : str
             Name of a scalar parameter whose value changes strictly monotonically along ``step``.

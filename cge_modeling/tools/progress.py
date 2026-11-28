@@ -69,7 +69,7 @@ class SimulationProgress(ToggleableProgress):
     One progress table shared by every stage of a simulation, one row per stage.
 
     A row is identified by its description. A stage that runs more than once, such as the solve at each checkpoint of
-    an Euler path, resets its row instead of adding another, so the table keeps one row per stage however many times
+    a path, resets its row instead of adding another, so the table keeps one row per stage however many times
     each one runs.
 
     In a terminal, rich's live display draws the table. In a notebook, the table is drawn to one display handle that

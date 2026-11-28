@@ -62,7 +62,7 @@ def plot_lines(
     mod: CGEModel,
     n_cols: int = 5,
     var_names: list[str] | None = None,
-    plot_euler: bool = True,
+    plot_path: bool = True,
     plot_optimizer: bool = True,
     rename_dict: dict[str, str] | None = None,
     legends: bool | list | None = None,
@@ -70,12 +70,12 @@ def plot_lines(
     **figure_kwargs,
 ) -> plt.Figure:
     """
-    Plot each variable along the Euler path, with stars at the optimizer's initial and final values.
+    Plot each variable along the path, with stars at the optimizer's initial and final values.
 
     Parameters
     ----------
     idata : dict of str to xr.DataTree
-        The result of :meth:`~cge_modeling.base.cge.CGEModel.simulate`, with an ``"euler"`` group, an
+        The result of :meth:`~cge_modeling.base.cge.CGEModel.simulate`, with a ``"path"`` group, an
         ``"optimizer"`` group, or both.
     mod : CGEModel
         The model that produced ``idata``.
@@ -83,8 +83,8 @@ def plot_lines(
         Number of columns in the grid of panels, capped at the number of variables. Default is 5.
     var_names : list of str, optional
         Variables to plot, one panel each. Default is None, which plots every variable of ``mod``.
-    plot_euler : bool, optional
-        Draw the Euler path of each variable. Default is True.
+    plot_path : bool, optional
+        Draw the path of each variable. Default is True.
     plot_optimizer : bool, optional
         Mark the optimizer's initial value with a green star and its final value with a red star. Default is True.
     rename_dict : dict of str to str, optional
@@ -132,7 +132,7 @@ def plot_lines(
         calibration = model.calibrate({"K_s": 3000.0, "L_s": 7000.0, "w": 1.0, "r": 1.0, "P": 1.0})
         result = model.simulate(initial_state=calibration,
                                 final_delta_pct={"L_s": 1.1},
-                                n_iter_euler=100,
+                                n_path_steps=100,
                                 progressbar=False,
                                 verbose=False)
 
@@ -153,10 +153,8 @@ def plot_lines(
         legend_flags = dict.fromkeys(legends, True)
         legend_flags.update(dict.fromkeys(no_legend, False))
 
-    if "euler" not in idata and plot_euler:
-        raise ValueError(
-            'Cannot plot results of euler approximation, provided results has no "euler" group'
-        )
+    if "path" not in idata and plot_path:
+        raise ValueError('Cannot plot the path, provided results has no "path" group')
     if "optimizer" not in idata and plot_optimizer:
         raise ValueError(
             'Cannot plot results of optimizer, provided results has no "optimizer" group'
@@ -186,8 +184,8 @@ def plot_lines(
         axis = fig.add_subplot(gs[plot_locs[idx]])
         axis.set(title=rename_dict.get(var, var), xlabel=None)
 
-        if plot_euler:
-            data = idata["euler"]["variables"].dataset[var]
+        if plot_path:
+            data = idata["path"]["variables"].dataset[var]
 
             n_lines = int(np.prod(data.values.shape[1:]))
             cycler = plt.cycler(color=f_cmap(n_lines))
@@ -204,8 +202,8 @@ def plot_lines(
             t0 = np.zeros_like(initial_value)
             T = np.ones_like(final_value)
 
-            if plot_euler:
-                T = T * idata["euler"]["variables"]["step"].max().item()
+            if plot_path:
+                T = T * idata["path"]["variables"]["step"].max().item()
 
             axis.scatter(
                 t0,
@@ -251,7 +249,7 @@ def plot_areas(
     ----------
     idata : dict of str to xr.DataTree
         The result of :meth:`~cge_modeling.base.cge.CGEModel.simulate`. The final values come from its
-        ``"optimizer"`` group if it has one, and from its ``"euler"`` group otherwise.
+        ``"optimizer"`` group if it has one, and from its ``"path"`` group otherwise.
     initial_values : dict of str to ndarray
         Values before the shock, keyed by variable name, such as the ``initial_state`` passed to ``simulate``.
     mod : CGEModel
@@ -314,7 +312,7 @@ def plot_areas(
                                        "P": [1.0, 1.0]})
         result = model.simulate(initial_state=calibration,
                                 final_delta_pct={"K_s": 1.2},
-                                n_iter_euler=100,
+                                n_path_steps=100,
                                 progressbar=False,
                                 verbose=False)
 
@@ -361,7 +359,7 @@ def plot_areas(
         )
     else:
         post_data = np.concatenate(
-            [idata["euler"].isel(step=-1)["variables"][var].data.ravel() for var in var_names]
+            [idata["path"].isel(step=-1)["variables"][var].data.ravel() for var in var_names]
         )
 
     zero_mask = np.isclose(pre_data, 0) | np.isclose(post_data, 0)
@@ -491,7 +489,7 @@ def plot_bar(
     Plot bar charts of how variables change between the start and the end of a simulation.
 
     The final values come from the last step of the ``"optimizer"`` group of ``idata`` if it has one, and from the
-    last step of the ``"euler"`` group otherwise.
+    last step of the ``"path"`` group otherwise.
 
     Parameters
     ----------
@@ -580,7 +578,7 @@ def plot_bar(
                                        "P": [1.0, 1.0]})
         result = model.simulate(initial_state=calibration,
                                 final_delta_pct={"K_s": 1.2},
-                                n_iter_euler=100,
+                                n_path_steps=100,
                                 progressbar=False,
                                 verbose=False)
 
@@ -625,7 +623,7 @@ def plot_bar(
                                        "P": [1.0, 1.0]})
         result = model.simulate(initial_state=calibration,
                                 final_delta_pct={"K_s": 1.2},
-                                n_iter_euler=100,
+                                n_path_steps=100,
                                 progressbar=False,
                                 verbose=False)
 
@@ -646,9 +644,9 @@ def plot_bar(
             [name for name in selection.coords if name not in selection.dims]
         )
 
-    group = idata.get("optimizer", idata.get("euler"))
+    group = idata.get("optimizer", idata.get("path"))
     if group is None:
-        raise ValueError('idata has neither an "optimizer" nor an "euler" group.')
+        raise ValueError('idata has neither an "optimizer" nor a "path" group.')
     data = select(group["variables"].dataset.isel(step=-1))
     if initial_values is None:
         initial_values = group["variables"].dataset.isel(step=0)

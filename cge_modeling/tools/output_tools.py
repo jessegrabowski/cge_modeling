@@ -359,7 +359,7 @@ def index_by_parameter(tree: xr.DataTree, parameter: str) -> xr.DataTree:
     Parameters
     ----------
     tree : xr.DataTree
-        A group of a ``CGEModel.simulate`` result, such as ``result["euler"]``, whose ``variables`` and
+        A group of a ``CGEModel.simulate`` result, such as ``result["path"]``, whose ``variables`` and
         ``parameters`` children are indexed by ``step``.
     parameter : str
         Name of a scalar parameter whose value changes strictly monotonically along ``step``.
@@ -372,7 +372,7 @@ def index_by_parameter(tree: xr.DataTree, parameter: str) -> xr.DataTree:
 
     Examples
     --------
-    Raise labor supply by 50 percent and read output along the Euler path as a function of labor supply:
+    Raise labor supply by 50 percent and read output along the path as a function of labor supply:
 
     .. code-block:: python
 
@@ -399,11 +399,11 @@ def index_by_parameter(tree: xr.DataTree, parameter: str) -> xr.DataTree:
         calibration = model.calibrate({"K_s": 3000.0, "L_s": 7000.0, "w": 1.0, "r": 1.0, "P": 1.0})
         result = model.simulate(initial_state=calibration,
                                 final_delta_pct={"L_s": 1.5},
-                                n_iter_euler=100,
+                                n_path_steps=100,
                                 progressbar=False,
                                 verbose=False)
 
-        by_labor_supply = cm.index_by_parameter(result["euler"], "L_s")
+        by_labor_supply = cm.index_by_parameter(result["path"], "L_s")
         by_labor_supply["variables"]["Y"].plot()
     """
     variables = tree.children["variables"].to_dataset(inherit=False)

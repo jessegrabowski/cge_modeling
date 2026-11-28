@@ -173,19 +173,19 @@ def compile_sparse_system_and_jacobian(
     return system_and_sparse_jacobian
 
 
-def compile_sparse_euler_step(
+def compile_sparse_path_tangent(
     system: pt.TensorVariable,
     variables: list[pt.TensorVariable],
     parameters: list[pt.TensorVariable],
     compressed: pt.TensorVariable,
     layout: SparseJacobianLayout,
     mode: str | Mode | None = None,
-) -> Callable[..., tuple[np.ndarray, np.ndarray]]:
+) -> Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]:
     r"""
-    Compile one Euler step that solves the linearized system with a sparse Jacobian.
+    Compile the path tangent of :func:`~cge_modeling.compile.path.path_tangent` with a sparse Jacobian.
 
-    The step solves :math:`A \, dx = -B \, d\theta`, where :math:`A` is the Jacobian with respect to the variables,
-    assembled sparse, and :math:`B \, d\theta` is one pushforward along the parameter step.
+    The tangent solves :math:`A \, \Delta x = -B \, \Delta\theta`, where :math:`A` is the Jacobian with respect to the
+    variables, assembled sparse, and :math:`B \, \Delta\theta` is one pushforward along the parameter step.
 
     Parameters
     ----------
@@ -204,32 +204,24 @@ def compile_sparse_euler_step(
 
     Returns
     -------
-    f_step : callable
-        ``f_step(x, theta, theta_initial, theta_final, n_steps) -> (x_next, theta_next)``.
+    f_tangent : callable
+        ``f_tangent(x, theta, theta_step) -> x_step``.
     """
     parameter_shapes = [parameter.type.shape for parameter in parameters]
     n_parameters = sum(int(np.prod(shape)) for shape in parameter_shapes)
-    parameter_step = pt.vector("parameter_step", shape=(n_parameters,))
+    theta_step = pt.vector("theta_step", shape=(n_parameters,))
     [system_pushforward] = pushforward(
-        [system], parameters, pt.unpack(parameter_step, packed_shapes=parameter_shapes)
+        [system], parameters, pt.unpack(theta_step, packed_shapes=parameter_shapes)
     )
 
     f_linearization = compile_with_packed_inputs(
-        inputs=[("x", variables), ("theta", parameters), parameter_step],
+        inputs=[("x", variables), ("theta", parameters), theta_step],
         outputs=[system_pushforward, compressed],
         mode=mode,
     )
 
-    def sparse_euler_step(
-        x: np.ndarray,
-        theta: np.ndarray,
-        theta_initial: np.ndarray,
-        theta_final: np.ndarray,
-        n_steps: int,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        theta_step = (theta_final - theta_initial) / n_steps
+    def sparse_path_tangent(x: np.ndarray, theta: np.ndarray, theta_step: np.ndarray) -> np.ndarray:
         b_times_step, compressed_values = f_linearization(x, theta, theta_step)
-        x_step = spsolve(layout.assemble(np.asarray(compressed_values)), -np.asarray(b_times_step))
-        return x + x_step, theta + theta_step
+        return spsolve(layout.assemble(np.asarray(compressed_values)), -np.asarray(b_times_step))
 
-    return sparse_euler_step
+    return sparse_path_tangent

@@ -49,7 +49,7 @@ from cge_modeling.base.utilities import (
     unpack_equation_name,
     variable_dict_to_flat_array,
 )
-from cge_modeling.compile.constants import CompiledFunctions
+from cge_modeling.compile.constants import DEFAULT_STEP_METHOD, CompiledFunctions, StepMethod
 from cge_modeling.solvers.sparse_root import sparse_root
 from cge_modeling.tools.latex import equation_to_latex
 from cge_modeling.tools.output_tools import (
@@ -76,7 +76,7 @@ def _parse_compile_kwarg(
     if functions_to_compile is None:
         return None
     if functions_to_compile is True or functions_to_compile == "all":
-        return ["root", "minimize", "euler"]
+        return ["root", "minimize", "path"]
     if isinstance(functions_to_compile, str):
         return [functions_to_compile]
     return functions_to_compile
@@ -161,7 +161,7 @@ class CGEModel:
         self.f_hess: Callable | None = None
         self.f_hessp: Callable | None = None
         self.f_jac: Callable | None = None
-        self.f_euler: Callable | None = None
+        self.f_path: Callable | None = None
         self.f_sparse_system_and_jac: Callable | None = None
 
     @property
@@ -413,7 +413,7 @@ class CGEModel:
         self.f_hess = None
         self.f_hessp = None
         self.f_jac = None
-        self.f_euler = None
+        self.f_path = None
         self.f_sparse_system_and_jac = None
 
     def _register_model_object(
@@ -501,7 +501,7 @@ class CGEModel:
 
     def _compiled_function(
         self,
-        name: Literal["f_system", "f_jac", "f_resid", "f_grad", "f_hess", "f_hessp", "f_euler"],
+        name: Literal["f_system", "f_jac", "f_resid", "f_grad", "f_hess", "f_hessp", "f_path"],
     ) -> Callable[..., Any]:
         function = getattr(self, name)
         if function is None:
@@ -512,27 +512,35 @@ class CGEModel:
         self,
         mode: str | None = None,
         functions_to_compile: CompiledFunctions | Sequence[CompiledFunctions] | None = "all",
-        use_scan_euler: bool = False,
-        use_rk4: bool = False,
+        step_method: StepMethod = DEFAULT_STEP_METHOD,
+        use_scan_path: bool = False,
         use_sparse_matrices: bool = False,
+        vectorize_jacobian: bool = True,
     ) -> "CGEModel":
         """
-        Compile the functions the solvers use: the system residuals, and the Jacobian, loss or Euler step each solver
+        Compile the functions the solvers use: the system residuals, and the Jacobian, loss or path step each solver
         needs.
 
         Parameters
         ----------
         mode : str, optional
             PyTensor compilation mode. Default is PyTensor's default mode.
-        functions_to_compile : {"root", "minimize", "euler", "all"} or sequence of them, optional
+        functions_to_compile : {"root", "minimize", "path", "all"} or sequence of them, optional
             Solver functions to compile, on top of the system residuals, which are always compiled. Default is
             ``"all"``.
-        use_scan_euler : bool, optional
-            Build the Euler approximation as a single scan graph. Default is False.
-        use_rk4 : bool, optional
-            Take fourth-order Runge-Kutta steps in the Euler approximation. Default is False.
+        step_method : {"rk4", "euler"}, optional
+            How each step of the path moves the variables. ``"rk4"`` takes classical fourth-order Runge-Kutta steps,
+            whose error falls with the fourth power of the step size at four linear solves per step. ``"euler"``
+            takes first-order steps at one linear solve per step. Default is ``"rk4"``.
+        use_scan_path : bool, optional
+            Build the path as a single scan graph. Default is False.
         use_sparse_matrices : bool, optional
             Build the Jacobian as a sparse matrix and find roots with ``sparse_root``. Default is False.
+        vectorize_jacobian : bool, optional
+            Build the dense Jacobian of the system with one batched backward pass over all equations, instead of a
+            scan over them one at a time. The batched pass is several times faster, but holds one copy of every
+            intermediate of the model per equation in memory. Set it to False when compiling or evaluating the
+            Jacobian runs out of memory. Default is True.
 
         Returns
         -------
@@ -541,7 +549,7 @@ class CGEModel:
 
         Examples
         --------
-        Compile only the root-finding functions, which is all :meth:`simulate` needs when it skips the Euler approximation:
+        Compile only the root-finding functions, which is all :meth:`simulate` needs when it skips the path:
 
         .. code-block:: python
 
@@ -577,26 +585,32 @@ class CGEModel:
             self.f_grad,
             self.f_hess,
             self.f_hessp,
-            self.f_euler,
+            self.f_path,
             self.f_sparse_system_and_jac,
         ) = compile_pytensor_cge_functions(
             cge_model=self,
             functions_to_compile=compile_list,
+            step_method=step_method,
+            vectorize_jacobian=vectorize_jacobian,
             mode=compile_mode,
-            use_scan_euler=use_scan_euler,
-            use_rk4=use_rk4,
+            use_scan_path=use_scan_path,
             use_sparse_matrices=use_sparse_matrices,
         )
         self._compiled = compile_list
         self._compile_settings = {
             "mode": mode,
-            "use_scan_euler": use_scan_euler,
-            "use_rk4": use_rk4,
+            "step_method": step_method,
+            "use_scan_path": use_scan_path,
             "use_sparse_matrices": use_sparse_matrices,
+            "vectorize_jacobian": vectorize_jacobian,
         }
         self.mode = compile_mode
 
         return self
+
+    def _merged_compile_settings(self, compile_kwargs: dict[str, Any] | None) -> dict[str, Any]:
+        """Return the settings of the model's last compile, overridden by ``compile_kwargs``."""
+        return {**self._compile_settings, **(compile_kwargs or {})}
 
     def _compile_missing(
         self, needed: set[CompiledFunctions], compile_kwargs: dict[str, Any] | None
@@ -604,7 +618,7 @@ class CGEModel:
         """Compile the ``needed`` functions the model lacks, or recompile with ``compile_kwargs`` when given."""
         if compile_kwargs is None and self.f_system is not None and needed <= set(self._compiled):
             return
-        settings = {**self._compile_settings, **(compile_kwargs or {})}
+        settings = self._merged_compile_settings(compile_kwargs)
         requested = _parse_compile_kwarg(settings.pop("functions_to_compile", None)) or []
         # Compiling replaces every function, so the ones compiled earlier are compiled again with the rest.
         functions: list[CompiledFunctions] = sorted({*self._compiled, *needed, *requested})
@@ -1105,7 +1119,7 @@ class CGEModel:
         has_jacobian = self.f_jac is not None or self.f_sparse_system_and_jac is not None
         return ROOT_STATISTICS if has_jacobian else {"f_value": ROOT_STATISTICS["f_value"]}
 
-    def _euler_trajectory(
+    def _path_trajectory(
         self,
         x0: np.ndarray,
         theta0: np.ndarray,
@@ -1114,13 +1128,13 @@ class CGEModel:
         progress: ToggleableProgress,
         optimizer_mode: Literal["root", "minimize"],
     ) -> list[np.ndarray]:
-        f_euler = self._compiled_function("f_euler")
+        f_path = self._compiled_function("f_path")
 
-        # The scan Euler approximation is one compiled graph with no Python loop to report progress from.
-        if not isinstance(f_euler, ft.partial):
-            return f_euler(x0, theta0, theta_final, n_steps)
+        # The scan path is one compiled graph with no Python loop to report progress from.
+        if not isinstance(f_path, ft.partial):
+            return f_path(x0, theta0, theta_final, n_steps)
 
-        return f_euler(
+        return f_path(
             x0,
             theta0,
             theta_final,
@@ -1129,7 +1143,7 @@ class CGEModel:
             step_statistics=self._step_statistics(optimizer_mode),
         )
 
-    def _solve_with_euler_approximation(
+    def _solve_with_path(
         self,
         data,
         theta_final,
@@ -1148,12 +1162,12 @@ class CGEModel:
         )
 
         if solve_every is None:
-            trajectory = self._euler_trajectory(
+            trajectory = self._path_trajectory(
                 x0, theta0, theta_final, n_steps, progress, optimizer_mode
             )
             return list_of_array_to_idata(trajectory, self)
 
-        return self._solve_with_euler_checkpoints(
+        return self._solve_with_path_checkpoints(
             x0,
             theta0,
             theta_final,
@@ -1165,7 +1179,7 @@ class CGEModel:
             optimizer_kwargs={} if optimizer_kwargs is None else optimizer_kwargs,
         )
 
-    def _solve_with_euler_checkpoints(
+    def _solve_with_path_checkpoints(
         self,
         x0: np.ndarray,
         theta0: np.ndarray,
@@ -1177,7 +1191,7 @@ class CGEModel:
         optimizer_mode: Literal["root", "minimize"],
         optimizer_kwargs: dict[str, Any],
     ) -> xr.DataTree:
-        """Run the Euler approximation in segments of ``solve_every`` steps, solving exactly at the end of each one."""
+        """Follow the path in segments of ``solve_every`` steps, solving exactly at the end of each one."""
         solve = self._solve_with_root if optimizer_mode == "root" else self._solve_with_minimize
         objects = self.variables + self.parameters
         segment_ends = [*range(solve_every, n_steps, solve_every), n_steps]
@@ -1194,7 +1208,7 @@ class CGEModel:
                 theta_end = theta0 + (theta_final - theta0) * end / n_steps
                 segment = [
                     np.array(values)
-                    for values in self._euler_trajectory(
+                    for values in self._path_trajectory(
                         x, theta_start, theta_end, end - start, progress, optimizer_mode
                     )
                 ]
@@ -1204,15 +1218,15 @@ class CGEModel:
                 if end == n_steps and not solve_last_step:
                     break
 
-                euler_point = {obj.name: values[-1] for obj, values in zip(objects, segments[-1])}
-                res = solve(euler_point, theta_end, progressbar=progress, **optimizer_kwargs)
+                path_point = {obj.name: values[-1] for obj, values in zip(objects, segments[-1])}
+                res = solve(path_point, theta_end, progressbar=progress, **optimizer_kwargs)
                 converged.append(bool(res.success))
                 if res.success:
                     x = res.x
                 else:
-                    x, _ = variable_dict_to_flat_array(euler_point, self.variables, self.parameters)
+                    x, _ = variable_dict_to_flat_array(path_point, self.variables, self.parameters)
 
-                # The row holds the parameters the point was solved at, not the sum of the Euler steps toward them.
+                # The row holds the parameters the point was solved at, not the sum of the path steps toward them.
                 checkpoint = flat_array_to_variable_dict(np.r_[x, theta_end], objects, self.coords)
                 for obj, values in zip(objects, segments[-1]):
                     values[-1] = checkpoint[obj.name]
@@ -1238,7 +1252,7 @@ class CGEModel:
         failed_steps = [step for step, success in zip(checkpoint_steps, converged) if not success]
         if failed_steps:
             warnings.warn(
-                f"The optimizer did not converge at Euler steps {', '.join(map(str, failed_steps))}. The Euler path "
+                f"The optimizer did not converge at path steps {', '.join(map(str, failed_steps))}. The path "
                 f"continued from the unsolved point after each of them."
             )
 
@@ -1385,7 +1399,7 @@ class CGEModel:
         self,
         param_dict: dict[str, np.ndarray],
         initial_variable_guess: dict[str, np.ndarray],
-        solve_method: Literal["root", "minimize", "euler"] = "root",
+        solve_method: Literal["root", "minimize", "path"] = "root",
         fixed_values: dict[str, np.ndarray] | None = None,
         use_jac: bool = True,
         use_hess: bool = True,
@@ -1404,8 +1418,8 @@ class CGEModel:
             Value of every parameter, keyed by name.
         initial_variable_guess : dict of str to ndarray
             Starting value of every variable, keyed by name.
-        solve_method : {"root", "minimize", "euler"}, optional
-            How to solve the system. ``"euler"`` assumes the starting point is already an equilibrium, so it is only
+        solve_method : {"root", "minimize", "path"}, optional
+            How to solve the system. ``"path"`` assumes the starting point is already an equilibrium, so it is only
             useful for testing. Default is ``"root"``.
         fixed_values : dict of str to ndarray, optional
             Values at which to hold some variables while solving for the rest. Requires ``solve_method="minimize"``,
@@ -1415,7 +1429,7 @@ class CGEModel:
         use_hess : bool, optional
             Use the Hessian of the loss with the minimize method. Default is True.
         n_steps : int, optional
-            Number of steps of the Euler method. Default is 100.
+            Number of steps along the path with ``solve_method="path"``. Default is 100.
         **solver_kwargs
             Passed to the solver of ``solve_method``, such as ``progressbar=False``.
 
@@ -1466,7 +1480,7 @@ class CGEModel:
                 use_hess=use_hess,
                 fixed_values=fixed_values,
             ),
-            "euler": ft.partial(self._solve_with_euler_approximation, n_steps=n_steps),
+            "path": ft.partial(self._solve_with_path, n_steps=n_steps),
         }
 
         if solve_method not in SOLVER_FACTORY:
@@ -1485,7 +1499,7 @@ class CGEModel:
             **solver_kwargs,
         )
 
-        if not solve_method == "euler":
+        if not solve_method == "path":
             if not res.success:
                 warnings.warn(
                     "Solver did not converge. Results do not represent a valid SAM, and are returned for "
@@ -1506,10 +1520,10 @@ class CGEModel:
         final_values: dict[str, float | np.ndarray] | None = None,
         final_delta: dict[str, float | np.ndarray] | None = None,
         final_delta_pct: dict[str, float | np.ndarray] | None = None,
-        use_euler_approximation: bool = True,
+        use_path_approximation: bool = True,
         use_optimizer: bool = True,
         optimizer_mode: Literal["root", "minimize"] = "root",
-        n_iter_euler=10_000,
+        n_path_steps: int = 100,
         solve_every: int | None = None,
         compile_kwargs=None,
         save_results: bool = False,
@@ -1528,7 +1542,7 @@ class CGEModel:
         initial_state : dict of str to ndarray or xr.DataTree
             An equilibrium of the model: the value of every variable and parameter, keyed by name. The state that
             :meth:`calibrate` returns, the result of an earlier call to ``simulate``, or one of its groups such as
-            ``result["euler"]``, is also accepted, and the simulation starts from its final state. A ``DataTree`` state
+            ``result["path"]``, is also accepted, and the simulation starts from its final state. A ``DataTree`` state
             is checked, and a ValueError is raised if it is not an equilibrium.
         final_values : dict of str to ndarray, optional
             Final values of the shocked parameters. Exactly one of ``final_values``, ``final_delta`` and
@@ -1537,19 +1551,20 @@ class CGEModel:
             Changes added to the initial values of the shocked parameters.
         final_delta_pct : dict of str to ndarray, optional
             Factors that multiply the initial values of the shocked parameters, so that 1.1 is a 10% increase.
-        use_euler_approximation : bool, optional
-            Trace the path to the new equilibrium with the Euler approximation. When ``use_optimizer`` is also True,
-            the last Euler step is the optimizer's starting point. Default is True.
+        use_path_approximation : bool, optional
+            Follow the equilibrium from the initial parameters to the shocked ones in ``n_path_steps`` steps, each
+            solving the linearized system, with the step method set by :meth:`compile`. When ``use_optimizer`` is also
+            True, the last step of the path is the optimizer's starting point. Default is True.
         use_optimizer : bool, optional
             Solve for the new equilibrium with a numerical optimizer. Default is True.
         optimizer_mode : {"root", "minimize"}, optional
             Find a root of the system, or minimize its squared residuals. Default is ``"root"``.
-        n_iter_euler : int, optional
-            Number of Euler steps. Default is 10,000.
+        n_path_steps : int, optional
+            Number of steps along the path. Default is 100.
         solve_every : int, optional
-            Solve for the equilibrium exactly every ``solve_every`` Euler steps with the optimizer of
-            ``optimizer_mode``, and continue the Euler approximation from the solution, so the error of the path does
-            not grow along it. The Euler result then has a ``converged`` variable along a ``checkpoint`` dimension,
+            Solve for the equilibrium exactly every ``solve_every`` path steps with the optimizer of
+            ``optimizer_mode``, and continue the path from the solution, so the error of the path does not grow along
+            it. The path result then has a ``converged`` variable along a ``checkpoint`` dimension,
             whose coordinate holds the step of each solve. Default is None, which never solves along the path.
         compile_kwargs : dict, optional
             Passed to :meth:`compile`, which then runs on every call. Default is None, which compiles the functions
@@ -1571,8 +1586,8 @@ class CGEModel:
         Returns
         -------
         result : dict
-            ``"euler"``, the Euler path as an ``xr.DataTree`` with ``variables`` and ``parameters`` children indexed by
-            ``step``, when the Euler approximation ran. ``"optimizer"``, the initial and solved states as an
+            ``"path"``, the path as an ``xr.DataTree`` with ``variables`` and ``parameters`` children indexed by
+            ``step``, when the path ran. ``"optimizer"``, the initial and solved states as an
             ``xr.DataTree``, and ``"optim_res"``, the optimizer's raw result, when the optimizer ran.
 
         Examples
@@ -1595,11 +1610,11 @@ class CGEModel:
 
             result = model.simulate(initial_state=values,
                                     final_delta_pct={"A": 1.1},
-                                    use_euler_approximation=False,
+                                    use_path_approximation=False,
                                     progressbar=False)
             result["optimizer"]["variables"]["Y"]
 
-        Trace the path between the two equilibria with the Euler approximation, solving exactly every 25 steps:
+        Follow the path between the two equilibria, solving exactly every 25 steps:
 
         .. code-block:: python
 
@@ -1616,10 +1631,10 @@ class CGEModel:
 
             result = model.simulate(initial_state=values,
                                     final_delta_pct={"A": 1.1},
-                                    n_iter_euler=100,
+                                    n_path_steps=100,
                                     solve_every=25,
                                     progressbar=False)
-            result["euler"]["variables"]["Y"].sel(sector="Industry")
+            result["path"]["variables"]["Y"].sel(sector="Industry")
         """
         if optimizer_mode not in ("root", "minimize"):
             raise ValueError(f"Unknown optimizer mode {optimizer_mode}")
@@ -1629,23 +1644,34 @@ class CGEModel:
             or solve_every < 1
         ):
             raise ValueError(f"solve_every must be a positive number of steps, got {solve_every}.")
+        if use_path_approximation and (
+            not isinstance(n_path_steps, Integral)
+            or isinstance(n_path_steps, bool)
+            or n_path_steps < 1
+        ):
+            raise ValueError(
+                f"n_path_steps must be a positive number of steps, got {n_path_steps}."
+            )
 
         solves_with_optimizer = use_optimizer or (
-            use_euler_approximation and solve_every is not None
+            use_path_approximation and solve_every is not None
         )
         if simulation_name is None:
             today_str = datetime.now().strftime("%Y-%m-%d")
             simulation_name = f"Simulation_{today_str}"
-            if use_euler_approximation:
+            if use_path_approximation:
                 checkpoints = "" if solve_every is None else f",solve_every={solve_every}"
-                simulation_name += f"_Euler[steps={n_iter_euler}{checkpoints}]"
+                step_method = self._merged_compile_settings(compile_kwargs).get(
+                    "step_method", DEFAULT_STEP_METHOD
+                )
+                simulation_name += f"_Path[{step_method},steps={n_path_steps}{checkpoints}]"
             if solves_with_optimizer:
                 simulation_name += f"_{optimizer_mode}[{','.join([f'{k}={v}' for k, v in optimizer_kwargs.items()])}]"
         if not overwrite and os.path.exists(os.path.join(output_path, simulation_name + ".pkl")):
             res = read_results(output_path, simulation_name, verbose=verbose)
             return res
 
-        needed: set[CompiledFunctions] = {"euler"} if use_euler_approximation else set()
+        needed: set[CompiledFunctions] = {"path"} if use_path_approximation else set()
         if solves_with_optimizer:
             needed.add(optimizer_mode)
         self._compile_missing(needed, compile_kwargs)
@@ -1661,7 +1687,7 @@ class CGEModel:
             else:
                 simulation = cast(dict[str, xr.DataTree], initial_state)
                 final_group = (
-                    simulation["optimizer"] if "optimizer" in simulation else simulation["euler"]
+                    simulation["optimizer"] if "optimizer" in simulation else simulation["path"]
                 )
             x0_var_param = _final_state(final_group)
         elif isinstance(initial_state, dict):
@@ -1720,11 +1746,11 @@ class CGEModel:
             enabled=optimizer_kwargs.pop("progressbar", True),
         )
         with progress:
-            if use_euler_approximation:
-                idata_euler = self._solve_with_euler_approximation(
+            if use_path_approximation:
+                idata_path = self._solve_with_path(
                     x0_var_param,
                     theta_simulation,
-                    n_steps=n_iter_euler,
+                    n_steps=n_path_steps,
                     progressbar=progress,
                     optimizer_mode=statistics_mode,
                     solve_every=solve_every,
@@ -1736,21 +1762,21 @@ class CGEModel:
                         if not (statistics_mode == "root" and key == "use_hess")
                     },
                 )
-                return_values["euler"] = idata_euler
-                final_step = idata_euler["variables"].sizes["step"] - 1
+                return_values["path"] = idata_path
+                final_step = idata_path["variables"].sizes["step"] - 1
                 for group in ("variables", "parameters"):
-                    idata_euler[group] = idata_euler[group].dataset.dropna(dim="step")
+                    idata_path[group] = idata_path[group].dataset.dropna(dim="step")
                 last_step = min(
-                    idata_euler["variables"].coords["step"].max().item(),
-                    idata_euler["parameters"].coords["step"].max().item(),
+                    idata_path["variables"].coords["step"].max().item(),
+                    idata_path["parameters"].coords["step"].max().item(),
                 )
                 if last_step != final_step:
                     _log.warning(
-                        f"NaNs were encountered in the euler approximation. Backing up to step {last_step} "
+                        f"NaNs were encountered along the path. Backing up to step {last_step} "
                         f"(the last non-NaN step) for the optimizer started point."
                     )
 
-                x0_var_param = datatree_to_value_dict(idata_euler.isel(step=last_step))
+                x0_var_param = datatree_to_value_dict(idata_path.isel(step=last_step))
 
             if use_optimizer:
                 if optimizer_mode == "root":
