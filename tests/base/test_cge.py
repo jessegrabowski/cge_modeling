@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from pytensor.scan.op import Scan
 from scipy.differentiate import jacobian
 from scipy.optimize import OptimizeResult
 
@@ -806,6 +807,23 @@ def test_compiled_functions_take_packed_inputs():
         check_function_signature(func, ["x", "theta"])
     check_function_signature(model.f_hessp, ["x", "p", "theta"])
     check_function_signature(model.f_path.keywords["f_tangent"], ["x", "theta", "theta_step"])
+
+
+def test_vectorized_and_scanned_jacobians_agree():
+    vectorized = load_and_cache_model(model_id=1, functions_to_compile="all")
+    scanned = load_and_cache_model(model_id=1, functions_to_compile="all", vectorize_jacobian=False)
+    x, theta = variable_dict_to_flat_array(
+        calibrate_model_1(**model_1_data), vectorized.variables, vectorized.parameters
+    )
+
+    np.testing.assert_allclose(vectorized.f_jac(x, theta), scanned.f_jac(x, theta))
+    np.testing.assert_allclose(
+        vectorized.f_path.keywords["f_tangent"](x, theta, 0.01 * theta),
+        scanned.f_path.keywords["f_tangent"](x, theta, 0.01 * theta),
+        atol=1e-10,
+    )
+    assert not any(isinstance(node.op, Scan) for node in vectorized.f_jac.maker.fgraph.apply_nodes)
+    assert any(isinstance(node.op, Scan) for node in scanned.f_jac.maker.fgraph.apply_nodes)
 
 
 def test_compile_rejects_a_non_square_context_built_model():

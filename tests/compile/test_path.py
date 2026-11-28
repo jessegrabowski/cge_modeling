@@ -20,9 +20,15 @@ def two_equation_problem():
     return system, variables, [v3], exact_at_v3_equal_2
 
 
-def scan_path_endpoint(step_method, n_steps):
+def scan_path_endpoint(step_method, n_steps, vectorize_jacobian=True):
     system, variables, parameters, _ = two_equation_problem()
-    inputs, trajectory = symbolic_path(system, variables, parameters, step_method=step_method)
+    inputs, trajectory = symbolic_path(
+        system,
+        variables,
+        parameters,
+        step_method=step_method,
+        vectorize_jacobian=vectorize_jacobian,
+    )
     f = pytensor.function(inputs, trajectory)
     v1, v2, _ = f(np.ones(2), np.ones(1), np.array([2.0]), n_steps)
     return np.array([v1[-1], v2[-1]])
@@ -30,7 +36,7 @@ def scan_path_endpoint(step_method, n_steps):
 
 def loop_path_endpoint(step_method, n_steps):
     system, variables, parameters, _ = two_equation_problem()
-    *inputs, x_step = path_tangent(system, variables, parameters)
+    *inputs, x_step = path_tangent(system, variables, parameters, vectorize_jacobian=True)
     v1, v2, _ = follow_path_with_python_loop(
         np.ones(2),
         np.ones(1),
@@ -61,6 +67,14 @@ def test_path_error_falls_at_the_order_of_the_step_method(path_endpoint, step_me
 def test_scan_and_loop_rk4_paths_agree():
     np.testing.assert_allclose(
         scan_path_endpoint("rk4", 10), loop_path_endpoint("rk4", 10), rtol=1e-12
+    )
+
+
+def test_scan_path_with_a_scanned_jacobian_matches_the_vectorized_one():
+    np.testing.assert_allclose(
+        scan_path_endpoint("rk4", 10, vectorize_jacobian=False),
+        scan_path_endpoint("rk4", 10, vectorize_jacobian=True),
+        rtol=1e-12,
     )
 
 

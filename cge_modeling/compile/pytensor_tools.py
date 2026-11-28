@@ -215,6 +215,8 @@ def pushforward(
 def make_jacobian(
     system: pt.TensorVariable,
     x: Sequence[pt.TensorVariable],
+    *,
+    vectorize: bool,
 ) -> pt.TensorVariable:
     """
     Make a Jacobian matrix from a system of equations and a list of variables.
@@ -225,6 +227,9 @@ def make_jacobian(
         A vector of equations
     x: list[pytensor.tensor.TensorVariable]
         A list of variables
+    vectorize: bool
+        Compute every row in one batched backward pass, which is much faster than a scan over the rows but holds one
+        copy of each intermediate per equation in memory.
 
     Returns
     -------
@@ -241,7 +246,10 @@ def make_jacobian(
     n_vars = int(np.sum([np.prod(var.type.shape) for var in x]))
 
     system = rewrite_pregrad(system)
-    column_list = cast(Sequence[pt.TensorVariable], pytensor.gradient.jacobian(system, list(x)))
+    column_list = cast(
+        Sequence[pt.TensorVariable],
+        pytensor.gradient.jacobian(system, list(x), vectorize=vectorize),
+    )
 
     jac = pt.concatenate(
         [pt.atleast_2d(column).reshape((n_eq, -1)) for column in column_list], axis=-1

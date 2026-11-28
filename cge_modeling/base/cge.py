@@ -515,6 +515,7 @@ class CGEModel:
         step_method: StepMethod = "rk4",
         use_scan_path: bool = False,
         use_sparse_matrices: bool = False,
+        vectorize_jacobian: bool = True,
     ) -> "CGEModel":
         """
         Compile the functions the solvers use: the system residuals, and the Jacobian, loss or path step each solver
@@ -535,6 +536,11 @@ class CGEModel:
             Build the path as a single scan graph. Default is False.
         use_sparse_matrices : bool, optional
             Build the Jacobian as a sparse matrix and find roots with ``sparse_root``. Default is False.
+        vectorize_jacobian : bool, optional
+            Build the dense Jacobian of the system with one batched backward pass over all equations, instead of a
+            scan over them one at a time. The batched pass is several times faster, but holds one copy of every
+            intermediate of the model per equation in memory. Set it to False when compiling or evaluating the
+            Jacobian runs out of memory. Default is True.
 
         Returns
         -------
@@ -585,6 +591,7 @@ class CGEModel:
             cge_model=self,
             functions_to_compile=compile_list,
             step_method=step_method,
+            vectorize_jacobian=vectorize_jacobian,
             mode=compile_mode,
             use_scan_path=use_scan_path,
             use_sparse_matrices=use_sparse_matrices,
@@ -595,6 +602,7 @@ class CGEModel:
             "step_method": step_method,
             "use_scan_path": use_scan_path,
             "use_sparse_matrices": use_sparse_matrices,
+            "vectorize_jacobian": vectorize_jacobian,
         }
         self.mode = compile_mode
 

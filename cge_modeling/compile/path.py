@@ -55,6 +55,7 @@ def path_tangent(
     system: pt.TensorVariable,
     variables: list[pt.TensorVariable],
     parameters: list[pt.TensorVariable],
+    vectorize_jacobian: bool,
     jacobian: pt.TensorVariable | None = None,
 ) -> tuple[pt.TensorVariable, pt.TensorVariable, pt.TensorVariable, pt.TensorVariable]:
     r"""
@@ -73,6 +74,8 @@ def path_tangent(
         Variables of the system, packed into ``x``.
     parameters : list of TensorVariable
         Parameters of the system, packed into ``theta``.
+    vectorize_jacobian : bool
+        Build the Jacobians here with one batched backward pass, as :func:`~cge_modeling.compile.pytensor_tools.make_jacobian` does with ``vectorize``.
     jacobian : TensorVariable, optional
         The Jacobian of ``system`` with respect to ``variables``, if already built. Built here otherwise.
 
@@ -105,9 +108,13 @@ def path_tangent(
             "An Op in the model has no pushforward, so the path step forms the full Jacobian with respect to the "
             "parameters. This is slow and memory intensive for large models."
         )
-        b_times_step = make_jacobian(system, parameters) @ theta_step
+        b_times_step = make_jacobian(system, parameters, vectorize=vectorize_jacobian) @ theta_step
 
-    A = make_jacobian(system, variables) if jacobian is None else jacobian
+    A = (
+        make_jacobian(system, variables, vectorize=vectorize_jacobian)
+        if jacobian is None
+        else jacobian
+    )
     x_step = -pt.linalg.solve(A, b_times_step, assume_a="gen", check_finite=False)
 
     replacements = {
@@ -174,6 +181,7 @@ def symbolic_path(
     variables: list[pt.TensorVariable],
     parameters: list[pt.TensorVariable],
     step_method: StepMethod,
+    vectorize_jacobian: bool,
     jacobian: pt.TensorVariable | None = None,
 ) -> tuple[list[pt.TensorVariable], list[pt.TensorVariable]]:
     """
@@ -192,6 +200,8 @@ def symbolic_path(
         Parameters of the system.
     step_method : {"euler", "rk4"}
         How each step moves the variables.
+    vectorize_jacobian : bool
+        Passed to :func:`path_tangent`.
     jacobian : TensorVariable, optional
         The Jacobian of ``system`` with respect to ``variables``, if already built.
 
@@ -202,7 +212,9 @@ def symbolic_path(
     trajectory : list of TensorVariable
         The path of each variable, then each parameter, with shape ``(n_steps + 1, *shape)``.
     """
-    x, theta, theta_step, x_step = path_tangent(system, variables, parameters, jacobian)
+    x, theta, theta_step, x_step = path_tangent(
+        system, variables, parameters, vectorize_jacobian=vectorize_jacobian, jacobian=jacobian
+    )
     f_tangent = OpFromGraph(inputs=[x, theta, theta_step], outputs=[x_step], inline=True)
     take_step = STEP_FUNCTIONS[step_method]
 

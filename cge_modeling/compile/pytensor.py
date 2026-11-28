@@ -89,9 +89,10 @@ def compile_pytensor_jacobian_function(
     system: pt.TensorVariable,
     variables: list[pt.TensorVariable],
     parameters: list[pt.TensorVariable],
+    vectorize_jacobian: bool,
     mode: str | None = None,
 ) -> tuple[pt.TensorVariable, Function]:
-    jac = make_jacobian(system, variables)
+    jac = make_jacobian(system, variables, vectorize=vectorize_jacobian)
     jac.name = "jacobian"
 
     # It's possible that certain variables/parameters don't influence the jacobian at all (for example if they
@@ -147,7 +148,9 @@ def compile_pytensor_hess_function(
     parameters: list[pt.TensorVariable],
     mode: str | None = None,
 ) -> tuple[pt.TensorVariable, Function]:
-    hess = make_jacobian(grad, variables)
+    # Vectorizing the gradient graph drops the static length of canonicalized Split pieces, so the result fails at
+    # runtime (https://github.com/pymc-devs/pytensor/issues/2732). The Hessian keeps the scan over rows until then.
+    hess = make_jacobian(grad, variables, vectorize=False)
     hess.name = "hessian"
 
     f_hess = compile_with_packed_inputs(
@@ -178,6 +181,7 @@ def compile_pytensor_cge_functions(
     cge_model: CGEModel,
     functions_to_compile: Sequence[CompiledFunctions],
     step_method: StepMethod,
+    vectorize_jacobian: bool,
     mode: str | None = None,
     use_scan_path: bool = False,
     use_sparse_matrices: bool = False,
@@ -213,7 +217,9 @@ def compile_pytensor_cge_functions(
             system, variables, parameters, compressed=compressed, layout=layout, mode=mode
         )
     elif "root" in functions_to_compile:
-        jac, f_jac = compile_pytensor_jacobian_function(system, variables, parameters, mode=mode)
+        jac, f_jac = compile_pytensor_jacobian_function(
+            system, variables, parameters, vectorize_jacobian=vectorize_jacobian, mode=mode
+        )
 
     if "minimize" in functions_to_compile:
         squared_loss, f_resid = compile_pytensor_error_function(
@@ -227,7 +233,12 @@ def compile_pytensor_cge_functions(
 
     if "path" in functions_to_compile and use_scan_path:
         path_inputs, trajectory = symbolic_path(
-            system, variables, parameters, step_method=step_method, jacobian=jac
+            system,
+            variables,
+            parameters,
+            step_method=step_method,
+            vectorize_jacobian=vectorize_jacobian,
+            jacobian=jac,
         )
         f_path = pytensor.function(path_inputs, trajectory, mode=mode)
     elif "path" in functions_to_compile:
@@ -236,7 +247,9 @@ def compile_pytensor_cge_functions(
                 system, variables, parameters, compressed=compressed, layout=layout, mode=mode
             )
         else:
-            *tangent_inputs, x_step = path_tangent(system, variables, parameters, jacobian=jac)
+            *tangent_inputs, x_step = path_tangent(
+                system, variables, parameters, vectorize_jacobian=vectorize_jacobian, jacobian=jac
+            )
             f_tangent = pytensor.function(tangent_inputs, x_step, mode=mode)
 
         f_path = partial(
