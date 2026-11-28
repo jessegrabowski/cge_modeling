@@ -1,4 +1,0 @@
-About CGE Modeling
-==================
-
-WRITEME
