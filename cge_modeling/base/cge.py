@@ -1565,10 +1565,7 @@ class CGEModel:
             Solve for the equilibrium exactly every ``solve_every`` path steps with the optimizer of
             ``optimizer_mode``, and continue the path from the solution, so the error of the path does not grow along
             it. The path result then has a ``converged`` variable along a ``checkpoint`` dimension,
-            whose coordinate holds the step of each solve. With ``step_method="rk4"`` the path error is usually far
-            below the optimizer's tolerance, so checkpoints matter mainly for large shocks, for paths that pass near a
-            singular Jacobian, where the tangent changes quickly between steps, and for ``step_method="euler"``,
-            whose error grows with the step size. Default is None, which never solves along the path.
+            whose coordinate holds the step of each solve. Default is None, which never solves along the path.
         compile_kwargs : dict, optional
             Passed to :meth:`compile`, which then runs on every call. Default is None, which compiles the functions
             this call needs and the model lacks, with the settings of the model's last compile.
