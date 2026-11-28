@@ -1,9 +1,11 @@
 Getting Started
 ===============
 
-.. toctree::
-    :maxdepth: 1
+WRITEME
 
-    about
-    install
-    get_started
+.. toctree::
+   :hidden:
+
+   About CGE Modeling <self>
+   install
+   get_started

@@ -1,0 +1,5 @@
+@media (min-width: 960px) {
+  .bd-sidebar-primary {
+    --pst-sidebar-primary-width: 18%;
+  }
+}

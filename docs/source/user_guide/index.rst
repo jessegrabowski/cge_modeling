@@ -1,10 +1,12 @@
 User Guide
 ==========
 
-.. toctree::
-    :maxdepth: 1
+WRITEME
 
-    cge_intro
-    api_structure
-    coords_dims
-    example_model
+.. toctree::
+   :hidden:
+
+   Introduction to CGE Modeling <self>
+   api_structure
+   coords_dims
+   example_model

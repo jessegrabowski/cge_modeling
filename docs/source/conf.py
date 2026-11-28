@@ -73,6 +73,8 @@ html_theme = "pydata_sphinx_theme"
 html_title = project
 html_short_title = project
 html_last_updated_fmt = ""
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]
 
 rtd_version = os.environ.get("READTHEDOCS_VERSION", "")
 sitemap_url_scheme = f"{{lang}}{rtd_version}/{{link}}"
@@ -101,18 +103,19 @@ html_context = {
 # html_favicon = "../_static/PyMC.ico"
 # html_logo = "../_static/PyMC.png"
 
-# Only the API reference keeps the left navigation sidebar. Sphinx warns when a page matches two
-# patterns that both hold a wildcard, so every other page and folder is listed by name rather than
-# through a catch-all "**". A new top-level page or folder needs its own entry, or it falls back to
-# the theme's default sidebar.
+# The API reference, getting started, user guide and contributing pages keep the left navigation
+# sidebar. Sphinx warns when a page matches two patterns that both hold a wildcard, so every other
+# page and folder is listed by name rather than through a catch-all "**". A new top-level page or
+# folder needs its own entry, or it falls back to the theme's default sidebar.
+section_sidebar = ["sidebar-nav-bs.html", "searchbox.html"]
 html_sidebars = {
-    "api/**": ["sidebar-nav-bs.html", "searchbox.html"],
-    "api": ["sidebar-nav-bs.html", "searchbox.html"],
+    "api/**": section_sidebar,
+    "api": section_sidebar,
     "index": [],
-    "get_started/**": [],
-    "user_guide/**": [],
+    "get_started/**": section_sidebar,
+    "user_guide/**": section_sidebar,
     "examples/**": [],
-    "dev/**": [],
+    "dev/**": section_sidebar,
     "genindex": [],
     "search": [],
 }

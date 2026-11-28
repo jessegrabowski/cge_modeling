@@ -1,22 +1,47 @@
 Contributing
 ============
 
+cge_modeling is an open source, collective effort, and there are many ways to help make it better. Code and
+documentation are the most common contributions, but they are not the only ones:
+
+* Report a bug or suggest an improvement by opening an
+  `issue <https://github.com/jessegrabowski/cge_modeling/issues>`_.
+* Pick up an open `documentation issue
+  <https://github.com/jessegrabowski/cge_modeling/issues?q=is%3Aissue%20state%3Aopen%20label%3Adocumentation>`_.
+* Teach cge_modeling and the practices behind it, in a blog post or a talk.
+
+If you want to contribute but are not sure where to start, open an
+`issue <https://github.com/jessegrabowski/cge_modeling/issues>`_ and say what you would like to work on.
+
 The repository is a `pixi <https://pixi.sh>`_ workspace, and every check that CI runs is a pixi task you can run
-locally with the same command.
+locally with the same command. :doc:`pull_requests` walks through a first pull request from fork to review.
 
 **Every pull request needs an issue first.** Open one describing what you mean to change, and wait for a reply
 before writing the code. The design may already be settled, the behavior may be deliberate, or someone may be
 halfway through the same work. Link the issue from the pull request.
+
+Claiming and finishing work
+---------------------------
+
+An open pull request is what claims an issue. Any issue without one is available, so open a draft pull request as
+soon as you make your first commit. If you are unsure whether an issue is taken, ask in the issue, and do not
+promise more than you can deliver there.
+
+It is fine to be delayed or to take a break. Leave a comment in the pull request when you cannot get it to a mergeable
+state, so the maintainers can decide, depending on how urgent the change is, whether to reassign it. A pull request
+with no recent activity may be closed or taken over by someone else.
 
 Environment
 -----------
 
 .. code-block:: bash
 
-    git clone https://github.com/jessegrabowski/cge_modeling.git
+    git clone https://github.com/<your-username>/cge_modeling.git
     cd cge_modeling
     pixi install
     pixi shell
+
+Clone your fork, as :doc:`pull_requests` describes, unless you have write access to the main repository.
 
 ``pixi install`` resolves the runtime, test and documentation dependencies from the committed ``pixi.lock`` and
 installs cge_modeling in editable mode. ``conda_envs/environment_dev.yml`` is the same environment exported for conda
@@ -80,7 +105,15 @@ can defend each decision in review, and you have run it. Review comments come to
 way" answers nothing. Code that nobody understands costs more to maintain than no contribution at all, and a pull
 request whose author cannot explain it will be closed.
 
+Contribute as an institution
+----------------------------
+
+Institutions can support cge_modeling by becoming institutional partners or sponsors. Open an
+`issue <https://github.com/jessegrabowski/cge_modeling/issues>`_ to start the conversation.
+
 .. toctree::
    :hidden:
 
+   Contributing Guide <self>
+   pull_requests
    style_guide
